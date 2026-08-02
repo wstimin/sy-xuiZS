@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildInbound, buildSubscriptionUrl } from "./inbound-builder.js";
+import { buildInbound, buildSubscriptionUrl, REALITY_TARGETS, selectRealityTarget } from "./inbound-builder.js";
 
 test("buildInbound creates a valid VLESS TCP Reality payload and share link", () => {
   const built = buildInbound({
@@ -20,6 +20,20 @@ test("buildInbound creates a valid VLESS TCP Reality payload and share link", ()
   assert.match(link, /^vless:\/\//);
   assert.match(link, /pbk=public-key/);
   assert.match(link, /sid=a1b2c3d4/);
+  assert.match(link, /sni=www.microsoft.com/);
+});
+
+test("Reality blank SNI follows the automatic target list used by the 3x-ui panel", () => {
+  assert.deepEqual(selectRealityTarget(() => 0), REALITY_TARGETS[0]);
+  assert.deepEqual(selectRealityTarget(() => 0.999), REALITY_TARGETS.at(-1));
+
+  const built = buildInbound({ protocol: "VLESS", transport: "TCP", security: "Reality" }, {
+    privateKey: "private-key",
+    publicKey: "public-key",
+  });
+  const settings = built.payload.streamSettings.realitySettings;
+  assert.ok(REALITY_TARGETS.some(item => item.target === settings.target && item.sni === settings.serverNames[0]));
+  assert.match(built.shareLink("node.example.com", "public-key"), new RegExp(`sni=${settings.serverNames[0].replaceAll(".", "\\.")}`));
 });
 
 test("TLS inbound uses certificate paths obtained from the panel", () => {

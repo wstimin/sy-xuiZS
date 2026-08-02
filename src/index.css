@@ -101,3 +101,31 @@
     animation: none;
   }
 }
+
+.node-deploy-progress {
+  background: linear-gradient(90deg, #6366f1, #06b6d4, #22c55e, #6366f1);
+  background-size: 240% 100%;
+  animation: node-deploy-flow 3s linear infinite;
+  box-shadow: 0 0 16px rgb(99 102 241 / 0.4);
+}
+
+.node-deploy-progress-shimmer {
+  background: linear-gradient(100deg, transparent 20%, rgb(255 255 255 / 0.35) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: node-deploy-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes node-deploy-flow {
+  to { background-position: -240% 0; }
+}
+
+@keyframes node-deploy-shimmer {
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-deploy-progress,
+  .node-deploy-progress-shimmer {
+    animation: none;
+  }
+}

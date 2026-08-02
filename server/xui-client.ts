@@ -16,6 +16,7 @@ export interface XuiClientOptions {
   panelPass?: string;
   panelToken?: string;
   allowInsecureTls?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface XrayTemplateResponse {
@@ -245,8 +246,8 @@ export class XuiClient {
     return parseWebCertFiles(files);
   }
 
-  async getSettings(): Promise<Record<string, any>> {
-    return this.sessionRequest("panel/setting/defaultSettings", { method: "POST" });
+  async getSettings(timeoutMs = 15_000): Promise<Record<string, any>> {
+    return this.sessionRequest("panel/setting/defaultSettings", { method: "POST" }, timeoutMs);
   }
 
   async getXrayTemplate(): Promise<XrayTemplateResponse> {
@@ -264,19 +265,19 @@ export class XuiClient {
     await this.sessionRequest("panel/xray/update", init);
   }
 
-  private async sessionRequest<T>(apiPath: string, init: RequestInit = {}): Promise<T> {
+  private async sessionRequest<T>(apiPath: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<T> {
     await this.authenticateSession();
-    let response = await this.rawRequest(apiPath, init, true, true);
+    let response = await this.rawRequest(apiPath, init, true, true, timeoutMs);
     if (response.status === 403 && !this.isSafeMethod(init.method)) {
       await this.refreshCsrfToken();
-      response = await this.rawRequest(apiPath, init, true, true);
+      response = await this.rawRequest(apiPath, init, true, true, timeoutMs);
     }
     const data = await this.parseResponse<T>(response, apiPath);
     if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${apiPath}`);
     return data.obj as T;
   }
 
-  private async rawRequest(apiPath: string, init: RequestInit, authenticated: boolean, forceSession = false): Promise<Response> {
+  private async rawRequest(apiPath: string, init: RequestInit, authenticated: boolean, forceSession = false, timeoutMs = 15_000): Promise<Response> {
     const headers = new Headers(init.headers);
     const token = this.apiToken;
     if (authenticated && token && !forceSession) {
@@ -288,7 +289,10 @@ export class XuiClient {
       }
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
+    const abortFromParent = () => controller.abort();
+    if (this.options.signal?.aborted) controller.abort();
+    else this.options.signal?.addEventListener("abort", abortFromParent, { once: true });
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(new URL(apiPath.replace(/^\/+/, ""), this.baseUrl), {
         ...init,
@@ -299,13 +303,17 @@ export class XuiClient {
       this.captureCookies(response);
       return response;
     } catch (error: any) {
-      if (error?.name === "AbortError") throw new Error("连接 3x-ui 面板超时");
+      if (error?.name === "AbortError") {
+        if (this.options.signal?.aborted) throw new Error("节点创建已终止");
+        throw new Error("连接 3x-ui 面板超时");
+      }
       const hint = this.baseUrl.startsWith("https://")
         ? "；如面板使用自签名证书，请显式开启“允许自签名证书”"
         : "";
       throw new Error(`无法连接 3x-ui 面板: ${error?.message || String(error)}${hint}`);
     } finally {
       clearTimeout(timer);
+      this.options.signal?.removeEventListener("abort", abortFromParent);
     }
   }
 

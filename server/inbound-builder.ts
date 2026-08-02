@@ -29,6 +29,21 @@ export interface BuiltInbound {
   shareLink: (address: string, realityPublicKey?: string) => string;
 }
 
+export const REALITY_TARGETS = [
+  { target: "www.amazon.com:443", sni: "www.amazon.com" },
+  { target: "aws.amazon.com:443", sni: "aws.amazon.com" },
+  { target: "www.oracle.com:443", sni: "www.oracle.com" },
+  { target: "www.nvidia.com:443", sni: "www.nvidia.com" },
+  { target: "www.amd.com:443", sni: "www.amd.com" },
+  { target: "www.intel.com:443", sni: "www.intel.com" },
+  { target: "www.sony.com:443", sni: "www.sony.com" },
+] as const;
+
+export function selectRealityTarget(random = Math.random): { target: string; sni: string } {
+  const index = Math.min(Math.floor(random() * REALITY_TARGETS.length), REALITY_TARGETS.length - 1);
+  return { ...REALITY_TARGETS[Math.max(0, index)] };
+}
+
 const transportMap: Record<Transport, string> = {
   TCP: "tcp",
   WebSocket: "ws",
@@ -51,13 +66,15 @@ function makeStreamSettings(input: InboundInput, reality?: { privateKey: string;
   if (security === "Reality") {
     if (input.protocol !== "VLESS" || transport !== "TCP") throw new Error("当前稳定实现仅支持 VLESS + TCP + Reality");
     if (!reality) throw new Error("缺少 Reality 密钥对");
-    const sni = optionalString(input.sni) || "www.microsoft.com";
+    const automaticTarget = selectRealityTarget();
+    const sni = optionalString(input.sni) || automaticTarget.sni;
+    const target = optionalString(input.sni) ? `${sni}:443` : automaticTarget.target;
     const shortId = optionalString(input.shortId) || randomBytes(4).toString("hex");
     if (!/^[0-9a-fA-F]{2,16}$/.test(shortId) || shortId.length % 2 !== 0) throw new Error("Reality Short ID 必须是 2-16 位偶数长度十六进制字符串");
     stream.realitySettings = {
       show: false,
       xver: 0,
-      target: `${sni}:443`,
+      target,
       serverNames: [sni],
       privateKey: reality.privateKey,
       minClientVer: "",
@@ -158,7 +175,10 @@ function buildShareLink(args: { input: InboundInput & { protocol: Protocol; tran
   const params = new URLSearchParams({ type, security: input.security.toLowerCase() });
   if (type === "ws") params.set("path", streamSettings.wsSettings.path);
   if (type === "grpc") params.set("serviceName", streamSettings.grpcSettings.serviceName);
-  if (input.sni) params.set("sni", input.sni);
+  const effectiveSni = input.security === "Reality"
+    ? streamSettings.realitySettings?.serverNames?.[0]
+    : optionalString(input.sni);
+  if (effectiveSni) params.set("sni", effectiveSni);
   if (input.security === "TLS") params.set("fp", "chrome");
   if (input.security === "Reality") {
     params.set("pbk", args.realityPublicKey || "");

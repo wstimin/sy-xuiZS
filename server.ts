@@ -38,7 +38,7 @@ function sendError(res: Response, error: unknown, status = 400) {
   if (!res.headersSent) res.status(status).json({ success: false, error: errorMessage(error) });
 }
 
-function xuiOptions(body: Record<string, any>): XuiClientOptions {
+function xuiOptions(body: Record<string, any>, signal?: AbortSignal): XuiClientOptions {
   return {
     panelAddress: body.panelAddress,
     panelPort: body.panelPort,
@@ -48,6 +48,7 @@ function xuiOptions(body: Record<string, any>): XuiClientOptions {
     panelPass: body.panelPass,
     panelToken: body.panelToken,
     allowInsecureTls: body.allowInsecureTls === true,
+    signal,
   };
 }
 
@@ -259,21 +260,50 @@ async function startServer() {
   });
 
   app.post("/api/deploy-node", async (req, res) => {
+    res.status(200);
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.flushHeaders();
+    const write = (event: Record<string, unknown>) => {
+      if (!res.writableEnded && !res.destroyed) res.write(`${JSON.stringify(event)}\n`);
+    };
+    const progress = (step: number, message: string) => write({ type: "progress", step, total: 8, message });
+    const cancellation = new AbortController();
+    const handleDisconnect = () => {
+      if (!res.writableEnded) cancellation.abort();
+    };
+    res.on("close", handleDisconnect);
+
+    const body = req.body as Record<string, any> & InboundInput;
     let client: XuiClient | undefined;
+    let built: ReturnType<typeof buildInbound> | undefined;
     let inboundId = 0;
     let originalXrayTemplate: { config: unknown; outboundTestUrl: string } | undefined;
     let xrayTemplateUpdated = false;
     try {
-      const body = req.body as Record<string, any> & InboundInput;
-      client = new XuiClient(xuiOptions(body));
-      await client.authenticate();
-      if (!optionalString(body.panelToken) && optionalString(body.panelUser) && optionalString(body.panelPass)) {
+      progress(1, "正在连接并认证 3x-ui 面板");
+      client = new XuiClient(xuiOptions(body, cancellation.signal));
+      const hasPanelToken = Boolean(optionalString(body.panelToken));
+      if (!hasPanelToken) await client.authenticate();
+      if (cancellation.signal.aborted) throw new Error("节点创建已终止");
+
+      const canReadSessionSettings = !hasPanelToken
+        && Boolean(optionalString(body.panelUser) && optionalString(body.panelPass));
+      const settingsPromise = canReadSessionSettings
+        ? client.getSettings(2_500).catch(() => ({} as Record<string, any>))
+        : Promise.resolve({} as Record<string, any>);
+
+      progress(2, hasPanelToken ? "API Token 已加载，正在校验面板权限" : "面板登录成功，正在获取 API Token");
+      if (!hasPanelToken && optionalString(body.panelUser) && optionalString(body.panelPass)) {
         try {
           await client.getApiToken();
         } catch {
           // Older panels can still use the authenticated Session for /panel/api/**.
         }
       }
+      if (cancellation.signal.aborted) throw new Error("节点创建已终止");
+
+      progress(3, body.security === "Reality" ? "正在由面板生成 Reality 密钥与自动伪装参数" : body.security === "TLS" ? "正在读取面板 TLS 证书配置" : "正在准备节点安全参数");
       const reality = body.security === "Reality" ? await client.getRealityKeyPair() : undefined;
       const tlsFiles = body.security === "TLS" ? await client.getWebCertFiles() : undefined;
       const inboundInput = tlsFiles ? {
@@ -282,14 +312,21 @@ async function startServer() {
         tlsCertFile: tlsFiles.webCertFile,
         tlsKeyFile: tlsFiles.webKeyFile,
       } : body;
-      const built = buildInbound(inboundInput, reality);
+      built = buildInbound(inboundInput, reality);
+      if (cancellation.signal.aborted) throw new Error("节点创建已终止");
+
+      progress(4, "节点参数已生成，正在写入 3x-ui 入站");
       const created = await client.addInbound(built.payload);
       inboundId = Number(created?.id || 0);
       if (!inboundId) {
+        progress(5, "入站已提交，正在确认节点编号");
         const list = await client.request<any[]>("panel/api/inbounds/list");
         inboundId = Number(list.find((item) => item?.tag === built.tag)?.id || 0);
       }
       if (!inboundId) throw new Error("3x-ui 已返回创建成功，但无法确认新入站 ID");
+      if (cancellation.signal.aborted) throw new Error("节点创建已终止");
+
+      progress(5, `节点入站创建成功（ID ${inboundId}）`);
 
       const parsedSocks = parseSocksInput(body.socksRawInput);
       let socksList = parsedSocks;
@@ -298,12 +335,13 @@ async function startServer() {
       let socksConfigured = false;
       let socksExplanation = "未配置 SOCKS 出站，入站流量使用面板默认路由。";
       if (body.autoOutbound && parsedSocks.length) {
+        progress(6, `正在写入 ${parsedSocks.length} 个 SOCKS 出站与路由规则`);
         const current = await client.getXrayTemplate();
         const config = current.xraySetting;
         originalXrayTemplate = { config, outboundTestUrl: current.outboundTestUrl || "" };
         const injected = injectSocksRouting(config, parsedSocks, built.tag, body.autoRouting !== false, body.enableLoadBalance === true);
-        await client.updateXrayTemplate(injected.config, current.outboundTestUrl || "");
         xrayTemplateUpdated = true;
+        await client.updateXrayTemplate(injected.config, current.outboundTestUrl || "");
         socksList = injected.proxies;
         outbounds = injected.outbounds;
         rules = injected.rules;
@@ -311,15 +349,15 @@ async function startServer() {
         socksExplanation = injected.balancer
           ? `已向 3x-ui 全局 Xray 模板写入 ${socksList.length} 个 SOCKS 出站，并为该入站绑定随机负载均衡器。`
           : `已向 3x-ui 全局 Xray 模板写入 ${socksList.length} 个 SOCKS 出站，并绑定该入站路由。`;
+      } else {
+        progress(6, "无需配置 SOCKS 路由，跳过全局模板修改");
       }
+      if (cancellation.signal.aborted) throw new Error("节点创建已终止");
 
-      let settings: Record<string, any> = {};
-      try {
-        settings = await client.getSettings();
-      } catch {
-        // Subscription metadata is optional; Token-only API access can still create the inbound.
-      }
+      progress(7, "正在生成分享链接并整理创建结果");
+      const settings = await settingsPromise;
       const address = cleanHostInput(body.panelAddress);
+      const realitySettings = built.payload.streamSettings.realitySettings;
       const result = {
         id: `node-${Date.now()}`,
         inboundId,
@@ -339,29 +377,50 @@ async function startServer() {
         xrayRoutingJson: JSON.stringify(rules, null, 2),
         socksExplanation,
         realityParamsUsed: reality ? {
-          sni: optionalString(body.sni) || "www.microsoft.com",
+          sni: realitySettings.serverNames[0],
           publicKey: reality.publicKey,
-          shortId: built.payload.streamSettings.realitySettings.shortIds[0],
-          autoGenerated: true,
+          shortId: realitySettings.shortIds[0],
+          autoGenerated: !optionalString(body.sni),
         } : null,
       };
-      res.json({ success: true, result });
+      progress(8, "节点创建完成");
+      write({ type: "result", result });
     } catch (error) {
-      if (client && xrayTemplateUpdated && originalXrayTemplate) {
+      let rollbackClient = client;
+      if (cancellation.signal.aborted) {
         try {
-          await client.updateXrayTemplate(originalXrayTemplate.config, originalXrayTemplate.outboundTestUrl);
+          rollbackClient = new XuiClient(xuiOptions(body));
+          if (!optionalString(body.panelToken)) await rollbackClient.authenticate();
+        } catch {
+          rollbackClient = undefined;
+        }
+      }
+      if (rollbackClient && xrayTemplateUpdated && originalXrayTemplate) {
+        try {
+          await rollbackClient.updateXrayTemplate(originalXrayTemplate.config, originalXrayTemplate.outboundTestUrl);
         } catch {
           // Preserve the original failure and continue with inbound rollback.
         }
       }
-      if (client && inboundId) {
+      if (rollbackClient && !inboundId && built) {
         try {
-          await client.deleteInbound(inboundId);
+          const list = await rollbackClient.request<any[]>("panel/api/inbounds/list");
+          inboundId = Number(list.find((item) => item?.tag === built?.tag)?.id || 0);
         } catch {
-          // Preserve the original failure; the response warns about rollback below.
+          // The add request may have been cancelled before the panel created anything.
         }
       }
-      sendError(res, error);
+      if (rollbackClient && inboundId) {
+        try {
+          await rollbackClient.deleteInbound(inboundId);
+        } catch {
+          // Preserve the original failure; the progress response already explains the operation failed.
+        }
+      }
+      write({ type: "error", error: errorMessage(error), cancelled: cancellation.signal.aborted });
+    } finally {
+      res.off("close", handleDisconnect);
+      if (!res.writableEnded) res.end();
     }
   });
 

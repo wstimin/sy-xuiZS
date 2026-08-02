@@ -219,6 +219,34 @@ test("XuiClient uses Bearer Token for management APIs and serializes inbound fie
   assert.equal(body.sniffing, '{"enabled":true}');
 });
 
+test("XuiClient aborts an in-flight panel request when the parent signal is cancelled", async () => {
+  const controller = new AbortController();
+  let requestStarted!: () => void;
+  const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+  const mockFetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+    requestStarted();
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    });
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelToken: "bearer-token",
+    signal: controller.signal,
+  }, mockFetch);
+
+  const request = client.getRealityKeyPair();
+  await started;
+  controller.abort();
+  await assert.rejects(request, /节点创建已终止/);
+});
+
 test("XuiClient uses Bearer for inbound list/delete and Session for Xray settings", async () => {
   const calls: Array<{ url: URL; method: string; headers: Headers; body: string }> = [];
   const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {

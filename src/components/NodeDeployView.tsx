@@ -22,8 +22,22 @@ import {
   Code2,
   Share2,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Activity,
+  Clock,
+  Square
 } from 'lucide-react';
+
+const NODE_DEPLOY_STEPS = [
+  '连接面板',
+  '校验认证',
+  '生成安全参数',
+  '写入入站',
+  '确认节点',
+  '配置路由',
+  '生成链接',
+  '创建完成'
+];
 
 interface NodeDeployViewProps {
   initialPanelData?: {
@@ -77,7 +91,20 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   const [tlsStatus, setTlsStatus] = useState<string | null>(null);
   const [resultModal, setResultModal] = useState<NodeResult | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [deployStep, setDeployStep] = useState(0);
+  const [deployMessage, setDeployMessage] = useState('');
+  const [deployError, setDeployError] = useState<string | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const deployControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!isDeploying) return;
+    const timer = window.setInterval(() => setElapsedTime(value => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [isDeploying]);
+
+  useEffect(() => () => deployControllerRef.current?.abort(), []);
 
   const cleanHostStr = (val: string) => {
     if (!val) return '';
@@ -289,30 +316,79 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       return;
     }
 
+    const controller = new AbortController();
+    deployControllerRef.current = controller;
     setIsDeploying(true);
+    setDeployStep(1);
+    setDeployMessage('正在连接 3x-ui 面板');
+    setDeployError(null);
+    setElapsedTime(0);
 
     try {
       const res = await fetch('/api/deploy-node', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, panelAddress: cleanAddress })
+        body: JSON.stringify({ ...form, panelAddress: cleanAddress, sni: '', shortId: '' }),
+        signal: controller.signal
       });
+      if (!res.ok || !res.body) throw new Error(`节点创建请求失败，HTTP ${res.status}`);
 
-      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let result: NodeResult | null = null;
+      let streamError = '';
 
-      if (res.ok && data.success && data.result) {
-        const resultObj: NodeResult = data.result;
-        onNodeCreated(resultObj);
-        setResultModal(resultObj);
-        showToast('节点创建成功', '已通过 3x-ui 官方 API 创建并验证入站', 'success');
-      } else {
-        throw new Error(data.error || '后端部署处理失败');
+      const consumeLine = (line: string) => {
+        if (!line.trim()) return;
+        const event = JSON.parse(line);
+        if (event.type === 'progress') {
+          setDeployStep(Math.max(1, Math.min(NODE_DEPLOY_STEPS.length, Number(event.step) || 1)));
+          setDeployMessage(String(event.message || '正在创建节点'));
+        } else if (event.type === 'result' && event.result) {
+          result = event.result as NodeResult;
+        } else if (event.type === 'error') {
+          streamError = String(event.error || '节点创建失败');
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || '';
+        lines.forEach(consumeLine);
+        if (done) break;
       }
+      if (buffer.trim()) consumeLine(buffer);
+      if (streamError) throw new Error(streamError);
+      if (!result) throw new Error('节点创建流已结束，但没有收到完整结果');
+
+      setDeployStep(NODE_DEPLOY_STEPS.length);
+      setDeployMessage('节点创建完成');
+      onNodeCreated(result);
+      setResultModal(result);
+      showToast('节点创建成功', '已通过 3x-ui 官方 API 创建并验证入站', 'success');
     } catch (err: any) {
-      showToast('节点创建失败', err?.message || '请检查面板地址、路径和认证信息', 'error');
+      if (err?.name === 'AbortError') {
+        setDeployMessage('已终止创建，后端正在回滚本次变更');
+        setDeployError('创建操作已由你终止');
+        showToast('已终止节点创建', '已通知后端取消请求并回滚本次创建的入站与路由', 'info');
+      } else {
+        const message = err?.message || '请检查面板地址、路径和认证信息';
+        setDeployError(message);
+        showToast('节点创建失败', message, 'error');
+      }
     } finally {
+      if (deployControllerRef.current === controller) deployControllerRef.current = null;
       setIsDeploying(false);
     }
+  };
+
+  const handleCancelDeploy = () => {
+    if (!deployControllerRef.current) return;
+    setDeployMessage('正在终止请求并回滚已写入的配置...');
+    deployControllerRef.current.abort();
   };
 
   const protocolsList: ProtocolType[] = ['VLESS', 'VMess', 'Trojan', 'Shadowsocks'];
@@ -608,44 +684,18 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
             <div className="p-4 rounded-xl bg-white/5 border border-indigo-500/30 space-y-3 animate-in fade-in duration-200">
               <div className="flex items-center justify-between text-xs font-semibold text-indigo-300 border-b border-indigo-500/20 pb-2">
                 <span className="flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-indigo-400" /> Reality 目标伪装参数 (Dest & SNI) - <span className="text-emerald-400 font-mono">可选填</span>
+                  <Sparkles className="w-4 h-4 text-indigo-400" /> Reality 自动伪装参数
                 </span>
                 <span className="text-[10px] text-zinc-400">零证书伪装</span>
               </div>
 
-              <p className="text-[11px] text-zinc-400 leading-relaxed bg-black/30 p-2.5 rounded-lg border border-white/5">
-                <span className="text-emerald-400 font-semibold">💡 提示：</span>3-xui 面板与后端会自动生成配置 Reality 伪装参数。此处字段均为<strong className="text-zinc-200">可选填</strong>，留空将自动使用最佳默认伪装配置。
-              </p>
-
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-300 flex items-center justify-between">
-                    <span>目标 SNI 伪装域名</span>
-                    <span className="text-[10px] text-zinc-500">可选</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="留空自动分配 (例: itunes.apple.com)"
-                    value={form.sni}
-                    onChange={e => setForm({ ...form, sni: e.target.value })}
-                    className="w-full px-3 py-1.5 rounded-lg bg-black/40 border border-white/10 text-xs text-white placeholder-zinc-500 outline-none focus:border-indigo-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[11px] text-zinc-300 flex items-center justify-between">
-                    <span>Short ID (短 ID)</span>
-                    <span className="text-[10px] text-zinc-500">可选</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="留空自动生成 (例: 6ba7b810)"
-                    value={form.shortId}
-                    onChange={e => setForm({ ...form, shortId: e.target.value })}
-                    className="w-full px-3 py-1.5 rounded-lg bg-black/40 border border-white/10 text-xs text-white placeholder-zinc-500 outline-none focus:border-indigo-500 font-mono"
-                  />
+              <div className="flex items-start gap-2.5 text-xs text-zinc-300 leading-relaxed bg-black/30 p-3 rounded-lg border border-white/5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-emerald-300">无需填写域名或 Short ID</p>
+                  <p className="text-[11px] text-zinc-400 mt-1">创建时按目标 3x-ui 源码中的 Reality 自动规则选择可用伪装目标，同时由面板官方 API 生成密钥对；实际 SNI 会写入节点链接。</p>
                 </div>
               </div>
-              <p className="text-[11px] text-zinc-500">Reality 密钥对由目标 3x-ui 面板通过官方 API 实时生成，私钥只写入该入站配置。</p>
             </div>
           )}
 
@@ -811,26 +861,87 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
         </div>
 
         {/* Action Button */}
-        <button
-          type="submit"
-          disabled={isDeploying}
-          className={`w-full py-3.5 px-6 rounded-2xl font-bold text-base text-white bg-indigo-600 hover:bg-indigo-500 shadow-xl shadow-indigo-500/20 transition-all duration-300 flex items-center justify-center gap-2 ${
-            isDeploying ? 'opacity-80 cursor-not-allowed' : 'hover:scale-[1.005]'
-          }`}
-        >
-          {isDeploying ? (
-            <>
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              <span>正在向 ui面板 写入节点与 SOCKS 路由...</span>
-            </>
-          ) : (
-            <>
-              <Share2 className="w-5 h-5" />
-              <span>一键生成节点与 SOCKS 链式路由</span>
-            </>
+        <div className="flex gap-3">
+          <button
+            type="submit"
+            disabled={isDeploying}
+            className={`flex-1 min-w-0 py-3.5 px-4 sm:px-6 rounded-2xl font-bold text-sm sm:text-base text-white bg-indigo-600 hover:bg-indigo-500 shadow-xl shadow-indigo-500/20 transition-all duration-300 flex items-center justify-center gap-2 ${
+              isDeploying ? 'opacity-80 cursor-not-allowed' : 'hover:scale-[1.005]'
+            }`}
+          >
+            {isDeploying ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
+                <span className="truncate">{deployMessage || '正在创建节点...'}</span>
+              </>
+            ) : (
+              <>
+                <Share2 className="w-5 h-5 shrink-0" />
+                <span>一键生成节点与 SOCKS 链式路由</span>
+              </>
+            )}
+          </button>
+          {isDeploying && (
+            <button
+              type="button"
+              onClick={handleCancelDeploy}
+              className="shrink-0 px-4 sm:px-5 rounded-2xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-200 font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
+            >
+              <Square className="w-4 h-4 fill-current" />
+              <span className="hidden sm:inline">终止创建</span>
+            </button>
           )}
-        </button>
+        </div>
       </form>
+
+      {(isDeploying || deployStep > 0 || deployError) && (
+        <div className="p-5 sm:p-6 rounded-2xl bg-[#0a0a0c] border border-white/10 space-y-5 shadow-2xl animate-in fade-in duration-300">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Activity className={`w-5 h-5 shrink-0 ${deployError ? 'text-rose-400' : deployStep === NODE_DEPLOY_STEPS.length && !isDeploying ? 'text-emerald-400' : 'text-indigo-400 animate-pulse'}`} />
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-white">{deployError ? '节点创建未完成' : deployStep === NODE_DEPLOY_STEPS.length && !isDeploying ? '节点创建完成' : '节点创建进行中'}</h3>
+                  <p className="text-[11px] text-zinc-400 truncate">{deployMessage}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 font-mono text-xs">
+                <span className="text-zinc-400 flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" /> {elapsedTime}s
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold">
+                  {Math.round((deployStep / NODE_DEPLOY_STEPS.length) * 100)}%
+                </span>
+              </div>
+            </div>
+
+            <div className="w-full bg-white/5 rounded-full h-3 p-0.5 overflow-hidden border border-white/10">
+              <div
+                className="node-deploy-progress h-full rounded-full transition-[width] duration-500 ease-out relative overflow-hidden"
+                style={{ width: `${Math.max(4, Math.round((deployStep / NODE_DEPLOY_STEPS.length) * 100))}%` }}
+              >
+                {isDeploying && <div className="absolute inset-0 node-deploy-progress-shimmer" />}
+              </div>
+            </div>
+          </div>
+
+          {deployError && <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200">{deployError}</div>}
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {NODE_DEPLOY_STEPS.map((label, index) => {
+              const step = index + 1;
+              const completed = deployStep > step || (deployStep === NODE_DEPLOY_STEPS.length && !deployError);
+              const active = deployStep === step && isDeploying;
+              return (
+                <div key={label} className={`h-16 p-2.5 rounded-lg border flex items-center gap-2 transition-colors ${completed ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200' : active ? 'bg-indigo-500/15 border-indigo-500/40 text-white' : 'bg-white/5 border-white/5 text-zinc-500'}`}>
+                  {completed ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : active ? <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" /> : <span className="w-4 h-4 rounded-full border border-zinc-600 text-[9px] flex items-center justify-center shrink-0">{step}</span>}
+                  <span className="text-[11px] font-semibold leading-tight">{label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Output Modal Popup with 100% Real Canvas QR Code */}
       {resultModal && (
