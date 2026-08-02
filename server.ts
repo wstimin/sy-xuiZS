@@ -9,7 +9,7 @@ import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { buildInbound, buildSubscriptionUrl, InboundInput } from "./server/inbound-builder.js";
 import { buildInstallCommand, connectSsh, execSsh, inspectServer, SshInput } from "./server/ssh.js";
-import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, randomToken, validPort } from "./server/validation.js";
+import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
 import { parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
 
@@ -124,8 +124,8 @@ async function startServer() {
         : "none";
       let scriptUrl = scriptType === "official" ? OFFICIAL_INSTALLER : RECOMMENDED_INSTALLER;
       if (scriptType === "custom") scriptUrl = assertHttpsUrl(optionalString(body.customScriptUrl), "自定义脚本地址");
-      const username = `admin_${randomToken(3)}`;
-      const password = `Xui_${randomBytes(12).toString("base64url")}`;
+      const username = panelUsername(body.panelUsername, `admin_${randomToken(3)}`);
+      const password = panelPassword(body.panelPassword, `Xui_${randomBytes(12).toString("base64url")}`);
 
       write({ type: "log", step: 1, message: `[SSH] 正在连接 ${host}:${body.sshPort || 22}` });
       session = await connectSsh(body);
@@ -156,7 +156,7 @@ async function startServer() {
             ? ["y", String(panelPort), "1", domain, "", "n", "y"]
             : ["y", String(panelPort), "2", "", ""]
           : undefined,
-        configurePanelAfterInstall: scriptType === "recommended",
+        configurePanelAfterInstall: true,
       });
       let buffered = "";
       const relay = (prefix: string) => (text: string) => {
@@ -179,13 +179,13 @@ async function startServer() {
       const verify = await execSsh(session.client, verifyCommand, { timeoutMs: 30_000 });
       if (verify.code !== 0 || !verify.stdout.startsWith("active")) throw new Error(verify.stderr || "x-ui 服务没有成功启动");
       const installed = parseInstallerResult(verify.stdout);
-      const installedPort = installed.PANEL_PORT || String(panelPort);
-      const installedPath = normalizeWebPath(installed.WEB_BASE_PATH || panelPath);
+      const installedPort = String(panelPort);
+      const installedPath = panelPath;
       const recommendedTlsReady = Boolean(installed.WEB_CERT_FILE && installed.WEB_KEY_FILE);
       const fallbackProtocol = scriptType === "recommended"
         ? recommendedTlsReady ? "https" : "http"
         : sslMode === "none" ? "http" : "https";
-      const accessUrl = installed.ACCESS_URL || `${fallbackProtocol}://${domain || host}:${installedPort}${installedPath}`;
+      const accessUrl = `${fallbackProtocol}://${domain || host}:${installedPort}${installedPath}`;
 
       let apiToken = installed.API_TOKEN || parseApiTokenFromOutput(`${install.stdout}\n${install.stderr}`) || undefined;
       if (apiToken) {
@@ -198,8 +198,8 @@ async function startServer() {
             panelPort: installedPort,
             panelPath: installedPath,
             panelProtocol: accessUrl.startsWith("https://") ? "https" : "http",
-            panelUser: installed.USERNAME || username,
-            panelPass: installed.PASSWORD || password,
+            panelUser: username,
+            panelPass: password,
             allowInsecureTls: true,
           });
           await tokenClient.authenticate();
@@ -218,8 +218,8 @@ async function startServer() {
         host: domain || host,
         port: installedPort,
         path: installedPath,
-        username: installed.USERNAME || username,
-        password: installed.PASSWORD || password,
+        username,
+        password,
         apiToken,
         sslEnabled: accessUrl.startsWith("https://"),
         installCommand: "已通过 SSH 安全执行，命令包含敏感凭据，未回传到浏览器。",

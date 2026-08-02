@@ -71,6 +71,30 @@ test("buildInstallCommand drives and configures the interactive recommended inst
   assert.doesNotMatch(command, /secret'value/);
 });
 
+test("buildInstallCommand applies final panel credentials through the official x-ui command", () => {
+  const command = buildInstallCommand({
+    scriptUrl: "https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh",
+    username: "owner@example.com",
+    password: "safe password ' value",
+    panelPort: 54321,
+    webBasePath: "/private-panel/",
+    serverIp: "203.0.113.10",
+    sslMode: "none",
+    useSudo: true,
+    configurePanelAfterInstall: true,
+  });
+
+  assert.match(command, /^sudo -n env /);
+  assert.match(command, /test -x \/usr\/local\/x-ui\/x-ui/);
+  assert.match(command, /Username and password updated successfully/);
+  assert.match(command, /Port set successfully:/);
+  assert.match(command, /Base URI path set successfully/);
+  assert.match(command, /systemctl restart x-ui/);
+  assert.match(command, /owner@example\.com/);
+  assert.match(command, /private-panel/);
+  assert.doesNotMatch(command, /safe password ' value/);
+});
+
 test("parseServerInspectionOutput reports a compatible systemd server", () => {
   const details = parseServerInspectionOutput(
     { host: "203.0.113.10", port: 22, user: "root", fingerprint: "SHA256:test", latencyMs: 42 },

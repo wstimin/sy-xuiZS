@@ -24,6 +24,30 @@ export function optionalString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+export function panelUsername(value: unknown, fallback: string): string {
+  const username = optionalString(value);
+  if (!username) return fallback;
+  if (username.length < 3 || username.length > 64) {
+    throw new Error("面板用户名长度必须为 3 到 64 位");
+  }
+  if (!/^[A-Za-z0-9_.@-]+$/.test(username)) {
+    throw new Error("面板用户名只能包含字母、数字、点、下划线、@ 和短横线");
+  }
+  return username;
+}
+
+export function panelPassword(value: unknown, fallback: string): string {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  if (/[\x00-\x1F\x7F]/.test(value)) {
+    throw new Error("面板密码不能包含换行或其他控制字符");
+  }
+  const password = value.trim();
+  if (password.length < 8 || password.length > 128) {
+    throw new Error("面板密码长度必须为 8 到 128 位");
+  }
+  return password;
+}
+
 export function validPort(value: unknown, fallback?: number): number {
   if ((value === undefined || value === null || value === "") && fallback) return fallback;
   const port = Number(value);

@@ -94,11 +94,17 @@ export function buildInstallCommand(params: {
   const panelPath = params.webBasePath.replace(/^\/+|\/+$/g, "");
   const configurePanel = params.configurePanelAfterInstall
     ? [
-        "/usr/local/x-ui/x-ui setting",
+        "test -x /usr/local/x-ui/x-ui",
+        "&& setting_output=$(/usr/local/x-ui/x-ui setting",
         `-username ${shellQuote(params.username)}`,
         `-password ${shellQuote(params.password)}`,
         `-port ${shellQuote(String(params.panelPort))}`,
         `-webBasePath ${shellQuote(panelPath)}`,
+        "2>&1)",
+        "&& printf '%s\\n' \"$setting_output\"",
+        "&& printf '%s\\n' \"$setting_output\" | grep -q 'Username and password updated successfully'",
+        "&& printf '%s\\n' \"$setting_output\" | grep -q 'Port set successfully:'",
+        "&& printf '%s\\n' \"$setting_output\" | grep -q 'Base URI path set successfully'",
         "&& systemctl restart x-ui",
       ].join(" ")
     : "";

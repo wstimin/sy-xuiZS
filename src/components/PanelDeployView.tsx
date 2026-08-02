@@ -59,6 +59,8 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     sshPrivateKey: '',
     panelPort: '',
     panelPath: '',
+    panelUsername: '',
+    panelPassword: '',
     domain: '',
     systemType: 'debian-ubuntu',
     autoSSL: true,
@@ -224,6 +226,17 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
         showToast('自定义脚本地址无效', '自定义安装脚本必须是完整的 HTTPS URL', 'warning');
         return;
       }
+    }
+
+    const customPanelUsername = form.panelUsername?.trim() || '';
+    const customPanelPassword = form.panelPassword?.trim() || '';
+    if (customPanelUsername && !/^[A-Za-z0-9_.@-]{3,64}$/.test(customPanelUsername)) {
+      showToast('面板用户名格式不正确', '请输入 3-64 位字母、数字、点、下划线、@ 或短横线', 'warning');
+      return;
+    }
+    if (customPanelPassword && (customPanelPassword.length < 8 || customPanelPassword.length > 128)) {
+      showToast('面板密码长度不正确', '自定义密码必须为 8-128 位；留空则自动生成安全密码', 'warning');
+      return;
     }
 
     setIsDeploying(true);
@@ -673,6 +686,46 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm placeholder-zinc-500 outline-none transition-all"
               />
             </div>
+          </div>
+
+          <div className="space-y-3 pt-2 border-t border-white/10">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
+                <Key className="w-4 h-4 text-amber-400" />
+                面板管理员账号
+              </div>
+              <span className="text-[10px] text-zinc-500">可选，留空将自动生成安全凭据</span>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">登录用户名</label>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  placeholder="例如: admin_xui"
+                  value={form.panelUsername || ''}
+                  onChange={e => setForm({ ...form, panelUsername: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm placeholder-zinc-500 outline-none transition-all"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">登录密码</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="至少 8 位；留空自动生成"
+                  value={form.panelPassword || ''}
+                  onChange={e => setForm({ ...form, panelPassword: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm placeholder-zinc-500 outline-none transition-all"
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              安装完成后，助手会调用 3x-ui 官方 <code className="text-indigo-300">x-ui setting</code> 命令写入该账号密码并重启服务；推荐脚本和官方脚本都会真实生效。
+            </p>
           </div>
 
           <div className="grid sm:grid-cols-2 gap-4 pt-2">

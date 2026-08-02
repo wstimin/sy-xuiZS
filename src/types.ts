@@ -22,6 +22,8 @@ export interface PanelDeployForm {
   sshPrivateKeyPassphrase?: string;
   panelPort?: string;
   panelPath?: string;
+  panelUsername?: string;
+  panelPassword?: string;
   domain?: string;
   systemType: SystemType;
   autoSSL: boolean;
