@@ -30,7 +30,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
             <ShieldCheck className="w-5 h-5 text-indigo-400" />
             <div>
               <h3 className="text-lg font-bold text-white">历史搭建与生成记录</h3>
-              <p className="text-[11px] text-emerald-400">仅保存非敏感元数据，不保存密码、Token、节点链接或代理凭据</p>
+              <p className="text-[11px] text-amber-300">面板密码与 Token 保存在当前浏览器本地，用于下次自动回填</p>
             </div>
           </div>
           <button

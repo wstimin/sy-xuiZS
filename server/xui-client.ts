@@ -233,27 +233,43 @@ export class XuiClient {
     if (this.sessionAuthenticated) return;
     const username = requiredString(this.options.panelUser, "面板用户名");
     const password = requiredString(this.options.panelPass, "面板密码");
+
+    await this.bootstrapCsrfToken();
     const login = () => {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      };
       if (this.csrfToken) headers["X-CSRF-Token"] = this.csrfToken;
       return this.rawRequest("login", {
         method: "POST",
         headers,
-        body: JSON.stringify({ username, password }),
+        body: new URLSearchParams({ username, password }),
       }, false);
     };
 
-    // Legacy and recommended 2.9.4-based panels accept the saved credentials
-    // directly. Current panels answer 403 quickly and then need one CSRF retry.
     let response = await login();
     if (response.status === 403) {
       await this.refreshCsrfToken();
       response = await login();
     }
     const data = await this.parseResponse<unknown>(response, "面板登录");
-    if (!data.success) throw new Error(data.msg || "面板用户名或密码错误");
+    if (!data.success) {
+      const message = data.msg || "面板用户名或密码错误";
+      if (/invalid username or password or two-factor code/i.test(message)) {
+        throw new Error("面板拒绝了当前用户名或密码。该英文提示是 3x-ui 的统一登录错误，不代表必须填写 2FA；连续失败 5 次还可能触发 15 分钟登录锁定");
+      }
+      throw new Error(message);
+    }
     if (!this.cookie) throw new Error("面板登录成功但没有返回会话 Cookie，请检查面板路径和版本");
     this.sessionAuthenticated = true;
+
+    // Current panels expose a fresh authenticated CSRF token. Older panels do
+    // not need it, so keep the pre-login token when this compatibility call is unavailable.
+    try {
+      await this.refreshCsrfToken(true, 5_000);
+    } catch {
+      // The existing session and public CSRF token remain usable on supported legacy panels.
+    }
   }
 
   async request<T>(apiPath: string, init: RequestInit = {}, timeoutMs = 15_000, timeoutMessage?: string): Promise<T> {
@@ -301,8 +317,32 @@ export class XuiClient {
   }
 
   async getWebCertFiles(): Promise<{ webCertFile: string; webKeyFile: string }> {
-    const files = await this.sessionRequest<Record<string, unknown>>("panel/setting/defaultSettings", { method: "POST" });
-    return parseWebCertFiles(files);
+    await this.authenticateSession();
+    let allSettingsError: unknown;
+    try {
+      const files = await this.sessionRequest<Record<string, unknown>>(
+        "panel/setting/all",
+        { method: "POST" },
+        8_000,
+        "读取面板 TLS 证书路径超时",
+      );
+      return parseWebCertFiles(files);
+    } catch (error) {
+      if (error instanceof PanelRequestTimeoutError) throw error;
+      allSettingsError = error;
+    }
+
+    try {
+      const files = await this.sessionRequest<Record<string, unknown>>(
+        "panel/setting/defaultSettings",
+        { method: "POST" },
+        8_000,
+        "读取面板 TLS 证书路径超时",
+      );
+      return parseWebCertFiles(files);
+    } catch (error) {
+      throw error instanceof PanelRequestTimeoutError ? error : error || allSettingsError;
+    }
   }
 
   async getSettings(timeoutMs = 15_000): Promise<Record<string, any>> {
@@ -342,7 +382,7 @@ export class XuiClient {
     await this.authenticateSession();
     let response = await this.rawRequest(apiPath, init, true, true, timeoutMs, timeoutMessage);
     if (response.status === 403 && !this.isSafeMethod(init.method)) {
-      await this.refreshCsrfToken();
+      await this.refreshCsrfToken(true);
       response = await this.rawRequest(apiPath, init, true, true, timeoutMs, timeoutMessage);
     }
     const data = await this.parseResponse<T>(response, apiPath);
@@ -397,8 +437,21 @@ export class XuiClient {
     }
   }
 
-  private async refreshCsrfToken(): Promise<void> {
-    const response = await this.rawRequest("csrf-token", { method: "GET" }, false);
+  private async bootstrapCsrfToken(): Promise<void> {
+    const response = await this.rawRequest("csrf-token", { method: "GET" }, false, false, 5_000);
+    if (response.status === 404 || response.status === 405) return;
+    try {
+      const data = await this.parseResponse<string>(response, "获取面板 CSRF Token");
+      if (data.success && typeof data.obj === "string" && data.obj) this.csrfToken = data.obj;
+    } catch (error) {
+      if (response.status >= 500) throw error;
+      // Legacy panels may serve the login HTML for this path and do not require CSRF.
+    }
+  }
+
+  private async refreshCsrfToken(authenticated = false, timeoutMs = 15_000): Promise<void> {
+    const endpoint = authenticated ? "panel/csrf-token" : "csrf-token";
+    const response = await this.rawRequest(endpoint, { method: "GET" }, authenticated, authenticated, timeoutMs);
     const data = await this.parseResponse<string>(response, "获取面板 CSRF Token");
     if (!data.success || typeof data.obj !== "string" || !data.obj) {
       throw new Error(data.msg || "3x-ui 没有返回有效的 CSRF Token");

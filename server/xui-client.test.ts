@@ -153,13 +153,16 @@ test("XuiClient reads Token and TLS settings through Session routes", async () =
         headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=logged-in; Path=/base/; HttpOnly" },
       });
     }
+    if (url.pathname === "/base/panel/csrf-token") {
+      return Response.json({ success: true, obj: "authenticated-csrf" });
+    }
     if (url.pathname === "/base/panel/setting/getApiToken") {
       return Response.json({ success: true, obj: "panel-api-token" });
     }
-    if (url.pathname === "/base/panel/setting/defaultSettings") {
+    if (url.pathname === "/base/panel/setting/all") {
       return Response.json({
         success: true,
-        obj: { defaultCert: "/cert/fullchain.pem", defaultKey: "/cert/privkey.pem", subEnable: true },
+        obj: { webCertFile: "/cert/fullchain.pem", webKeyFile: "/cert/privkey.pem" },
       });
     }
     if (url.pathname === "/base/panel/api/inbounds/add") {
@@ -190,22 +193,23 @@ test("XuiClient reads Token and TLS settings through Session routes", async () =
   }), { id: 21 });
 
   assert.deepEqual(calls.map((call) => [call.method, call.url.pathname]), [
-    ["POST", "/base/login"],
     ["GET", "/base/csrf-token"],
     ["POST", "/base/login"],
+    ["GET", "/base/panel/csrf-token"],
     ["GET", "/base/panel/setting/getApiToken"],
-    ["POST", "/base/panel/setting/defaultSettings"],
+    ["POST", "/base/panel/setting/all"],
     ["POST", "/base/panel/api/inbounds/add"],
   ]);
   assert.equal(calls[0].headers.get("Cookie"), null);
   assert.equal(calls[0].headers.get("X-CSRF-Token"), null);
-  assert.equal(calls[2].headers.get("Cookie"), "3x-ui=anonymous");
-  assert.equal(calls[2].headers.get("X-CSRF-Token"), "csrf-value");
-  assert.deepEqual(JSON.parse(calls[2].body), { username: "admin", password: "password" });
+  assert.equal(calls[1].headers.get("Cookie"), "3x-ui=anonymous");
+  assert.equal(calls[1].headers.get("X-CSRF-Token"), "csrf-value");
+  assert.deepEqual(Object.fromEntries(new URLSearchParams(calls[1].body)), { username: "admin", password: "password" });
+  assert.equal(calls[2].headers.get("Cookie"), "3x-ui=logged-in");
   assert.equal(calls[3].headers.get("Cookie"), "3x-ui=logged-in");
   assert.equal(calls[3].headers.get("Authorization"), null);
   assert.equal(calls[4].headers.get("Cookie"), "3x-ui=logged-in");
-  assert.equal(calls[4].headers.get("X-CSRF-Token"), "csrf-value");
+  assert.equal(calls[4].headers.get("X-CSRF-Token"), "authenticated-csrf");
   assert.equal(calls[4].headers.get("Authorization"), null);
   assert.equal(calls[5].headers.get("Authorization"), "Bearer panel-api-token");
   assert.equal(calls[5].headers.get("Cookie"), null);
@@ -219,10 +223,16 @@ test("XuiClient reads TLS settings directly from legacy panels with saved creden
     const headers = new Headers(init?.headers);
     calls.push({ url, headers });
 
+    if (url.pathname === "/base/csrf-token" || url.pathname === "/base/panel/csrf-token") {
+      return new Response(null, { status: 404 });
+    }
     if (url.pathname === "/base/login") {
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=legacy-session; Path=/base/; HttpOnly" },
       });
+    }
+    if (url.pathname === "/base/panel/setting/all") {
+      return new Response(null, { status: 404 });
     }
     if (url.pathname === "/base/panel/setting/defaultSettings") {
       return Response.json({
@@ -245,11 +255,40 @@ test("XuiClient reads TLS settings directly from legacy panels with saved creden
     webKeyFile: "/legacy/privkey.pem",
   });
   assert.deepEqual(calls.map(call => call.url.pathname), [
+    "/base/csrf-token",
     "/base/login",
+    "/base/panel/csrf-token",
+    "/base/panel/setting/all",
     "/base/panel/setting/defaultSettings",
   ]);
-  assert.equal(calls[0].headers.get("X-CSRF-Token"), null);
-  assert.equal(calls[1].headers.get("Cookie"), "3x-ui=legacy-session");
+  assert.equal(calls[1].headers.get("X-CSRF-Token"), null);
+  assert.equal(calls[4].headers.get("Cookie"), "3x-ui=legacy-session");
+});
+
+test("XuiClient explains the generic 3x-ui login error without requiring 2FA", async () => {
+  const mockFetch = (async (input: URL | RequestInfo) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    if (url.pathname === "/csrf-token") {
+      return new Response(JSON.stringify({ success: true, obj: "csrf-value" }), {
+        headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=anonymous; Path=/; HttpOnly" },
+      });
+    }
+    if (url.pathname === "/login") {
+      return Response.json({ success: false, msg: "Invalid username or password or two-factor code." });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelUser: "admin",
+    panelPass: "wrong-password",
+  }, mockFetch);
+
+  await assert.rejects(
+    client.authenticate(),
+    /不代表必须填写 2FA.*5 次.*15 分钟登录锁定/,
+  );
 });
 
 test("XuiClient uses Bearer Token and native form encoding for management APIs", async () => {
@@ -364,6 +403,9 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
         headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=logged-in; Path=/base/; HttpOnly" },
       });
     }
+    if (url.pathname === "/base/panel/csrf-token") {
+      return Response.json({ success: true, obj: "authenticated-csrf" });
+    }
     if (url.pathname === "/base/panel/api/inbounds/list") {
       return Response.json({ success: true, obj: [{ id: 31, tag: "inbound-31" }] });
     }
@@ -410,9 +452,9 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
   await client.restartXray();
 
   assert.deepEqual(calls.map((call) => [call.method, call.url.pathname]), [
-    ["POST", "/base/login"],
     ["GET", "/base/csrf-token"],
     ["POST", "/base/login"],
+    ["GET", "/base/panel/csrf-token"],
     ["GET", "/base/panel/api/inbounds/list"],
     ["POST", "/base/panel/api/inbounds/del/31"],
     ["POST", "/base/panel/xray/"],
@@ -428,7 +470,7 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
   for (const call of calls.slice(5)) {
     assert.equal(call.headers.get("Authorization"), null);
     assert.equal(call.headers.get("Cookie"), "3x-ui=logged-in");
-    assert.equal(call.headers.get("X-CSRF-Token"), "csrf-value");
+    assert.equal(call.headers.get("X-CSRF-Token"), "authenticated-csrf");
   }
 
   assert.match(calls[6].headers.get("Content-Type") || "", /^application\/x-www-form-urlencoded/);
@@ -443,6 +485,9 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
 test("XuiClient reports the Xray reload stage when restart times out", async () => {
   const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
     const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    if (url.pathname === "/csrf-token" || url.pathname === "/panel/csrf-token") {
+      return new Response(null, { status: 404 });
+    }
     if (url.pathname === "/login") {
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=logged-in; Path=/; HttpOnly" },

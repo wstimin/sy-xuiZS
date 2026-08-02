@@ -32,18 +32,9 @@ export default function App() {
     webKeyFile?: string;
   } | null>(null);
 
-  const sanitizeHistoryItem = (item: HistoryItem): HistoryItem => {
+  const normalizeHistoryItem = (item: HistoryItem): HistoryItem => {
     if (item.type === 'panel' && item.panelData) {
-      return {
-        ...item,
-        panelData: {
-          ...item.panelData,
-          password: undefined,
-          apiToken: undefined,
-          webCertFile: undefined,
-          webKeyFile: undefined
-        }
-      };
+      return item;
     }
     return {
       id: item.id,
@@ -62,9 +53,9 @@ export default function App() {
       const saved = localStorage.getItem('3xui_deploy_history');
       if (saved) {
         const parsed = JSON.parse(saved);
-        const sanitized = Array.isArray(parsed) ? parsed.map(sanitizeHistoryItem) : [];
-        setHistoryItems(sanitized);
-        localStorage.setItem('3xui_deploy_history', JSON.stringify(sanitized));
+        const normalized = Array.isArray(parsed) ? parsed.map(normalizeHistoryItem) : [];
+        setHistoryItems(normalized);
+        localStorage.setItem('3xui_deploy_history', JSON.stringify(normalized));
       }
     } catch {
       // ignore
@@ -116,13 +107,7 @@ export default function App() {
       type: 'panel',
       title: `xui面板 (${result.host}:${result.port})`,
       summary: result.accessUrl,
-      panelData: {
-        ...result,
-        password: undefined,
-        apiToken: undefined,
-        webCertFile: undefined,
-        webKeyFile: undefined
-      }
+      panelData: { ...result }
     };
     saveHistory(historyItem);
   };
@@ -275,17 +260,26 @@ export default function App() {
             path: data.path,
             protocol: data.protocol,
             username: data.username,
-            password: '',
+            password: data.password || '',
+            apiToken: data.apiToken || '',
             panelFlavor: data.panelFlavor || (
               data.scriptType === 'recommended'
                 ? 'mogai'
                 : data.scriptType === 'official'
                   ? 'official'
                   : 'compatible'
-            )
+            ),
+            webCertFile: data.webCertFile,
+            webKeyFile: data.webKeyFile
           });
           setCurrentView('node');
-          showToast('已载入面板地址', '历史记录不保存密码，请重新输入面板密码或 Token', 'info');
+          showToast(
+            '已载入面板凭证',
+            data.apiToken
+              ? '面板地址、账号、密码、Token 和证书路径已自动回填'
+              : '面板地址、账号和密码已自动回填',
+            'success'
+          );
         }}
       />
 

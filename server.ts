@@ -294,32 +294,43 @@ async function startServer() {
         : sslMode === "none" ? "http" : "https";
       const accessUrl = `${fallbackProtocol}://${domain || host}:${installedPort}${installedPath}`;
 
+      write({ type: "log", step: 8, message: "[AUTH] 正在验证面板登录凭证" });
+      const panelClient = new XuiClient({
+        panelAddress: domain || host,
+        panelPort: installedPort,
+        panelPath: installedPath,
+        panelProtocol: accessUrl.startsWith("https://") ? "https" : "http",
+        panelUser: username,
+        panelPass: password,
+        allowInsecureTls: true,
+      });
+      let panelAuthError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          await panelClient.authenticate();
+          panelAuthError = undefined;
+          break;
+        } catch (error) {
+          panelAuthError = error;
+          if (/面板拒绝了当前用户名或密码|用户名或密码错误/i.test(errorMessage(error))) break;
+          if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1_000));
+        }
+      }
+      if (panelAuthError) {
+        throw new Error(`面板服务已启动，但安装后登录凭证验证失败：${errorMessage(panelAuthError)}`);
+      }
+
       let apiToken = installed.API_TOKEN || parseApiTokenFromOutput(`${install.stdout}\n${install.stderr}`) || undefined;
       if (apiToken) {
-        write({ type: "log", step: 8, message: "[TOKEN] 已从安装结果中提取面板 API Token" });
+        write({ type: "log", step: 8, message: "[TOKEN] 登录凭证已验证，并已从安装结果中提取面板 API Token" });
       }
       if (!apiToken) {
         write({ type: "log", step: 8, message: "[TOKEN] 正在读取节点创建所需的 API Token" });
-        let tokenError: unknown;
-        for (let attempt = 1; attempt <= 3 && !apiToken; attempt += 1) {
-          try {
-            const tokenClient = new XuiClient({
-              panelAddress: domain || host,
-              panelPort: installedPort,
-              panelPath: installedPath,
-              panelProtocol: accessUrl.startsWith("https://") ? "https" : "http",
-              panelUser: username,
-              panelPass: password,
-              allowInsecureTls: true,
-            });
-            await tokenClient.authenticate();
-            apiToken = await tokenClient.getApiToken();
-          } catch (error) {
-            tokenError = error;
-            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1_000));
-          }
+        try {
+          apiToken = await panelClient.getApiToken();
+        } catch (error) {
+          throw new Error(`面板已安装，但未能读取创建节点所需的 API Token：${errorMessage(error)}`);
         }
-        if (!apiToken) throw new Error(`面板已安装，但未能读取创建节点所需的 API Token：${errorMessage(tokenError)}`);
         write({ type: "log", step: 8, message: "[TOKEN] API Token 已读取并将自动带入节点页面" });
       }
 
