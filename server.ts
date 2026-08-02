@@ -306,7 +306,6 @@ async function startServer() {
   app.post("/api/get-panel-tls", async (req, res) => {
     try {
       const client = new XuiClient(xuiOptions(req.body));
-      await client.authenticate();
       const files = await client.getWebCertFiles();
       res.json({ success: true, files, sni: cleanHostInput(req.body.panelAddress) });
     } catch (error) {

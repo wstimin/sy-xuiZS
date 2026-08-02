@@ -187,19 +187,23 @@ export class XuiClient {
     if (this.sessionAuthenticated) return;
     const username = requiredString(this.options.panelUser, "面板用户名");
     const password = requiredString(this.options.panelPass, "面板密码");
-    try {
+    const login = () => {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (this.csrfToken) headers["X-CSRF-Token"] = this.csrfToken;
+      return this.rawRequest("login", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ username, password }),
+      }, false);
+    };
+
+    // Legacy and recommended 2.9.4-based panels accept the saved credentials
+    // directly. Current panels answer 403 quickly and then need one CSRF retry.
+    let response = await login();
+    if (response.status === 403) {
       await this.refreshCsrfToken();
-    } catch {
-      // 3x-ui 2.9.4 and older builds do not expose the public CSRF bootstrap endpoint.
-      this.csrfToken = "";
+      response = await login();
     }
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.csrfToken) headers["X-CSRF-Token"] = this.csrfToken;
-    const response = await this.rawRequest("login", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ username, password }),
-    }, false);
     const data = await this.parseResponse<unknown>(response, "面板登录");
     if (!data.success) throw new Error(data.msg || "面板用户名或密码错误");
     if (!this.cookie) throw new Error("面板登录成功但没有返回会话 Cookie，请检查面板路径和版本");
