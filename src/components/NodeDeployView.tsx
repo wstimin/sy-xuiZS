@@ -157,6 +157,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
         panelPort: initialPanelData.port,
         panelPath: initialPanelData.path,
         panelProtocol: initialPanelData.protocol || 'http',
+        allowInsecureTls: false,
         panelUser: initialPanelData.username,
         panelPass: initialPanelData.password || '',
         panelToken: initialPanelData.apiToken || '',
@@ -396,14 +397,24 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
           <div className="grid sm:grid-cols-4 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-zinc-300">访问协议</label>
-              <select
-                value={form.panelProtocol}
-                onChange={e => setForm({ ...form, panelProtocol: e.target.value as 'http' | 'https', allowInsecureTls: false })}
-                className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all"
-              >
-                <option value="http">HTTP</option>
-                <option value="https">HTTPS</option>
-              </select>
+              {initialPanelData ? (
+                <input
+                  type="text"
+                  readOnly
+                  value={form.panelProtocol.toUpperCase()}
+                  title="已使用面板安装结果中的实际访问协议"
+                  className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 text-white text-sm outline-none cursor-default"
+                />
+              ) : (
+                <select
+                  value={form.panelProtocol}
+                  onChange={e => setForm({ ...form, panelProtocol: e.target.value as 'http' | 'https', allowInsecureTls: false })}
+                  className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all"
+                >
+                  <option value="http">HTTP</option>
+                  <option value="https">HTTPS</option>
+                </select>
+              )}
             </div>
 
             <div className="sm:col-span-2 space-y-1.5">
@@ -432,7 +443,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
             </div>
           </div>
 
-          {form.panelProtocol === 'https' && (
+          {!initialPanelData && form.panelProtocol === 'https' && (
             <label className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs cursor-pointer">
               <input
                 type="checkbox"

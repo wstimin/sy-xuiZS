@@ -2,8 +2,6 @@ export type ViewMode = 'home' | 'panel' | 'node';
 
 export type AuthType = 'password' | 'privateKey';
 
-export type SystemType = 'debian-ubuntu' | 'centos' | 'autodetect';
-
 export type ScriptType = 'recommended' | 'official' | 'custom';
 
 export type ProtocolType = 'VLESS' | 'VMess' | 'Trojan' | 'Shadowsocks';
@@ -25,7 +23,6 @@ export interface PanelDeployForm {
   panelUsername?: string;
   panelPassword?: string;
   domain?: string;
-  systemType: SystemType;
   autoSSL: boolean;
   scriptType?: ScriptType;
   customScriptUrl?: string;

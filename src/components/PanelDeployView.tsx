@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PanelDeployForm, PanelResult, SystemType, ScriptType } from '../types';
+import { PanelDeployForm, PanelResult, ScriptType } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import {
   Terminal, Key, Server, Lock, Globe, Shield, Sparkles, Copy, Check, ExternalLink, Play, ArrowRight, X, Code2, CheckCircle2,
@@ -63,7 +63,6 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     panelUsername: '',
     panelPassword: '',
     domain: '',
-    systemType: 'debian-ubuntu',
     autoSSL: true,
     scriptType: 'recommended',
     customScriptUrl: ''
@@ -137,6 +136,8 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
   const updateSshConnection = (changes: Partial<PanelDeployForm>) => {
     setForm(prev => ({ ...prev, ...changes, sshSessionId: '' }));
+    setSshTestResult(null);
+    setSshTestError(null);
   };
 
   const handleCopyOneKeyCmd = () => {
@@ -742,17 +743,15 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-zinc-300 flex items-center justify-between">
                 <span>操作系统环境</span>
-                <span className="text-[10px] text-indigo-400 font-mono">脚本支持自动检测</span>
+                <span className="text-[10px] text-indigo-400 font-mono">SSH 检测后自动回填</span>
               </label>
-              <select
-                value={form.systemType}
-                onChange={e => setForm({ ...form, systemType: e.target.value as SystemType })}
-                className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all cursor-pointer"
-              >
-                <option value="debian-ubuntu">Debian 12+ / Ubuntu 22.04+ (首选推荐)</option>
-                <option value="centos">CentOS Stream 9+ / AlmaLinux 9+ / Rocky 9+</option>
-                <option value="autodetect">自动检测系统 (Auto-detect)</option>
-              </select>
+              <input
+                type="text"
+                readOnly
+                value={sshTestResult?.osName || '自动检测'}
+                title={sshTestResult?.osName || '点击 SSH 检测后自动读取服务器系统'}
+                className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 text-white text-sm outline-none cursor-default"
+              />
             </div>
           </div>
 
