@@ -273,24 +273,7 @@ export class XuiClient {
   }
 
   async getWebCertFiles(): Promise<{ webCertFile: string; webKeyFile: string }> {
-    if (optionalString(this.options.panelToken)) {
-      try {
-        const files = await this.request<Record<string, unknown>>(
-          "panel/api/server/getWebCertFiles",
-          {},
-          5_000,
-          "读取面板 TLS 证书路径超时",
-        );
-        return parseWebCertFiles(files);
-      } catch (error) {
-        if (!this.hasSessionCredentials()) throw error;
-      }
-    }
-
-    const files = await this.sessionRequest<Record<string, unknown>>(
-      "panel/setting/defaultSettings",
-      { method: "POST" },
-    );
+    const files = await this.sessionRequest<Record<string, unknown>>("panel/setting/defaultSettings", { method: "POST" });
     return parseWebCertFiles(files);
   }
 
