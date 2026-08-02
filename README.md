@@ -21,7 +21,7 @@
 支持 Ubuntu 20.04+、Debian 11+、CentOS 8+、Rocky Linux 和 AlmaLinux。请在 Linux VPS 上执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh | sudo bash
+bash <(curl -Ls https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh)
 ```
 
 脚本会安装 Node.js 20、项目依赖和 PM2，执行测试、类型检查与生产构建，然后启动服务。默认访问地址为：
