@@ -22,9 +22,12 @@ interface SshTestDetails {
   kernel: string;
   glibcVersion: string;
   systemdVersion: string;
+  systemdAvailable: boolean;
   totalRamMb: number;
   freeRamMb: number;
+  diskFreeMb: number;
   cpuCores: number;
+  packageManager: string;
   isRoot: boolean;
   warnings: string[];
   status: 'compatible' | 'warning' | 'incompatible';
@@ -167,10 +170,10 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
         body: JSON.stringify({ ...form, ipOrDomain: cleanIp })
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
-      if (!data.success) {
-        throw new Error(data.error || 'SSH 握手或凭据校验失败');
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `SSH 检测接口返回 HTTP ${res.status}`);
       }
 
       setSshTestResult(data.details);
@@ -517,9 +520,9 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
           {sshTestResult && (
             <div className="mt-4 p-4 rounded-xl bg-black/40 border border-indigo-500/30 space-y-3 animate-in fade-in duration-200">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5 text-xs">
-                <div className="flex items-center gap-2 font-semibold text-emerald-400">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>SSH 通信与系统环境检测正常</span>
+                <div className={`flex items-center gap-2 font-semibold ${sshTestResult.status === 'incompatible' ? 'text-rose-400' : sshTestResult.status === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {sshTestResult.status === 'incompatible' ? <ShieldAlert className="w-4 h-4" /> : sshTestResult.status === 'warning' ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                  <span>{sshTestResult.status === 'incompatible' ? 'SSH 已连接，但服务器环境不兼容' : sshTestResult.status === 'warning' ? 'SSH 已连接，服务器环境存在警告' : 'SSH 通信与系统环境检测正常'}</span>
                 </div>
                 <div className="flex items-center gap-2 font-mono text-[11px]">
                   <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 flex items-center gap-1">
@@ -549,7 +552,26 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
                 <div className="p-2 rounded-lg bg-white/5 border border-white/5 space-y-0.5">
                   <span className="text-zinc-500 font-mono block">环境依赖库</span>
-                  <span className="text-zinc-200 font-medium block truncate">GLIBC {sshTestResult.glibcVersion} | systemd</span>
+                  <span className="text-zinc-200 font-medium block truncate">{sshTestResult.systemdVersion}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+                  <span className="text-zinc-500 font-mono block">CPU 核心</span>
+                  <span className="text-zinc-200 font-medium">{sshTestResult.cpuCores}</span>
+                </div>
+                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+                  <span className="text-zinc-500 font-mono block">磁盘可用</span>
+                  <span className="text-zinc-200 font-medium">{sshTestResult.diskFreeMb ? `${Math.round(sshTestResult.diskFreeMb / 1024)} GB` : '未获取'}</span>
+                </div>
+                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+                  <span className="text-zinc-500 font-mono block">包管理器</span>
+                  <span className="text-zinc-200 font-medium">{sshTestResult.packageManager}</span>
+                </div>
+                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+                  <span className="text-zinc-500 font-mono block">GLIBC</span>
+                  <span className="text-zinc-200 font-medium block truncate">{sshTestResult.glibcVersion}</span>
                 </div>
               </div>
 

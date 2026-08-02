@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildInstallCommand, shellQuote } from "./ssh.js";
+import { buildInstallCommand, parseServerInspectionOutput, shellQuote } from "./ssh.js";
 
 test("shellQuote safely escapes single quotes", () => {
   assert.equal(shellQuote("a'b"), "'a'\"'\"'b'");
@@ -54,4 +54,56 @@ test("buildInstallCommand drives and configures the interactive recommended inst
   assert.match(command, /xui-test/);
   assert.doesNotMatch(command, /-s --/);
   assert.doesNotMatch(command, /secret'value/);
+});
+
+test("parseServerInspectionOutput reports a compatible systemd server", () => {
+  const details = parseServerInspectionOutput(
+    { host: "203.0.113.10", port: 22, user: "root", fingerprint: "SHA256:test", latencyMs: 42 },
+    [
+      "__OS__=Debian GNU/Linux 12 (bookworm)",
+      "__OS_ID__=debian",
+      "__OS_VERSION__=12",
+      "__ARCH__=x86_64",
+      "__KERNEL__=Linux 6.1.0",
+      "__GLIBC__=ldd (Debian GLIBC 2.36) 2.36",
+      "__SYSTEMD__=systemd 252 (252.38-1~deb12u1)",
+      "__SYSTEMD_ACTIVE__=yes",
+      "__RAM_KB__=1048576",
+      "__FREE_KB__=524288",
+      "__DISK_FREE_KB__=10485760",
+      "__CPU__=2",
+      "__UID__=0",
+      "__CURL__=yes",
+      "__PKG_MANAGER__=apt",
+    ].join("\n"),
+  );
+
+  assert.equal(details.status, "compatible");
+  assert.equal(details.systemdAvailable, true);
+  assert.equal(details.totalRamMb, 1024);
+  assert.equal(details.diskFreeMb, 10240);
+  assert.equal(details.packageManager, "apt");
+  assert.deepEqual(details.warnings, []);
+});
+
+test("parseServerInspectionOutput rejects systems where systemd is not PID 1", () => {
+  const details = parseServerInspectionOutput(
+    { host: "203.0.113.11", port: 22, user: "root", fingerprint: "SHA256:test", latencyMs: 42 },
+    [
+      "__OS__=Ubuntu 24.04 LTS",
+      "__SYSTEMD__=systemd 255 (255.4-1ubuntu8)",
+      "__SYSTEMD_ACTIVE__=no",
+      "__RAM_KB__=1048576",
+      "__FREE_KB__=524288",
+      "__DISK_FREE_KB__=10485760",
+      "__CPU__=2",
+      "__UID__=0",
+      "__CURL__=yes",
+      "__PKG_MANAGER__=apt",
+    ].join("\n"),
+  );
+
+  assert.equal(details.status, "incompatible");
+  assert.equal(details.systemdAvailable, false);
+  assert.match(details.warnings.join("\n"), /未运行 systemd/);
 });

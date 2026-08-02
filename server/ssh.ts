@@ -103,6 +103,7 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
     if (input.sshPrivateKeyPassphrase) config.passphrase = input.sshPrivateKeyPassphrase;
   } else {
     config.password = requiredString(input.sshPassword, "SSH 密码");
+    config.tryKeyboard = true;
   }
 
   let fingerprint = "";
@@ -126,6 +127,11 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
       clearTimeout(timer);
       reject(new Error(`SSH 连接失败: ${error.message}`));
     });
+    if (authType === "password") {
+      client.on("keyboard-interactive", (_name, _instructions, _language, prompts, finish) => {
+        finish(prompts.map(() => config.password || ""));
+      });
+    }
     client.connect(config);
   });
 }
@@ -173,33 +179,23 @@ export function execSsh(
   });
 }
 
-export async function inspectServer(session: SshSession) {
-  const command = [
-    "printf '__OS__='; . /etc/os-release 2>/dev/null; printf '%s %s' \"${PRETTY_NAME:-Linux}\" \"$(uname -m)\"; echo",
-    "printf '__ARCH__='; uname -m",
-    "printf '__KERNEL__='; uname -sr",
-    "printf '__GLIBC__='; (ldd --version 2>/dev/null | head -n1 || true)",
-    "printf '__SYSTEMD__='; (systemctl --version 2>/dev/null | head -n1 || echo unavailable)",
-    "printf '__RAM_KB__='; awk '/MemTotal/{print $2}' /proc/meminfo",
-    "printf '__FREE_KB__='; awk '/MemAvailable/{print $2}' /proc/meminfo",
-    "printf '__CPU__='; (nproc 2>/dev/null || echo 1)",
-    "printf '__UID__='; id -u",
-    "printf '__USER__='; id -un",
-    "printf '__CURL__='; command -v curl >/dev/null && echo yes || echo no",
-  ].join("; ");
-  const result = await execSsh(session.client, command);
-  if (result.code !== 0) throw new Error(result.stderr || "无法读取服务器环境");
+export function parseServerInspectionOutput(
+  session: Pick<SshSession, "host" | "port" | "user" | "fingerprint" | "latencyMs">,
+  output: string,
+) {
   const values = new Map<string, string>();
-  for (const line of result.stdout.split(/\r?\n/)) {
+  for (const line of output.split(/\r?\n/)) {
     const match = line.match(/^__([A-Z_]+)__=(.*)$/);
     if (match) values.set(match[1], match[2].trim());
   }
   const isRoot = values.get("UID") === "0";
+  const systemdAvailable = values.get("SYSTEMD_ACTIVE") === "yes";
   const warnings: string[] = [];
   if (!isRoot) warnings.push("当前用户不是 root，部署时要求具备免密 sudo 权限。");
-  if (values.get("CURL") !== "yes") warnings.push("服务器尚未安装 curl，官方安装脚本可能无法启动。");
+  if (values.get("CURL") !== "yes") warnings.push("服务器尚未安装 curl，安装脚本可能无法启动。");
   const totalRamMb = Math.round(Number(values.get("RAM_KB") || 0) / 1024);
   if (totalRamMb && totalRamMb < 512) warnings.push("服务器内存低于 512MB，建议先配置 Swap。");
+  if (!systemdAvailable) warnings.push("当前系统未运行 systemd，无法安装 x-ui 系统服务。");
   return {
     targetHost: session.host,
     sshPort: session.port,
@@ -207,16 +203,45 @@ export async function inspectServer(session: SshSession) {
     latencyMs: session.latencyMs,
     hostKeyFingerprint: session.fingerprint,
     osName: values.get("OS") || "Linux",
+    osId: values.get("OS_ID") || "unknown",
+    osVersion: values.get("OS_VERSION") || "unknown",
     arch: values.get("ARCH") || "unknown",
     kernel: values.get("KERNEL") || "unknown",
     glibcVersion: values.get("GLIBC") || "unknown",
-    systemdVersion: values.get("SYSTEMD") || "unknown",
+    systemdVersion: values.get("SYSTEMD") || "unavailable",
+    systemdAvailable,
     totalRamMb,
     freeRamMb: Math.round(Number(values.get("FREE_KB") || 0) / 1024),
+    diskFreeMb: Math.round(Number(values.get("DISK_FREE_KB") || 0) / 1024),
     cpuCores: Number(values.get("CPU") || 1),
+    packageManager: values.get("PKG_MANAGER") || "unknown",
     isRoot,
     hasCurl: values.get("CURL") === "yes",
     warnings,
-    status: values.get("SYSTEMD") === "unavailable" ? "incompatible" : warnings.length ? "warning" : "compatible",
+    status: !systemdAvailable ? "incompatible" : warnings.length ? "warning" : "compatible",
   };
+}
+
+export async function inspectServer(session: SshSession) {
+  const command = [
+    "if [ -r /etc/os-release ]; then . /etc/os-release; fi; printf '__OS__=%s\\n' \"${PRETTY_NAME:-Linux}\"",
+    "printf '__OS_ID__=%s\\n' \"${ID:-unknown}\"",
+    "printf '__OS_VERSION__=%s\\n' \"${VERSION_ID:-unknown}\"",
+    "printf '__ARCH__='; uname -m",
+    "printf '__KERNEL__='; uname -sr",
+    "printf '__GLIBC__='; (ldd --version 2>/dev/null | head -n1 || true)",
+    "printf '__SYSTEMD__='; if command -v systemctl >/dev/null 2>&1; then systemctl --version 2>/dev/null | head -n1; else echo unavailable; fi",
+    "printf '__SYSTEMD_ACTIVE__='; if [ \"$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')\" = systemd ] && [ -d /run/systemd/system ]; then echo yes; else echo no; fi",
+    "printf '__RAM_KB__='; awk '/MemTotal/{print $2}' /proc/meminfo",
+    "printf '__FREE_KB__='; awk '/MemAvailable/{print $2}' /proc/meminfo",
+    "printf '__DISK_FREE_KB__='; df -Pk / 2>/dev/null | awk 'NR==2 {print $4}'",
+    "printf '__CPU__='; (nproc 2>/dev/null || echo 1)",
+    "printf '__UID__='; id -u",
+    "printf '__USER__='; id -un",
+    "printf '__CURL__='; command -v curl >/dev/null && echo yes || echo no",
+    "printf '__PKG_MANAGER__='; if command -v apt-get >/dev/null; then echo apt; elif command -v dnf >/dev/null; then echo dnf; elif command -v yum >/dev/null; then echo yum; else echo unknown; fi",
+  ].join("; ");
+  const result = await execSsh(session.client, command);
+  if (result.code !== 0) throw new Error(result.stderr || "无法读取服务器环境");
+  return parseServerInspectionOutput(session, result.stdout);
 }
