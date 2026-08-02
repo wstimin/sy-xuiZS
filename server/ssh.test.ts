@@ -1,9 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildInstallCommand, parseServerInspectionOutput, shellQuote } from "./ssh.js";
+import { buildInstallCommand, formatSshConnectionError, parseServerInspectionOutput, shellQuote } from "./ssh.js";
 
 test("shellQuote safely escapes single quotes", () => {
   assert.equal(shellQuote("a'b"), "'a'\"'\"'b'");
+});
+
+test("formatSshConnectionError gives actionable connection diagnostics", () => {
+  assert.equal(
+    formatSshConnectionError(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" })),
+    "SSH 端口拒绝连接，请确认 SSH 服务和端口配置",
+  );
+  assert.equal(
+    formatSshConnectionError(Object.assign(new Error("Timed out while waiting for handshake"), { code: "ETIMEDOUT" })),
+    "SSH 连接超时，请检查服务器安全组、防火墙和 SSH 端口",
+  );
+  assert.equal(
+    formatSshConnectionError(new Error("All configured authentication methods failed")),
+    "SSH 认证失败，请检查用户名、密码或私钥",
+  );
 });
 
 test("buildInstallCommand uses official noninteractive environment", () => {

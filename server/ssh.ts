@@ -27,6 +27,29 @@ export interface ExecResult {
   code: number;
 }
 
+export function formatSshConnectionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = typeof error === "object" && error && "code" in error
+    ? String((error as { code?: unknown }).code || "")
+    : "";
+  if (/authentication|all configured authentication methods failed/i.test(message)) {
+    return "SSH 认证失败，请检查用户名、密码或私钥";
+  }
+  if (code === "ECONNREFUSED" || /connection refused/i.test(message)) {
+    return "SSH 端口拒绝连接，请确认 SSH 服务和端口配置";
+  }
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN" || /getaddrinfo/i.test(message)) {
+    return "无法解析服务器域名，请检查地址或 DNS";
+  }
+  if (code === "ETIMEDOUT" || /timed out|timeout/i.test(message)) {
+    return "SSH 连接超时，请检查服务器安全组、防火墙和 SSH 端口";
+  }
+  if (code === "EHOSTUNREACH" || code === "ENETUNREACH" || /host is unreachable|network is unreachable/i.test(message)) {
+    return "SSH 服务器网络不可达，请检查公网 IP、路由和安全组";
+  }
+  return `SSH 连接失败: ${message}`;
+}
+
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
@@ -115,18 +138,28 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
   const client = new Client();
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    let settled = false;
+    const finishError = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       client.destroy();
-      reject(new Error("SSH 连接超时"));
-    }, 20_000);
+      reject(new Error(formatSshConnectionError(error)));
+    };
+    const timer = setTimeout(() => {
+      finishError(Object.assign(new Error("Timed out while waiting for SSH handshake"), { code: "ETIMEDOUT" }));
+    }, 15_000);
     client.once("ready", () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       resolve({ client, host, port, user, fingerprint, latencyMs: Date.now() - startedAt });
     });
-    client.once("error", (error) => {
-      clearTimeout(timer);
-      reject(new Error(`SSH 连接失败: ${error.message}`));
+    client.on("error", (error) => {
+      finishError(error);
     });
+    client.once("end", () => finishError(new Error("SSH 服务器在握手完成前关闭了连接")));
+    client.once("close", () => finishError(new Error("SSH 连接在握手完成前被关闭")));
     if (authType === "password") {
       client.on("keyboard-interactive", (_name, _instructions, _language, prompts, finish) => {
         finish(prompts.map(() => config.password || ""));
@@ -145,15 +178,21 @@ export function execSsh(
     let stdout = "";
     let stderr = "";
     let stream: ClientChannel | undefined;
-    const timer = setTimeout(() => {
+    let settled = false;
+    const finishError = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       stream?.close();
-      reject(new Error("远程命令执行超时"));
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      finishError(new Error("远程命令执行超时"));
     }, options.timeoutMs ?? 30_000);
 
     client.exec(command, (error, channel) => {
       if (error) {
-        clearTimeout(timer);
-        reject(new Error(`无法执行远程命令: ${error.message}`));
+        finishError(new Error(`无法执行远程命令: ${error.message}`));
         return;
       }
       stream = channel;
@@ -168,12 +207,13 @@ export function execSsh(
         options.onStderr?.(text);
       });
       channel.once("close", (code: number | null) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         resolve({ stdout, stderr, code: code ?? 0 });
       });
       channel.once("error", (streamError: Error) => {
-        clearTimeout(timer);
-        reject(new Error(`远程命令失败: ${streamError.message}`));
+        finishError(new Error(`远程命令失败: ${streamError.message}`));
       });
     });
   });
@@ -241,7 +281,7 @@ export async function inspectServer(session: SshSession) {
     "printf '__CURL__='; command -v curl >/dev/null && echo yes || echo no",
     "printf '__PKG_MANAGER__='; if command -v apt-get >/dev/null; then echo apt; elif command -v dnf >/dev/null; then echo dnf; elif command -v yum >/dev/null; then echo yum; else echo unknown; fi",
   ].join("; ");
-  const result = await execSsh(session.client, command);
+  const result = await execSsh(session.client, command, { timeoutMs: 10_000 });
   if (result.code !== 0) throw new Error(result.stderr || "无法读取服务器环境");
   return parseServerInspectionOutput(session, result.stdout);
 }

@@ -163,11 +163,14 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     setSshTestResult(null);
     setSshTestError(null);
 
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 30_000);
     try {
       const res = await fetch('/api/test-ssh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, ipOrDomain: cleanIp })
+        body: JSON.stringify({ ...form, ipOrDomain: cleanIp }),
+        signal: controller.signal
       });
 
       const data = await res.json().catch(() => null);
@@ -179,10 +182,13 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       setSshTestResult(data.details);
       showToast('SSH 连接及系统环境检测成功！', `网络延迟 ${data.details.latencyMs}ms | ${data.details.osName}`, 'success');
     } catch (err: any) {
-      const errMsg = err.message || '请检查 IP、端口、密码或云服务商安全组';
+      const errMsg = err?.name === 'AbortError'
+        ? 'SSH 检测超过 30 秒，请检查服务器安全组、防火墙、SSH 端口以及反向代理超时设置'
+        : err.message || '请检查 IP、端口、密码或云服务商安全组';
       setSshTestError(errMsg);
       showToast('SSH 连接测试失败', errMsg, 'error');
     } finally {
+      window.clearTimeout(timeout);
       setIsTestingSSH(false);
     }
   };
