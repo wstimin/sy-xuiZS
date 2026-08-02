@@ -10,7 +10,7 @@
     "start": "node dist/server.cjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
-    "test": "tsx --test server/inbound-builder.test.ts server/ssh.test.ts server/validation.test.ts server/xray-template.test.ts server/xui-client.test.ts"
+    "test": "tsx --test server/inbound-builder.test.ts server/reality-key.test.ts server/ssh.test.ts server/validation.test.ts server/xray-template.test.ts server/xui-client.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
