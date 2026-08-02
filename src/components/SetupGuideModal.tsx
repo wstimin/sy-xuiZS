@@ -253,7 +253,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                       填入 xui 面板信息（API Token 可自动获取或手动填写）
                     </div>
                     <p className="text-xs text-zinc-400 leading-relaxed pl-6">
-                      输入您的面板 IP、端口、路径与管理员账号密码。<strong>Token 访问令牌留空即可</strong>！提交时后台会自动通过面板登录接口签发 Session 令牌。
+                      输入您的面板 IP、端口、路径与管理员账号密码，再点击读取 Token。面板首次读取时会自动生成 Token，后续管理接口优先使用 Bearer Token。
                     </p>
                   </div>
 
@@ -317,7 +317,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                     Q: 搭建节点的时候不输入 Token 访问令牌能不能搭建成功？
                   </div>
                   <div className="text-zinc-300 leading-relaxed pl-6">
-                    <strong>完全可以成功！</strong> 不需要手动寻找输入 Token。搭建节点时，如果 Token 字段留空，系统后端会使用您填写的面板账号密码自动向 xui 面板接口登录获取 Session 会话令牌完成节点构建。
+                    <strong>支持，但建议先自动读取。</strong> 部分旧版面板允许使用账号密码 Session 创建节点；需要 Bearer Token 的面板版本，应先填写账号密码并点击“自动登录并读取 Token”。
                   </div>
                 </div>
 

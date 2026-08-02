@@ -84,11 +84,15 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     return val.trim().replace(/^(https?:\/\/)+/i, '').replace(/\/.*$/, '').replace(/:[0-9]+$/, '').trim();
   };
 
-  // Auto fetch / generate xui session token
+  // Read the panel API token through an authenticated session.
   const handleFetchToken = async () => {
     const cleanAddress = cleanHostStr(form.panelAddress);
     if (!cleanAddress) {
       showToast('请输入 xui 面板地址', '需要面板 IP 或域名才能进行 API 鉴权', 'warning');
+      return;
+    }
+    if (!form.panelUser.trim() || !form.panelPass.trim()) {
+      showToast('请填写面板账号密码', 'API Token 位于登录保护下，需要先建立面板 Session 才能读取', 'warning');
       return;
     }
 
@@ -114,7 +118,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       }
 
       setForm(prev => ({ ...prev, panelToken: data.token }));
-      showToast('Token 令牌获取成功！', `已自动向 xui 面板请求签发 Token: ${data.token.substring(0, 16)}...`, 'success');
+      showToast('Token 令牌获取成功！', `已从 xui 面板读取 Token: ${data.token.substring(0, 16)}...`, 'success');
     } catch (err: any) {
       showToast('获取 Token 失败', err.message || '请检查面板地址及账号密码是否正确', 'error');
     } finally {
@@ -128,8 +132,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       showToast('请输入 3x-ui 面板地址', '需要先连接目标面板才能读取 TLS 证书配置', 'warning');
       return;
     }
-    if (!form.panelToken?.trim() && (!form.panelUser.trim() || !form.panelPass.trim())) {
-      showToast('缺少面板认证信息', '请填写用户名和密码，或提供 API Token', 'warning');
+    if (!form.panelUser.trim() || !form.panelPass.trim()) {
+      showToast('TLS 需要面板账号密码', '证书配置接口只支持登录 Session，不能只使用 API Token', 'warning');
       return;
     }
     setIsFetchingTls(true);
@@ -274,6 +278,14 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     const secCheck = checkSecurityAllowed(form.protocol, form.transport, form.security);
     if (!secCheck.allowed) {
       showToast('配置存在协议冲突', secCheck.reason || '请修正协议组合', 'error');
+      return;
+    }
+    if (form.security === 'TLS' && (!form.panelUser.trim() || !form.panelPass.trim())) {
+      showToast('TLS 需要面板账号密码', '面板证书路径只能通过登录 Session 获取', 'warning');
+      return;
+    }
+    if (form.autoOutbound && parsedSocksList.length > 0 && (!form.panelUser.trim() || !form.panelPass.trim())) {
+      showToast('SOCKS 路由需要面板账号密码', 'Xray 全局配置接口只支持登录 Session，不能只使用 API Token', 'warning');
       return;
     }
 
@@ -449,7 +461,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
                 ) : (
                   <>
                     <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>自动登录并生成 Token 令牌</span>
+                    <span>自动登录并读取 Token</span>
                   </>
                 )}
               </button>
@@ -457,14 +469,14 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
             <input
               type="password"
-              placeholder="粘贴面板 API Token，或点击右上方自动生成"
+              placeholder="粘贴面板 API Token，或点击右上方自动读取"
               value={form.panelToken || ''}
               onChange={e => setForm({ ...form, panelToken: e.target.value })}
               className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-indigo-200 text-xs font-mono outline-none transition-all"
             />
 
             <p className="text-[11px] text-zinc-400 leading-relaxed bg-black/30 p-2.5 rounded-xl border border-white/5">
-              <strong>Token 认证说明：</strong>部分面板版本或安全配置要求 API Token 才能创建入站。填写或自动生成后，后端会优先使用 Bearer Token 调用全部面板 API；留空时才回退到账号密码 Session。Token 不会写入浏览器历史记录。
+              <strong>Token 认证说明：</strong>部分面板版本或安全配置要求 API Token 才能创建入站。填写或自动读取后，后端会优先使用 Bearer Token 调用 <code>/panel/api/**</code> 管理接口；Token 读取、TLS 证书和 Xray 全局配置仍使用账号密码 Session。Token 不会写入浏览器历史记录。
             </p>
           </div>
         </div>

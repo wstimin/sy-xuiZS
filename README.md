@@ -9,7 +9,7 @@
 - 使用 SSH 密码或私钥连接 VPS，检测系统、架构、systemd、内存和权限。
 - 安装 3x-ui，并实时显示远程执行日志。
 - 自动生成面板端口、Web 路径和初始管理员凭据。
-- 使用面板账号密码登录并自动创建 API Token，或使用已有 Token 调用 API。
+- 使用面板账号密码登录并自动读取 API Token，或使用已有 Token 调用管理 API。
 - 创建 VLESS、VMess、Trojan、Shadowsocks 入站和分享链接。
 - Reality 密钥对由目标 3x-ui 面板实时生成。
 - TLS 节点通过面板 API 自动获取 Web 证书路径，页面不要求手工填写证书路径。
@@ -73,7 +73,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/wstimin/mogai-3xui/main/instal
 https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
 ```
 
-两套脚本使用独立的安装逻辑。官方脚本使用其无人值守环境变量；推荐脚本按实际交互顺序自动回答端口和 TLS 选项，安装后通过 `x-ui setting` 写入助手生成的用户名、密码、端口和 Web 路径。推荐脚本默认启用 TLS：有域名时申请域名证书，无域名时申请 IP 证书。后端读取面板的实际证书状态决定访问协议，并按顺序从安装结果文件、安装输出或 `x-ui setting -getApiToken` 提取 API Token；没有现成 Token 时再登录面板创建。安装成功弹窗会显示 Token，并在跳转“搭建节点”时自动填写。
+两套脚本使用独立的安装逻辑。官方脚本使用其无人值守环境变量；推荐脚本按实际交互顺序自动回答端口和 TLS 选项，安装后通过 `x-ui setting` 写入助手生成的用户名、密码、端口和 Web 路径。推荐脚本默认启用 TLS：有域名时申请域名证书，无域名时申请 IP 证书。后端读取面板的实际证书状态决定访问协议，并优先从安装结果文件或安装输出提取 API Token；没有现成 Token 时登录面板请求 `GET /panel/setting/getApiToken`，面板会在首次读取时自动生成。安装成功弹窗会显示 Token，并在跳转“搭建节点”时自动填写。
 
 自定义 3x-ui 安装脚本只接受 HTTPS URL。非 root SSH 用户必须具备 `sudo -n` 免密 sudo 权限。
 
@@ -87,17 +87,17 @@ https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
 
 当前 Reality 稳定实现限定为 `VLESS + TCP`。
 
-部分 3x-ui 版本要求使用 API Token 才能创建入站，因此 Token 功能会保留。可以手工粘贴已有 Token，也可以使用面板账号密码自动创建；提供 Token 后，面板 API 请求优先使用 `Authorization: Bearer <token>`。本项目不使用 2FA 输入。
+部分 3x-ui 版本要求使用 API Token 才能创建入站，因此 Token 功能会保留。可以手工粘贴已有 Token，也可以使用面板账号密码读取；提供 Token 后，`/panel/api/**` 管理请求优先使用 `Authorization: Bearer <token>`。Token 获取、TLS 证书读取和 Xray 全局配置属于登录保护接口，仍需账号密码 Session。本项目不使用 2FA 输入。
 
 ## TLS 自动获取
 
 TLS 节点要求目标 3x-ui 面板已经配置可用的 Web TLS 证书。选择 TLS 后，助手会调用：
 
 ```text
-GET /panel/api/server/getWebCertFiles
+POST /panel/setting/defaultSettings
 ```
 
-接口返回的 `webCertFile` 和 `webKeyFile` 是目标服务器上的真实路径，助手会把它们写入新入站的 `tlsSettings.certificates`。创建节点前可以点击“从面板获取 TLS”预检，正式创建时后端还会再次获取。
+接口返回的 `defaultCert` 和 `defaultKey` 是目标服务器上的真实路径，助手会把它们写入新入站的 `tlsSettings.certificates`。该接口只支持账号密码登录后的 Session。创建节点前可以点击“从面板获取 TLS”预检，正式创建时后端还会再次获取。
 
 页面不会提供服务器证书路径输入框。默认 SNI 使用面板连接域名；如果面板通过 IP 访问但证书签发给域名，可以只填写证书域名作为 SNI，证书路径仍由面板自动返回。
 

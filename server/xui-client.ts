@@ -23,6 +23,8 @@ export interface XrayTemplateResponse {
   outboundTestUrl: string;
 }
 
+type FetchImplementation = typeof fetch;
+
 function cleanApiToken(value: unknown): string {
   if (typeof value !== "string") return "";
   const token = value.trim().replace(/^['"]|['"]$/g, "");
@@ -34,10 +36,10 @@ export function parseApiTokenResponse(raw: unknown): string {
   if (typeof raw === "string") {
     const token = cleanApiToken(raw);
     if (token && !/[\r\n]/.test(token)) return token;
-    throw new Error("3x-ui 没有返回有效的新 Token");
+    throw new Error("3x-ui 没有返回有效的 API Token");
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("3x-ui 没有返回有效的新 Token");
+    throw new Error("3x-ui 没有返回有效的 API Token");
   }
 
   const result = raw as Record<string, unknown>;
@@ -54,7 +56,7 @@ export function parseApiTokenResponse(raw: unknown): string {
       // Try the remaining known wrapper fields.
     }
   }
-  throw new Error("3x-ui 没有返回有效的新 Token");
+  throw new Error("3x-ui 没有返回有效的 API Token");
 }
 
 export function parseApiTokenFromOutput(output: string): string {
@@ -118,6 +120,27 @@ export function mergeCookieHeader(current: string, setCookieValues: string[]): s
   return [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
 }
 
+export function parseWebCertFiles(raw: unknown): { webCertFile: string; webKeyFile: string } {
+  const files = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+  const webCertFile = optionalString(files.defaultCert) || optionalString(files.webCertFile);
+  const webKeyFile = optionalString(files.defaultKey) || optionalString(files.webKeyFile);
+  if (!webCertFile || !webKeyFile) {
+    throw new Error("目标 3x-ui 面板尚未配置可复用的 Web TLS 证书，请先在面板中申请或安装证书");
+  }
+  return { webCertFile, webKeyFile };
+}
+
+export function serializeInboundPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...payload };
+  for (const field of ["settings", "streamSettings", "sniffing"] as const) {
+    const value = result[field];
+    if (value !== undefined && typeof value !== "string") result[field] = JSON.stringify(value);
+  }
+  return result;
+}
+
 export function normalizePanelBaseUrl(options: XuiClientOptions): string {
   const raw = requiredString(options.panelAddress, "面板地址");
   let parsed: URL;
@@ -138,10 +161,15 @@ export class XuiClient {
   private readonly options: XuiClientOptions;
   private cookie = "";
   private csrfToken = "";
+  private apiToken = "";
+  private sessionAuthenticated = false;
   private readonly dispatcher?: Agent;
+  private readonly fetchImpl: FetchImplementation;
 
-  constructor(options: XuiClientOptions) {
+  constructor(options: XuiClientOptions, fetchImpl: FetchImplementation = fetch) {
     this.options = options;
+    this.fetchImpl = fetchImpl;
+    this.apiToken = optionalString(options.panelToken);
     this.baseUrl = normalizePanelBaseUrl(options);
     if (this.baseUrl.startsWith("https://") && options.allowInsecureTls) {
       this.dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
@@ -149,21 +177,32 @@ export class XuiClient {
   }
 
   async authenticate(): Promise<void> {
-    if (optionalString(this.options.panelToken)) return;
+    if (this.sessionAuthenticated) return;
+    if (optionalString(this.options.panelToken) && !this.hasSessionCredentials()) return;
+    await this.authenticateSession();
+  }
+
+  private async authenticateSession(): Promise<void> {
+    if (this.sessionAuthenticated) return;
     const username = requiredString(this.options.panelUser, "面板用户名");
     const password = requiredString(this.options.panelPass, "面板密码");
-    await this.refreshCsrfToken();
+    try {
+      await this.refreshCsrfToken();
+    } catch {
+      // 3x-ui 2.9.4 and older builds do not expose the public CSRF bootstrap endpoint.
+      this.csrfToken = "";
+    }
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.csrfToken) headers["X-CSRF-Token"] = this.csrfToken;
     const response = await this.rawRequest("login", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRF-Token": this.csrfToken,
-      },
+      headers,
       body: JSON.stringify({ username, password }),
     }, false);
     const data = await this.parseResponse<unknown>(response, "面板登录");
     if (!data.success) throw new Error(data.msg || "面板用户名或密码错误");
     if (!this.cookie) throw new Error("面板登录成功但没有返回会话 Cookie，请检查面板路径和版本");
+    this.sessionAuthenticated = true;
   }
 
   async request<T>(apiPath: string, init: RequestInit = {}): Promise<T> {
@@ -177,20 +216,17 @@ export class XuiClient {
     return data.obj as T;
   }
 
-  async createApiToken(name: string): Promise<string> {
-    const result = await this.request<unknown>("panel/api/setting/apiTokens/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    return parseApiTokenResponse(result);
+  async getApiToken(): Promise<string> {
+    const result = await this.sessionRequest<unknown>("panel/setting/getApiToken", { method: "GET" });
+    this.apiToken = parseApiTokenResponse(result);
+    return this.apiToken;
   }
 
   async addInbound(payload: Record<string, unknown>): Promise<any> {
     return this.request("panel/api/inbounds/add", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(serializeInboundPayload(payload)),
     });
   }
 
@@ -205,37 +241,45 @@ export class XuiClient {
   }
 
   async getWebCertFiles(): Promise<{ webCertFile: string; webKeyFile: string }> {
-    const files = await this.request<{ webCertFile?: string; webKeyFile?: string }>("panel/api/server/getWebCertFiles", { method: "GET" });
-    const webCertFile = optionalString(files?.webCertFile);
-    const webKeyFile = optionalString(files?.webKeyFile);
-    if (!webCertFile || !webKeyFile) {
-      throw new Error("目标 3x-ui 面板尚未配置可复用的 Web TLS 证书，请先在面板中申请或安装证书");
-    }
-    return { webCertFile, webKeyFile };
+    const files = await this.sessionRequest<Record<string, unknown>>("panel/setting/defaultSettings", { method: "POST" });
+    return parseWebCertFiles(files);
   }
 
   async getSettings(): Promise<Record<string, any>> {
-    return this.request("panel/api/setting/all", { method: "POST" });
+    return this.sessionRequest("panel/setting/defaultSettings", { method: "POST" });
   }
 
   async getXrayTemplate(): Promise<XrayTemplateResponse> {
-    const raw = await this.request<string>("panel/api/xray/", { method: "POST" });
+    const raw = await this.sessionRequest<string>("panel/xray/", { method: "POST" });
     return parseXrayTemplateResponse(raw);
   }
 
   async updateXrayTemplate(config: unknown, outboundTestUrl = ""): Promise<void> {
     const body = new URLSearchParams({ xraySetting: JSON.stringify(config), outboundTestUrl });
-    await this.request("panel/api/xray/update", {
+    const init: RequestInit = {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
       body,
-    });
+    };
+    await this.sessionRequest("panel/xray/update", init);
   }
 
-  private async rawRequest(apiPath: string, init: RequestInit, authenticated: boolean): Promise<Response> {
+  private async sessionRequest<T>(apiPath: string, init: RequestInit = {}): Promise<T> {
+    await this.authenticateSession();
+    let response = await this.rawRequest(apiPath, init, true, true);
+    if (response.status === 403 && !this.isSafeMethod(init.method)) {
+      await this.refreshCsrfToken();
+      response = await this.rawRequest(apiPath, init, true, true);
+    }
+    const data = await this.parseResponse<T>(response, apiPath);
+    if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${apiPath}`);
+    return data.obj as T;
+  }
+
+  private async rawRequest(apiPath: string, init: RequestInit, authenticated: boolean, forceSession = false): Promise<Response> {
     const headers = new Headers(init.headers);
-    const token = optionalString(this.options.panelToken);
-    if (authenticated && token) {
+    const token = this.apiToken;
+    if (authenticated && token && !forceSession) {
       headers.set("Authorization", `Bearer ${token}`);
     } else if (this.cookie) {
       headers.set("Cookie", this.cookie);
@@ -246,7 +290,7 @@ export class XuiClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
-      const response = await fetch(new URL(apiPath.replace(/^\/+/, ""), this.baseUrl), {
+      const response = await this.fetchImpl(new URL(apiPath.replace(/^\/+/, ""), this.baseUrl), {
         ...init,
         headers,
         signal: controller.signal,
@@ -283,6 +327,10 @@ export class XuiClient {
 
   private isSafeMethod(method?: string): boolean {
     return ["GET", "HEAD", "OPTIONS", "TRACE"].includes((method || "GET").toUpperCase());
+  }
+
+  private hasSessionCredentials(): boolean {
+    return Boolean(optionalString(this.options.panelUser) && optionalString(this.options.panelPass));
   }
 
   private async parseResponse<T>(response: Response, operation: string): Promise<XuiResponse<T>> {

@@ -170,7 +170,7 @@ async function startServer() {
 
       write({ type: "log", step: 7, message: "[VERIFY] 正在验证服务和读取安装结果" });
       const sudo = systemInfo.isRoot ? "" : "sudo -n ";
-      const verifyCommand = `${sudo}systemctl is-active x-ui && ${sudo}bash -c 'if [ -r /etc/x-ui/install-result.env ]; then . /etc/x-ui/install-result.env; printf "__XUI_USERNAME__=%s\\n__XUI_PASSWORD__=%s\\n__XUI_PANEL_PORT__=%s\\n__XUI_WEB_BASE_PATH__=%s\\n__XUI_ACCESS_URL__=%s\\n__XUI_API_TOKEN__=%s\\n" "$XUI_USERNAME" "$XUI_PASSWORD" "$XUI_PANEL_PORT" "$XUI_WEB_BASE_PATH" "$XUI_ACCESS_URL" "$XUI_API_TOKEN"; fi; if [ -x /usr/local/x-ui/x-ui ]; then cert_output=$(/usr/local/x-ui/x-ui setting -getCert true 2>/dev/null || true); web_cert=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*cert:/{print \\$2; exit}"); web_key=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*key:/{print \\$2; exit}"); api_token_output=$(/usr/local/x-ui/x-ui setting -getApiToken true 2>/dev/null || true); api_token=$(printf "%s\\n" "$api_token_output" | awk -F": *" "/^[[:space:]]*apiToken:/{print \\$2; exit}"); printf "__XUI_WEB_CERT_FILE__=%s\\n__XUI_WEB_KEY_FILE__=%s\\n__XUI_API_TOKEN__=%s\\n" "$web_cert" "$web_key" "$api_token"; fi'`;
+      const verifyCommand = `${sudo}systemctl is-active x-ui && ${sudo}bash -c 'if [ -r /etc/x-ui/install-result.env ]; then . /etc/x-ui/install-result.env; printf "__XUI_USERNAME__=%s\\n__XUI_PASSWORD__=%s\\n__XUI_PANEL_PORT__=%s\\n__XUI_WEB_BASE_PATH__=%s\\n__XUI_ACCESS_URL__=%s\\n__XUI_API_TOKEN__=%s\\n" "$XUI_USERNAME" "$XUI_PASSWORD" "$XUI_PANEL_PORT" "$XUI_WEB_BASE_PATH" "$XUI_ACCESS_URL" "$XUI_API_TOKEN"; fi; if [ -x /usr/local/x-ui/x-ui ]; then cert_output=$(/usr/local/x-ui/x-ui setting -getCert true 2>/dev/null || true); web_cert=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*cert:/{print \\$2; exit}"); web_key=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*key:/{print \\$2; exit}"); printf "__XUI_WEB_CERT_FILE__=%s\\n__XUI_WEB_KEY_FILE__=%s\\n" "$web_cert" "$web_key"; fi'`;
       const verify = await execSsh(session.client, verifyCommand, { timeoutMs: 30_000 });
       if (verify.code !== 0 || !verify.stdout.startsWith("active")) throw new Error(verify.stderr || "x-ui 服务没有成功启动");
       const installed = parseInstallerResult(verify.stdout);
@@ -198,8 +198,8 @@ async function startServer() {
             allowInsecureTls: true,
           });
           await tokenClient.authenticate();
-          apiToken = await tokenClient.createApiToken(`xui-assistant-${Date.now().toString(36)}`);
-          write({ type: "log", step: 8, message: "[TOKEN] 已创建面板 API Token" });
+          apiToken = await tokenClient.getApiToken();
+          write({ type: "log", step: 8, message: "[TOKEN] 已从面板读取 API Token（首次读取时由面板自动生成）" });
         } catch (error) {
           write({ type: "log", step: 8, message: `[TOKEN] 面板未自动返回 Token，可部署后在节点页面重新获取：${errorMessage(error)}` });
         }
@@ -236,8 +236,8 @@ async function startServer() {
     try {
       const client = new XuiClient(xuiOptions(req.body));
       await client.authenticate();
-      const token = await client.createApiToken(`xui-assistant-${Date.now().toString(36)}`);
-      res.json({ success: true, message: "已由 3x-ui 创建新的 API Token；该 Token 只显示一次", token, details: { accessUrl: client.baseUrl } });
+      const token = await client.getApiToken();
+      res.json({ success: true, message: "已读取 3x-ui API Token；面板首次读取时会自动生成", token, details: { accessUrl: client.baseUrl } });
     } catch (error) {
       sendError(res, error);
     }
@@ -263,6 +263,13 @@ async function startServer() {
       const body = req.body as Record<string, any> & InboundInput;
       client = new XuiClient(xuiOptions(body));
       await client.authenticate();
+      if (!optionalString(body.panelToken) && optionalString(body.panelUser) && optionalString(body.panelPass)) {
+        try {
+          await client.getApiToken();
+        } catch {
+          // Older panels can still use the authenticated Session for /panel/api/**.
+        }
+      }
       const reality = body.security === "Reality" ? await client.getRealityKeyPair() : undefined;
       const tlsFiles = body.security === "TLS" ? await client.getWebCertFiles() : undefined;
       const inboundInput = tlsFiles ? {
@@ -302,7 +309,12 @@ async function startServer() {
           : `已向 3x-ui 全局 Xray 模板写入 ${socksList.length} 个 SOCKS 出站，并绑定该入站路由。`;
       }
 
-      const settings = await client.getSettings();
+      let settings: Record<string, any> = {};
+      try {
+        settings = await client.getSettings();
+      } catch {
+        // Subscription metadata is optional; Token-only API access can still create the inbound.
+      }
       const address = cleanHostInput(body.panelAddress);
       const result = {
         id: `node-${Date.now()}`,
