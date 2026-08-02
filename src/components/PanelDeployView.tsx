@@ -541,43 +541,43 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                <div className="p-2 rounded-lg bg-white/5 border border-white/5 space-y-0.5">
+                <div className="system-status-card system-status-card--cyan space-y-0.5">
                   <span className="text-zinc-500 font-mono block">操作系统 OS</span>
-                  <span className="text-zinc-200 font-medium block truncate">{sshTestResult.osName}</span>
+                  <span className="system-status-card__value" title={sshTestResult.osName}>{sshTestResult.osName}</span>
                 </div>
 
-                <div className="p-2 rounded-lg bg-white/5 border border-white/5 space-y-0.5">
+                <div className="system-status-card system-status-card--indigo space-y-0.5">
                   <span className="text-zinc-500 font-mono block">内核 & 架构</span>
-                  <span className="text-zinc-200 font-medium block truncate">{sshTestResult.arch} ({sshTestResult.kernel})</span>
+                  <span className="system-status-card__value" title={`${sshTestResult.arch} (${sshTestResult.kernel})`}>{sshTestResult.arch} ({sshTestResult.kernel})</span>
                 </div>
 
-                <div className="p-2 rounded-lg bg-white/5 border border-white/5 space-y-0.5">
+                <div className="system-status-card system-status-card--emerald space-y-0.5">
                   <span className="text-zinc-500 font-mono block">内存状态 (RAM)</span>
-                  <span className="text-zinc-200 font-medium block truncate">{sshTestResult.totalRamMb} MB (可用 {sshTestResult.freeRamMb} MB)</span>
+                  <span className="system-status-card__value" title={`${sshTestResult.totalRamMb} MB (可用 ${sshTestResult.freeRamMb} MB)`}>{sshTestResult.totalRamMb} MB (可用 {sshTestResult.freeRamMb} MB)</span>
                 </div>
 
-                <div className="p-2 rounded-lg bg-white/5 border border-white/5 space-y-0.5">
+                <div className="system-status-card system-status-card--amber space-y-0.5">
                   <span className="text-zinc-500 font-mono block">环境依赖库</span>
-                  <span className="text-zinc-200 font-medium block truncate">{sshTestResult.systemdVersion}</span>
+                  <span className="system-status-card__value" title={sshTestResult.systemdVersion}>{sshTestResult.systemdVersion}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+                <div className="system-status-card system-status-card--rose">
                   <span className="text-zinc-500 font-mono block">CPU 核心</span>
-                  <span className="text-zinc-200 font-medium">{sshTestResult.cpuCores}</span>
+                  <span className="system-status-card__value">{sshTestResult.cpuCores}</span>
                 </div>
-                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+                <div className="system-status-card system-status-card--sky">
                   <span className="text-zinc-500 font-mono block">磁盘可用</span>
-                  <span className="text-zinc-200 font-medium">{sshTestResult.diskFreeMb ? `${Math.round(sshTestResult.diskFreeMb / 1024)} GB` : '未获取'}</span>
+                  <span className="system-status-card__value">{sshTestResult.diskFreeMb ? `${Math.round(sshTestResult.diskFreeMb / 1024)} GB` : '未获取'}</span>
                 </div>
-                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+                <div className="system-status-card system-status-card--lime">
                   <span className="text-zinc-500 font-mono block">包管理器</span>
-                  <span className="text-zinc-200 font-medium">{sshTestResult.packageManager}</span>
+                  <span className="system-status-card__value">{sshTestResult.packageManager}</span>
                 </div>
-                <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+                <div className="system-status-card system-status-card--violet">
                   <span className="text-zinc-500 font-mono block">GLIBC</span>
-                  <span className="text-zinc-200 font-medium block truncate">{sshTestResult.glibcVersion}</span>
+                  <span className="system-status-card__value" title={sshTestResult.glibcVersion}>{sshTestResult.glibcVersion}</span>
                 </div>
               </div>
 

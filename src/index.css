@@ -1,1 +1,103 @@
 @import "tailwindcss";
+
+.system-status-card {
+  --status-accent: 34 211 238;
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  min-height: 52px;
+  overflow: hidden;
+  padding: 0.5rem;
+  border: 1px solid rgb(var(--status-accent) / 0.24);
+  border-radius: 0.5rem;
+  background:
+    linear-gradient(135deg, rgb(var(--status-accent) / 0.16), rgb(18 20 24 / 0.9) 58%, rgb(var(--status-accent) / 0.08));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 0 18px rgb(var(--status-accent) / 0.05);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  animation: system-status-breathe 5.8s ease-in-out infinite;
+}
+
+.system-status-card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 58%;
+  background: linear-gradient(105deg, transparent, rgb(var(--status-accent) / 0.16), transparent);
+  transform: translateX(-145%) skewX(-12deg);
+  animation: system-status-sheen 6.4s ease-in-out infinite;
+}
+
+.system-status-card:nth-child(2n) {
+  animation-delay: -1.4s;
+}
+
+.system-status-card:nth-child(2n)::before {
+  animation-delay: -3.2s;
+}
+
+.system-status-card:nth-child(3n) {
+  animation-delay: -2.8s;
+}
+
+.system-status-card:nth-child(3n)::before {
+  animation-delay: -1.6s;
+}
+
+.system-status-card:hover {
+  z-index: 1;
+  transform: translateY(-1px);
+  border-color: rgb(var(--status-accent) / 0.5);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.07),
+    0 5px 18px rgb(var(--status-accent) / 0.13);
+}
+
+.system-status-card__value {
+  position: relative;
+  z-index: 1;
+  display: block;
+  overflow: hidden;
+  color: rgb(228 228 231);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-status-card--cyan { --status-accent: 34 211 238; }
+.system-status-card--indigo { --status-accent: 129 140 248; }
+.system-status-card--emerald { --status-accent: 52 211 153; }
+.system-status-card--amber { --status-accent: 251 191 36; }
+.system-status-card--rose { --status-accent: 251 113 133; }
+.system-status-card--sky { --status-accent: 56 189 248; }
+.system-status-card--lime { --status-accent: 163 230 53; }
+.system-status-card--violet { --status-accent: 167 139 250; }
+
+@keyframes system-status-sheen {
+  0%, 46% {
+    transform: translateX(-145%) skewX(-12deg);
+  }
+  72%, 100% {
+    transform: translateX(245%) skewX(-12deg);
+  }
+}
+
+@keyframes system-status-breathe {
+  0%, 100% {
+    border-color: rgb(var(--status-accent) / 0.2);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 0 14px rgb(var(--status-accent) / 0.04);
+  }
+  50% {
+    border-color: rgb(var(--status-accent) / 0.34);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 0 21px rgb(var(--status-accent) / 0.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .system-status-card,
+  .system-status-card::before {
+    animation: none;
+  }
+}
