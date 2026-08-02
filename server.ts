@@ -8,7 +8,6 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { buildInbound, InboundInput } from "./server/inbound-builder.js";
-import { generateRealityKeyPair } from "./server/reality-key.js";
 import { buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, inspectServer, SshInput } from "./server/ssh.js";
 import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
 import { findInboundRecord, parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
@@ -401,8 +400,8 @@ async function startServer() {
       client = new XuiClient(xuiOptions(body, cancellation.signal));
       let reality: { privateKey: string; publicKey: string } | undefined;
       if (body.security === "Reality") {
-        progress(1, "正在本地生成 Reality 密钥");
-        reality = generateRealityKeyPair();
+        progress(1, "正在向 3x-ui 获取 Reality 密钥");
+        reality = await client.getRealityKeyPair();
       } else {
         progress(1, "正在生成节点安全参数");
       }

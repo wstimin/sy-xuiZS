@@ -296,7 +296,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     deployControllerRef.current = controller;
     setIsDeploying(true);
     setDeployStep(1);
-    setDeployMessage(form.security === 'Reality' ? '正在本地生成 Reality 密钥' : '正在生成安全参数');
+    setDeployMessage(form.security === 'Reality' ? '正在向面板获取 Reality 密钥' : '正在生成安全参数');
     setDeployError(null);
     setElapsedTime(0);
 
