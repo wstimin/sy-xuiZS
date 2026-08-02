@@ -232,6 +232,85 @@ test("XuiClient reads TLS settings directly from legacy panels with saved creden
   assert.equal(calls[1].headers.get("Cookie"), "3x-ui=legacy-session");
 });
 
+test("XuiClient reads TLS settings through the fast Bearer endpoint", async () => {
+  const calls: Array<{ url: URL; headers: Headers }> = [];
+  const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    const headers = new Headers(init?.headers);
+    calls.push({ url, headers });
+
+    if (url.pathname === "/base/panel/api/server/getWebCertFiles") {
+      return Response.json({
+        success: true,
+        obj: { webCertFile: "/cert/fullchain.pem", webKeyFile: "/cert/privkey.pem" },
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelPath: "/base/",
+    panelToken: "bearer-token",
+  }, mockFetch);
+
+  assert.deepEqual(await client.getWebCertFiles(), {
+    webCertFile: "/cert/fullchain.pem",
+    webKeyFile: "/cert/privkey.pem",
+  });
+  assert.deepEqual(calls.map(call => call.url.pathname), [
+    "/base/panel/api/server/getWebCertFiles",
+  ]);
+  assert.equal(calls[0].headers.get("Authorization"), "Bearer bearer-token");
+  assert.equal(calls[0].headers.get("Cookie"), null);
+});
+
+test("XuiClient falls back to Session TLS settings when the fast endpoint is unavailable", async () => {
+  const calls: Array<{ url: URL; headers: Headers }> = [];
+  const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    const headers = new Headers(init?.headers);
+    calls.push({ url, headers });
+
+    if (url.pathname === "/base/panel/api/server/getWebCertFiles") {
+      return new Response("not found", { status: 404 });
+    }
+    if (url.pathname === "/base/login") {
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=legacy-session; Path=/base/; HttpOnly" },
+      });
+    }
+    if (url.pathname === "/base/panel/setting/defaultSettings") {
+      return Response.json({
+        success: true,
+        obj: { defaultCert: "/legacy/fullchain.pem", defaultKey: "/legacy/privkey.pem" },
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelPath: "/base/",
+    panelUser: "admin",
+    panelPass: "password",
+    panelToken: "bearer-token",
+  }, mockFetch);
+
+  assert.deepEqual(await client.getWebCertFiles(), {
+    webCertFile: "/legacy/fullchain.pem",
+    webKeyFile: "/legacy/privkey.pem",
+  });
+  assert.deepEqual(calls.map(call => call.url.pathname), [
+    "/base/panel/api/server/getWebCertFiles",
+    "/base/login",
+    "/base/panel/setting/defaultSettings",
+  ]);
+  assert.equal(calls[0].headers.get("Authorization"), "Bearer bearer-token");
+  assert.equal(calls[2].headers.get("Cookie"), "3x-ui=legacy-session");
+  assert.equal(calls[2].headers.get("Authorization"), null);
+});
+
 test("XuiClient uses Bearer Token for management APIs and serializes inbound fields", async () => {
   const calls: Array<{ url: URL; method: string; headers: Headers; body: string }> = [];
   const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {

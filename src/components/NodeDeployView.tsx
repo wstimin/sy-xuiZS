@@ -119,8 +119,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       showToast('请输入 3x-ui 面板地址', '需要先连接目标面板才能读取 TLS 证书配置', 'warning');
       return;
     }
-    if (!form.panelUser.trim() || !form.panelPass.trim()) {
-      showToast('TLS 需要面板账号密码', '证书配置接口只支持登录 Session，不能只使用 API Token', 'warning');
+    if (!form.panelToken?.trim() && (!form.panelUser.trim() || !form.panelPass.trim())) {
+      showToast('需要面板访问凭证', '推荐面板可直接使用 API Token；旧版或官方面板需要账号密码', 'warning');
       return;
     }
     setIsFetchingTls(true);
