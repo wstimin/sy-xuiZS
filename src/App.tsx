@@ -144,7 +144,13 @@ export default function App() {
       apiToken: result.apiToken || ''
     });
     setCurrentView('node');
-    showToast('已载入面板凭据', `准备为 ${result.host}:${result.port} 搭建节点`, 'success');
+    showToast(
+      '已载入面板凭据',
+      result.apiToken
+        ? `账号、密码和 API Token 已自动填写，准备为 ${result.host}:${result.port} 搭建节点`
+        : `账号和密码已自动填写，准备为 ${result.host}:${result.port} 搭建节点`,
+      'success'
+    );
   };
 
   return (

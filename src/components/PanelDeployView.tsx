@@ -996,6 +996,26 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 </div>
               </div>
 
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-[11px] font-mono text-zinc-400">API Token 访问令牌</label>
+                  <span className={resultModal.apiToken ? 'text-[10px] text-emerald-400' : 'text-[10px] text-amber-400'}>
+                    {resultModal.apiToken ? '跳转搭建节点时自动填写' : '面板未返回，可在节点页重新获取'}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-2 p-2.5 rounded-xl bg-black/40 border border-white/10 text-zinc-200 font-mono text-xs">
+                  <span className="break-all leading-relaxed">{resultModal.apiToken || '未获取到 Token'}</span>
+                  <button
+                    onClick={() => handleCopy(resultModal.apiToken || '', 'apiToken')}
+                    disabled={!resultModal.apiToken}
+                    className="p-1 rounded hover:bg-white/10 text-zinc-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                    title="复制 API Token"
+                  >
+                    {copiedField === 'apiToken' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
               <div className="grid sm:grid-cols-2 gap-3 pt-1">
                 <div className="space-y-1">
                   <label className="text-[11px] font-mono text-zinc-400">监听端口 (Port)</label>

@@ -10,7 +10,7 @@ import { createServer as createViteServer } from "vite";
 import { buildInbound, buildSubscriptionUrl, InboundInput } from "./server/inbound-builder.js";
 import { buildInstallCommand, connectSsh, execSsh, inspectServer, SshInput } from "./server/ssh.js";
 import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, randomToken, validPort } from "./server/validation.js";
-import { XuiClient, XuiClientOptions } from "./server/xui-client.js";
+import { parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
 
 const RECOMMENDED_INSTALLER = "https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh";
@@ -55,7 +55,10 @@ function parseInstallerResult(output: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const line of output.split(/\r?\n/)) {
     const match = line.match(/^__XUI_([A-Z_]+)__=(.*)$/);
-    if (match) values[match[1]] = match[2].trim();
+    if (match) {
+      const value = match[2].trim();
+      if (value || !(match[1] in values)) values[match[1]] = value;
+    }
   }
   return values;
 }
@@ -167,7 +170,7 @@ async function startServer() {
 
       write({ type: "log", step: 7, message: "[VERIFY] 正在验证服务和读取安装结果" });
       const sudo = systemInfo.isRoot ? "" : "sudo -n ";
-      const verifyCommand = `${sudo}systemctl is-active x-ui && ${sudo}bash -c 'if [ -r /etc/x-ui/install-result.env ]; then . /etc/x-ui/install-result.env; printf "__XUI_USERNAME__=%s\\n__XUI_PASSWORD__=%s\\n__XUI_PANEL_PORT__=%s\\n__XUI_WEB_BASE_PATH__=%s\\n__XUI_ACCESS_URL__=%s\\n__XUI_API_TOKEN__=%s\\n" "$XUI_USERNAME" "$XUI_PASSWORD" "$XUI_PANEL_PORT" "$XUI_WEB_BASE_PATH" "$XUI_ACCESS_URL" "$XUI_API_TOKEN"; fi; if [ -x /usr/local/x-ui/x-ui ]; then cert_output=$(/usr/local/x-ui/x-ui setting -getCert true 2>/dev/null || true); web_cert=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*cert:/{print \\$2; exit}"); web_key=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*key:/{print \\$2; exit}"); printf "__XUI_WEB_CERT_FILE__=%s\\n__XUI_WEB_KEY_FILE__=%s\\n" "$web_cert" "$web_key"; fi'`;
+      const verifyCommand = `${sudo}systemctl is-active x-ui && ${sudo}bash -c 'if [ -r /etc/x-ui/install-result.env ]; then . /etc/x-ui/install-result.env; printf "__XUI_USERNAME__=%s\\n__XUI_PASSWORD__=%s\\n__XUI_PANEL_PORT__=%s\\n__XUI_WEB_BASE_PATH__=%s\\n__XUI_ACCESS_URL__=%s\\n__XUI_API_TOKEN__=%s\\n" "$XUI_USERNAME" "$XUI_PASSWORD" "$XUI_PANEL_PORT" "$XUI_WEB_BASE_PATH" "$XUI_ACCESS_URL" "$XUI_API_TOKEN"; fi; if [ -x /usr/local/x-ui/x-ui ]; then cert_output=$(/usr/local/x-ui/x-ui setting -getCert true 2>/dev/null || true); web_cert=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*cert:/{print \\$2; exit}"); web_key=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*key:/{print \\$2; exit}"); api_token_output=$(/usr/local/x-ui/x-ui setting -getApiToken true 2>/dev/null || true); api_token=$(printf "%s\\n" "$api_token_output" | awk -F": *" "/^[[:space:]]*apiToken:/{print \\$2; exit}"); printf "__XUI_WEB_CERT_FILE__=%s\\n__XUI_WEB_KEY_FILE__=%s\\n__XUI_API_TOKEN__=%s\\n" "$web_cert" "$web_key" "$api_token"; fi'`;
       const verify = await execSsh(session.client, verifyCommand, { timeoutMs: 30_000 });
       if (verify.code !== 0 || !verify.stdout.startsWith("active")) throw new Error(verify.stderr || "x-ui 服务没有成功启动");
       const installed = parseInstallerResult(verify.stdout);
@@ -179,7 +182,10 @@ async function startServer() {
         : sslMode === "none" ? "http" : "https";
       const accessUrl = installed.ACCESS_URL || `${fallbackProtocol}://${domain || host}:${installedPort}${installedPath}`;
 
-      let apiToken = installed.API_TOKEN || undefined;
+      let apiToken = installed.API_TOKEN || parseApiTokenFromOutput(`${install.stdout}\n${install.stderr}`) || undefined;
+      if (apiToken) {
+        write({ type: "log", step: 8, message: "[TOKEN] 已从安装结果中提取面板 API Token" });
+      }
       if (!apiToken) {
         try {
           const tokenClient = new XuiClient({

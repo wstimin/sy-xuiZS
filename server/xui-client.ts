@@ -23,6 +23,56 @@ export interface XrayTemplateResponse {
   outboundTestUrl: string;
 }
 
+function cleanApiToken(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const token = value.trim().replace(/^['"]|['"]$/g, "");
+  if (!token || /^(?:null|undefined|none|<nil>)$/i.test(token)) return "";
+  return token;
+}
+
+export function parseApiTokenResponse(raw: unknown): string {
+  if (typeof raw === "string") {
+    const token = cleanApiToken(raw);
+    if (token && !/[\r\n]/.test(token)) return token;
+    throw new Error("3x-ui 没有返回有效的新 Token");
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("3x-ui 没有返回有效的新 Token");
+  }
+
+  const result = raw as Record<string, unknown>;
+  for (const [key, value] of Object.entries(result)) {
+    if (!["token", "apitoken", "accesstoken"].includes(key.replace(/[_-]/g, "").toLowerCase())) continue;
+    const token = cleanApiToken(value);
+    if (token) return token;
+  }
+  for (const key of ["data", "obj", "result"]) {
+    if (!(key in result)) continue;
+    try {
+      return parseApiTokenResponse(result[key]);
+    } catch {
+      // Try the remaining known wrapper fields.
+    }
+  }
+  throw new Error("3x-ui 没有返回有效的新 Token");
+}
+
+export function parseApiTokenFromOutput(output: string): string {
+  const plain = output.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+  const patterns = [
+    /^\s*(?:API\s*Token|apiToken|XUI_API_TOKEN)\s*[:=]\s*([^\s'"`]+)\s*$/gim,
+    /^\s*__XUI_API_TOKEN__=([^\s'"`]+)\s*$/gim,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(plain))) {
+      const token = cleanApiToken(match[1]);
+      if (token) return token;
+    }
+  }
+  return "";
+}
+
 export function parseXrayTemplateResponse(raw: unknown): XrayTemplateResponse {
   if (typeof raw !== "string") {
     throw new Error("3x-ui 返回的 Xray 模板格式无效：预期为 JSON 字符串");
@@ -128,13 +178,12 @@ export class XuiClient {
   }
 
   async createApiToken(name: string): Promise<string> {
-    const result = await this.request<{ token?: string }>("panel/api/setting/apiTokens/create", {
+    const result = await this.request<unknown>("panel/api/setting/apiTokens/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (!result?.token) throw new Error("3x-ui 没有返回新 Token");
-    return result.token;
+    return parseApiTokenResponse(result);
   }
 
   async addInbound(payload: Record<string, unknown>): Promise<any> {
