@@ -74,7 +74,11 @@ async function startServer() {
   app.use("/api", noStore);
 
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", version: "real-api", timestamp: new Date().toISOString() });
+    res.json({
+      status: "ok",
+      version: optionalString(process.env.APP_VERSION) || "development",
+      timestamp: new Date().toISOString(),
+    });
   });
 
   app.use("/api", requireAppAuth);

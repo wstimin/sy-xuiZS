@@ -42,6 +42,32 @@ load_runtime_config() {
   APP_PORT="${PORT:-$DEFAULT_PORT}"
 }
 
+sync_managed_repository() {
+  if [ ! -d .git ]; then
+    echo -e "${RED}[ERROR] $TARGET_DIR 已存在但不是 Git 仓库，请先移走该目录后重试。${NC}"
+    return 1
+  fi
+
+  local before_commit after_commit
+  before_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  echo -e "${YELLOW}[INFO] 正在从远端 main 分支获取最新代码（当前版本: ${before_commit}）...${NC}"
+  git fetch origin main:refs/remotes/origin/main || {
+    echo -e "${RED}[ERROR] 无法获取远端代码，请检查服务器网络和 GitHub 连接。${NC}"
+    return 1
+  }
+  git merge --ff-only origin/main || {
+    echo -e "${RED}[ERROR] 无法快进更新。请检查 $TARGET_DIR 中是否存在本地提交或冲突修改。${NC}"
+    return 1
+  }
+
+  after_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  if [ "$before_commit" = "$after_commit" ]; then
+    echo -e "${GREEN}[OK] 已是远端 main 最新版本: ${after_commit}${NC}"
+  else
+    echo -e "${GREEN}[OK] 代码已从 ${before_commit} 更新到 ${after_commit}${NC}"
+  fi
+}
+
 check_root() {
   if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}[ERROR] 请使用 root 权限或 sudo 执行此脚本！${NC}"
@@ -210,20 +236,16 @@ install_assistant() {
   if [ -f "$SCRIPT_DIR/package.json" ]; then
     ACTIVE_PROJECT_DIR="$SCRIPT_DIR"
     cd "$ACTIVE_PROJECT_DIR"
-    echo -e "${GREEN}[OK] 使用当前安装脚本所在的项目目录: $ACTIVE_PROJECT_DIR${NC}"
+    if [ "$ACTIVE_PROJECT_DIR" = "$TARGET_DIR" ]; then
+      sync_managed_repository || return 1
+    else
+      echo -e "${GREEN}[OK] 使用当前安装脚本所在的本地项目目录: $ACTIVE_PROJECT_DIR${NC}"
+    fi
   else
     if [ -d "$TARGET_DIR" ]; then
       echo -e "${YELLOW}检测到已有项目目录 $TARGET_DIR，正在同步最新源码...${NC}"
       cd "$TARGET_DIR"
-      if [ -d .git ]; then
-        git pull --ff-only || {
-          echo -e "${RED}[ERROR] 项目更新失败。请检查服务器网络或目标目录中的本地改动。${NC}"
-          return 1
-        }
-      else
-        echo -e "${RED}[ERROR] $TARGET_DIR 已存在但不是 Git 仓库，请先移走该目录后重试。${NC}"
-        return 1
-      fi
+      sync_managed_repository || return 1
     else
       echo -e "${GREEN}正在克隆项目仓库到 $TARGET_DIR ...${NC}"
       git clone "$REPO_URL" "$TARGET_DIR" || {
@@ -235,6 +257,9 @@ install_assistant() {
     fi
   fi
   ACTIVE_PROJECT_DIR="$(pwd)"
+  APP_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo "local")
+  export APP_VERSION
+  echo -e "${GREEN}[VERSION] 本次将部署版本: ${APP_VERSION}${NC}"
 
   if [ ! -f .env ]; then
     cp .env.example .env
@@ -307,6 +332,7 @@ install_assistant() {
   echo -e "${NC}"
 
   echo -e "⚡ ${BOLD}快捷调出菜单命令:${NC} 输入 ${GREEN}${BOLD}sy${NC} 即可随时打开控制菜单"
+  echo -e "📦 ${BOLD}当前部署版本:${NC} ${GREEN}${APP_VERSION}${NC}"
 
   if [ -f "$SSL_DIR/cert.pem" ] && [ -f "$SSL_DIR/key.pem" ]; then
     echo -e "🔒 访问协议: ${GREEN}HTTPS (已应用 SSL 安全加密防护)${NC}"
@@ -457,6 +483,12 @@ view_panel_info() {
 
   get_public_ip
   echo -e "🌐 ${BOLD}服务器公网 IP:${NC} ${GREEN}${SERVER_IP}${NC}"
+  if [ -d "$ACTIVE_PROJECT_DIR/.git" ]; then
+    APP_VERSION=$(git -C "$ACTIVE_PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  else
+    APP_VERSION="unknown"
+  fi
+  echo -e "📦 ${BOLD}当前代码版本:${NC} ${GREEN}${APP_VERSION}${NC}"
 
   # 1. PM2 进程状态
   echo -e "\n${BOLD}1️⃣  部署助手面板 PM2 服务状态:${NC}"

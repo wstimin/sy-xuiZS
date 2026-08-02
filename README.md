@@ -52,7 +52,17 @@ pm2 logs 3xui-deploy-assistant
 cd /opt/3xui-deploy-assistant && sudo bash install.sh install
 ```
 
-一键脚本默认克隆本仓库到 `/opt/3xui-deploy-assistant`。也可以在完整源码目录内执行 `sudo bash install.sh install`，此时会直接构建并运行当前目录中的代码。
+一键脚本默认克隆本仓库到 `/opt/3xui-deploy-assistant`。在该托管目录内通过 `sy` 或 `sudo bash install.sh install` 更新时，脚本会执行 `git fetch origin main` 和 `git merge --ff-only origin/main`，确认同步远端 `main` 后再测试、构建并重启服务。也可以在其他完整源码目录内执行 `sudo bash install.sh install`，此时会直接构建并运行当前目录中的本地代码。
+
+检查服务器当前代码和运行版本：
+
+```bash
+cd /opt/3xui-deploy-assistant
+git rev-parse --short HEAD
+curl -s http://127.0.0.1:1888/api/health
+```
+
+`git rev-parse` 与健康检查返回的 `version` 应一致。
 
 ## 3x-ui 安装脚本
 

@@ -6,6 +6,7 @@ module.exports = {
       cwd: __dirname,
       env: {
         NODE_ENV: "production",
+        APP_VERSION: process.env.APP_VERSION || "development",
       },
       autorestart: true,
       max_restarts: 10,
