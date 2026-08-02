@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildInstallCommand, formatSshConnectionError, parseServerInspectionOutput, shellQuote } from "./ssh.js";
+import { buildInstallCommand, formatServerInspectionError, formatSshConnectionError, parseServerInspectionOutput, shellQuote } from "./ssh.js";
 
 test("shellQuote safely escapes single quotes", () => {
   assert.equal(shellQuote("a'b"), "'a'\"'\"'b'");
@@ -18,6 +18,17 @@ test("formatSshConnectionError gives actionable connection diagnostics", () => {
   assert.equal(
     formatSshConnectionError(new Error("All configured authentication methods failed")),
     "SSH 认证失败，请检查用户名、密码或私钥",
+  );
+});
+
+test("formatServerInspectionError distinguishes inspection failures from SSH failures", () => {
+  assert.equal(
+    formatServerInspectionError(new Error("远程命令执行超时")),
+    "SSH 已连接，但服务器系统检测未在规定时间内完成",
+  );
+  assert.equal(
+    formatServerInspectionError(new Error("无法执行远程命令: channel open failure")),
+    "SSH 已连接，但无法读取服务器系统环境：channel open failure",
   );
 });
 

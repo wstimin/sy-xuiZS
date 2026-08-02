@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PanelDeployForm, PanelResult, ScriptType } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import {
@@ -35,7 +35,7 @@ interface SshTestDetails {
 }
 
 const DEPLOY_STEPS_INFO = [
-  { step: 1, title: 'SSH 握手与凭据校验', desc: '建立 SSH 会话并记录远程主机密钥指纹' },
+  { step: 1, title: 'SSH 会话确认', desc: '优先复用快速检测通过的 SSH 会话' },
   { step: 2, title: '服务器环境检测', desc: '读取系统、架构、内存、systemd 与权限信息' },
   { step: 3, title: '生成安装参数', desc: '生成端口、Web 路径、管理员凭据与 SSL 模式' },
   { step: 4, title: '执行安装脚本', desc: '通过 SSH 执行所选安装脚本并安全收集输出' },
@@ -78,6 +78,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
   // New state for SSH testing & System inspection
   const [isTestingSSH, setIsTestingSSH] = useState(false);
   const [sshTestResult, setSshTestResult] = useState<SshTestDetails | null>(null);
+  const sshSessionIdRef = useRef('');
 
   // New state for warnings card toggle & progress timer
   const [showWarningsCard, setShowWarningsCard] = useState(true);
@@ -135,14 +136,10 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
   };
 
   const updateSshConnection = (changes: Partial<PanelDeployForm>) => {
+    sshSessionIdRef.current = '';
     setForm(prev => ({ ...prev, ...changes, sshSessionId: '' }));
     setSshTestResult(null);
     setSshTestError(null);
-  };
-
-  const handleCopyOneKeyCmd = () => {
-    const cmd = "bash <(curl -Ls https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh)";
-    handleCopy(cmd, 'onekeycmd');
   };
 
   // SSH Connection & System Inspection Handler
@@ -170,15 +167,17 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     setIsTestingSSH(true);
     setSshTestResult(null);
     setSshTestError(null);
+    const previousSessionId = sshSessionIdRef.current || form.sshSessionId || '';
+    sshSessionIdRef.current = '';
     setForm(prev => ({ ...prev, sshSessionId: '' }));
 
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 40_000);
+    const timeout = window.setTimeout(() => controller.abort(), 35_000);
     try {
       const res = await fetch('/api/test-ssh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, ipOrDomain: cleanIp }),
+        body: JSON.stringify({ ...form, ipOrDomain: cleanIp, sshSessionId: previousSessionId }),
         signal: controller.signal
       });
 
@@ -189,11 +188,12 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       }
 
       setSshTestResult(data.details);
+      sshSessionIdRef.current = data.sshSessionId || '';
       setForm(prev => ({ ...prev, sshSessionId: data.sshSessionId || '' }));
       showToast('SSH 连接及系统环境检测成功！', `网络延迟 ${data.details.latencyMs}ms | ${data.details.osName}`, 'success');
     } catch (err: any) {
       const errMsg = err?.name === 'AbortError'
-        ? 'SSH 检测超过 40 秒，请检查服务器安全组、防火墙和 SSH 端口'
+        ? '连接检测未返回结果，请确认部署助手服务运行正常后重试'
         : err.message || '请检查 IP、端口、密码或云服务商安全组';
       setSshTestError(errMsg);
       showToast('SSH 连接测试失败', errMsg, 'error');
@@ -254,11 +254,17 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     setSshTestError(null);
 
     try {
+      const sshSessionId = sshSessionIdRef.current || form.sshSessionId || '';
       const res = await fetch('/api/deploy-panel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, ipOrDomain: cleanIp })
+        body: JSON.stringify({ ...form, ipOrDomain: cleanIp, sshSessionId })
       });
+
+      if (sshSessionId) {
+        sshSessionIdRef.current = '';
+        setForm(prev => ({ ...prev, sshSessionId: '' }));
+      }
 
       if (!res.ok) {
         let errText = '后端接口响应异常';
@@ -604,45 +610,16 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             </div>
           )}
 
-          {/* SSH & System Inspection Error Diagnostic Card */}
+          {/* SSH & System Inspection Error */}
           {sshTestError && (
-            <div className="mt-4 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs space-y-3 animate-in fade-in duration-200">
+            <div className="mt-4 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs space-y-2 animate-in fade-in duration-200">
               <div className="flex items-center gap-2 font-semibold text-rose-400">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>SSH 握手与凭据校验未通过</span>
+                <span>服务器连接检测失败</span>
               </div>
 
-              <div className="text-[11px] text-zinc-300 font-mono bg-black/40 p-2.5 rounded-lg border border-white/5">
-                错误说明: <span className="text-rose-300">{sshTestError}</span>
-              </div>
-
-              <div className="space-y-1.5 text-[11px] text-zinc-400">
-                <p className="font-semibold text-zinc-200">💡 常见原因与推荐解决方法:</p>
-                <ul className="list-disc list-inside space-y-1 pl-1">
-                  <li><strong className="text-zinc-300">云控制台防火墙未放行</strong>: 请登录阿里云/腾讯云/AWS/甲骨文云控制台【安全组】放行 TCP: 22 端口。</li>
-                  <li><strong className="text-zinc-300">输入格式包含额外字符</strong>: 系统现已支持自动切除 <code className="text-amber-300">http://</code> 前缀，请确保 IP/域名不含空格。</li>
-                  <li><strong className="text-zinc-300">禁用密码登录</strong>: 若您的 VPS 禁用了密码登录，请将认证方式切至【SSH 私钥】模式。</li>
-                </ul>
-              </div>
-
-              <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-semibold text-indigo-300 text-xs flex items-center gap-1.5">
-                    <Terminal className="w-3.5 h-3.5 text-indigo-400" />
-                    备用极速方案: 直接在 VPS 命令行粘贴一键命令
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyOneKeyCmd}
-                    className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 text-[11px] font-medium flex items-center gap-1 border border-indigo-500/30 transition-colors"
-                  >
-                    {copiedField === 'onekeycmd' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedField === 'onekeycmd' ? '已复制命令' : '复制命令'}</span>
-                  </button>
-                </div>
-                <code className="block p-2 rounded-lg bg-black/60 text-emerald-400 font-mono text-[11px] break-all border border-white/5 select-all">
-                  bash &lt;(curl -Ls https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh)
-                </code>
+              <div className="text-[11px] text-rose-200 bg-black/40 p-2.5 rounded-lg border border-white/5">
+                {sshTestError}
               </div>
             </div>
           )}

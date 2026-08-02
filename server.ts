@@ -8,7 +8,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { buildInbound, InboundInput } from "./server/inbound-builder.js";
-import { buildInstallCommand, connectSsh, execSsh, inspectServer, SshInput } from "./server/ssh.js";
+import { buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, inspectServer, SshInput } from "./server/ssh.js";
 import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
 import { parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
@@ -37,6 +37,16 @@ function cacheSshSession(session: ReusableSshSession["session"], details: Server
   return id;
 }
 
+function removeSshSession(id: unknown) {
+  const sessionId = optionalString(id);
+  if (!sessionId) return;
+  const cached = reusableSshSessions.get(sessionId);
+  if (!cached) return;
+  reusableSshSessions.delete(sessionId);
+  clearTimeout(cached.timer);
+  cached.session.client.end();
+}
+
 function takeSshSession(id: unknown, input: SshInput): ReusableSshSession | undefined {
   const sessionId = optionalString(id);
   if (!sessionId) return undefined;
@@ -46,6 +56,7 @@ function takeSshSession(id: unknown, input: SshInput): ReusableSshSession | unde
   clearTimeout(cached.timer);
 
   const sameTarget = cached.expiresAt > Date.now()
+    && cached.session.alive
     && cached.session.host === cleanHostInput(input.ipOrDomain)
     && cached.session.port === validPort(input.sshPort, 22)
     && cached.session.user === optionalString(input.sshUser || "root");
@@ -133,15 +144,29 @@ async function startServer() {
 
   app.post("/api/test-ssh", async (req, res) => {
     let session;
+    let completed = false;
+    const handleDisconnect = () => {
+      if (!completed && !res.writableEnded) session?.client.destroy();
+    };
+    res.on("close", handleDisconnect);
     try {
-      session = await connectSsh(req.body as SshInput);
-      const details = await inspectServer(session);
+      session = await connectSsh(req.body as SshInput, { timeoutMs: 18_000 });
+      let details: ServerInspection;
+      try {
+        details = await inspectServer(session, { timeoutMs: 10_000 });
+      } catch (error) {
+        throw new Error(formatServerInspectionError(error));
+      }
+      removeSshSession(req.body?.sshSessionId);
       const sshSessionId = cacheSshSession(session, details);
       session = undefined;
+      completed = true;
       res.json({ success: true, message: "SSH 连接及必要环境检测成功", details, sshSessionId });
     } catch (error) {
+      completed = true;
       sendError(res, error);
     } finally {
+      res.off("close", handleDisconnect);
       session?.client.end();
     }
   });
@@ -152,8 +177,17 @@ async function startServer() {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
-    const write = (event: Record<string, unknown>) => res.write(`${JSON.stringify(event)}\n`);
+    const write = (event: Record<string, unknown>) => {
+      if (res.writableEnded || res.destroyed) return;
+      res.write(`${JSON.stringify(event)}\n`);
+      (res as Response & { flush?: () => void }).flush?.();
+    };
     let session;
+    let completed = false;
+    const handleDisconnect = () => {
+      if (!completed && !res.writableEnded) session?.client.destroy();
+    };
+    res.on("close", handleDisconnect);
 
     try {
       const body = req.body as Record<string, any> & SshInput;
@@ -178,10 +212,18 @@ async function startServer() {
       if (reused) {
         session = reused.session;
         systemInfo = reused.details;
+        try {
+          await execSsh(session.client, "true", { timeoutMs: 5_000 });
+        } catch {
+          throw new Error("刚才检测通过的 SSH 会话已失效，请重新执行快速检测后再搭建");
+        }
         write({ type: "log", step: 1, message: "[SSH] 已复用刚才通过检测的 SSH 会话" });
       } else {
+        if (optionalString(body.sshSessionId)) {
+          throw new Error("SSH 检测会话已失效，请重新执行快速检测后再搭建");
+        }
         write({ type: "log", step: 1, message: `[SSH] 正在连接 ${host}:${body.sshPort || 22}` });
-        session = await connectSsh(body);
+        session = await connectSsh(body, { timeoutMs: 25_000 });
         write({ type: "log", step: 1, message: `[SSH] 连接成功，主机密钥指纹 ${session.fingerprint}` });
         systemInfo = await inspectServer(session);
       }
@@ -295,9 +337,12 @@ async function startServer() {
       };
       write({ type: "log", step: 9, message: "[SUCCESS] 3x-ui 服务已启动，安装结果验证通过" });
       write({ type: "result", result });
+      completed = true;
     } catch (error) {
       write({ type: "error", error: errorMessage(error) });
+      completed = true;
     } finally {
+      res.off("close", handleDisconnect);
       session?.client.end();
       res.end();
     }

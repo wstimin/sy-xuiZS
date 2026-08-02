@@ -19,6 +19,7 @@ export interface SshSession {
   user: string;
   fingerprint: string;
   latencyMs: number;
+  alive: boolean;
 }
 
 export interface ExecResult {
@@ -48,6 +49,18 @@ export function formatSshConnectionError(error: unknown): string {
     return "SSH 服务器网络不可达，请检查公网 IP、路由和安全组";
   }
   return `SSH 连接失败: ${message}`;
+}
+
+export function formatServerInspectionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/远程命令执行超时|timed out|timeout/i.test(message)) {
+    return "SSH 已连接，但服务器系统检测未在规定时间内完成";
+  }
+  const cause = message
+    .replace(/^无法执行远程命令:\s*/i, "")
+    .replace(/^远程命令执行失败:\s*/i, "")
+    .trim();
+  return `SSH 已连接，但无法读取服务器系统环境${cause ? `：${cause.slice(0, 160)}` : ""}`;
 }
 
 export function shellQuote(value: string): string {
@@ -112,18 +125,22 @@ export function buildInstallCommand(params: {
   return `${params.useSudo ? "sudo -n " : ""}env ${assignments} bash -c ${shellQuote(script)}`;
 }
 
-export async function connectSsh(input: SshInput): Promise<SshSession> {
+export async function connectSsh(
+  input: SshInput,
+  options: { timeoutMs?: number } = {},
+): Promise<SshSession> {
   const host = cleanHostInput(input.ipOrDomain);
   if (!host) throw new Error("请输入有效的服务器 IP 或域名");
   const port = validPort(input.sshPort, 22);
   const user = requiredString(input.sshUser || "root", "SSH 用户名");
   const authType = input.authType || "password";
+  const timeoutMs = options.timeoutMs ?? 20_000;
 
   const config: ConnectConfig = {
     host,
     port,
     username: user,
-    readyTimeout: 20_000,
+    readyTimeout: timeoutMs,
     keepaliveInterval: 10_000,
     keepaliveCountMax: 3,
   };
@@ -145,6 +162,7 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     let settled = false;
+    let session: SshSession | undefined;
     const finishError = (error: unknown) => {
       if (settled) return;
       settled = true;
@@ -154,18 +172,26 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
     };
     const timer = setTimeout(() => {
       finishError(Object.assign(new Error("Timed out while waiting for SSH handshake"), { code: "ETIMEDOUT" }));
-    }, 20_000);
+    }, timeoutMs);
     client.once("ready", () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ client, host, port, user, fingerprint, latencyMs: Date.now() - startedAt });
+      session = { client, host, port, user, fingerprint, latencyMs: Date.now() - startedAt, alive: true };
+      resolve(session);
     });
     client.on("error", (error) => {
+      if (session) session.alive = false;
       finishError(error);
     });
-    client.once("end", () => finishError(new Error("SSH 服务器在握手完成前关闭了连接")));
-    client.once("close", () => finishError(new Error("SSH 连接在握手完成前被关闭")));
+    client.once("end", () => {
+      if (session) session.alive = false;
+      finishError(new Error("SSH 服务器在握手完成前关闭了连接"));
+    });
+    client.once("close", () => {
+      if (session) session.alive = false;
+      finishError(new Error("SSH 连接在握手完成前被关闭"));
+    });
     if (authType === "password") {
       client.on("keyboard-interactive", (_name, _instructions, _language, prompts, finish) => {
         finish(prompts.map(() => config.password || ""));
@@ -268,7 +294,10 @@ export function parseServerInspectionOutput(
   };
 }
 
-export async function inspectServer(session: SshSession) {
+export async function inspectServer(
+  session: SshSession,
+  options: { timeoutMs?: number } = {},
+) {
   const command = [
     "if [ -r /etc/os-release ]; then . /etc/os-release; fi; printf '__OS__=%s\\n' \"${PRETTY_NAME:-Linux}\"",
     "printf '__OS_ID__=%s\\n' \"${ID:-unknown}\"",
@@ -281,7 +310,7 @@ export async function inspectServer(session: SshSession) {
     "printf '__CURL__='; command -v curl >/dev/null && echo yes || echo no",
     "printf '__PKG_MANAGER__='; if command -v apt-get >/dev/null; then echo apt; elif command -v dnf >/dev/null; then echo dnf; elif command -v yum >/dev/null; then echo yum; else echo unknown; fi",
   ].join("; ");
-  const result = await execSsh(session.client, command, { timeoutMs: 12_000 });
+  const result = await execSsh(session.client, command, { timeoutMs: options.timeoutMs ?? 12_000 });
   if (result.code !== 0) throw new Error(result.stderr || "无法读取服务器环境");
   return parseServerInspectionOutput(session, result.stdout);
 }
