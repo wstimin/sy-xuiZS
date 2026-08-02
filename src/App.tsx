@@ -27,6 +27,8 @@ export default function App() {
     username: string;
     password?: string;
     apiToken?: string;
+    webCertFile?: string;
+    webKeyFile?: string;
   } | null>(null);
 
   const sanitizeHistoryItem = (item: HistoryItem): HistoryItem => {
@@ -37,7 +39,8 @@ export default function App() {
           ...item.panelData,
           password: undefined,
           apiToken: undefined,
-          installCommand: ''
+          webCertFile: undefined,
+          webKeyFile: undefined
         }
       };
     }
@@ -116,7 +119,8 @@ export default function App() {
         ...result,
         password: undefined,
         apiToken: undefined,
-        installCommand: ''
+        webCertFile: undefined,
+        webKeyFile: undefined
       }
     };
     saveHistory(historyItem);
@@ -141,7 +145,9 @@ export default function App() {
       protocol: result.protocol,
       username: result.username,
       password: result.password || '',
-      apiToken: result.apiToken || ''
+      apiToken: result.apiToken || '',
+      webCertFile: result.webCertFile,
+      webKeyFile: result.webKeyFile
     });
     setCurrentView('node');
     showToast(

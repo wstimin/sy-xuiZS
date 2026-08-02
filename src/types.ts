@@ -42,10 +42,10 @@ export interface PanelResult {
   username: string;
   password?: string;
   apiToken?: string;
+  webCertFile?: string;
+  webKeyFile?: string;
   sslEnabled: boolean;
-  installCommand: string;
   scriptType?: string;
-  scriptUrl?: string;
 }
 
 export interface SocksItem {
@@ -69,6 +69,8 @@ export interface NodeDeployForm {
   panelUser: string;
   panelPass: string;
   panelToken?: string;
+  tlsCertFile?: string;
+  tlsKeyFile?: string;
 
   // Node protocol details
   nodeName: string;

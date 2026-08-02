@@ -123,7 +123,7 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
     host,
     port,
     username: user,
-    readyTimeout: 15_000,
+    readyTimeout: 8_000,
     keepaliveInterval: 10_000,
     keepaliveCountMax: 3,
   };
@@ -154,7 +154,7 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
     };
     const timer = setTimeout(() => {
       finishError(Object.assign(new Error("Timed out while waiting for SSH handshake"), { code: "ETIMEDOUT" }));
-    }, 15_000);
+    }, 8_000);
     client.once("ready", () => {
       if (settled) return;
       settled = true;
@@ -274,20 +274,14 @@ export async function inspectServer(session: SshSession) {
     "printf '__OS_ID__=%s\\n' \"${ID:-unknown}\"",
     "printf '__OS_VERSION__=%s\\n' \"${VERSION_ID:-unknown}\"",
     "printf '__ARCH__='; uname -m",
-    "printf '__KERNEL__='; uname -sr",
-    "printf '__GLIBC__='; (ldd --version 2>/dev/null | head -n1 || true)",
-    "printf '__SYSTEMD__='; if command -v systemctl >/dev/null 2>&1; then systemctl --version 2>/dev/null | head -n1; else echo unavailable; fi",
     "printf '__SYSTEMD_ACTIVE__='; if [ \"$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')\" = systemd ] && [ -d /run/systemd/system ]; then echo yes; else echo no; fi",
     "printf '__RAM_KB__='; awk '/MemTotal/{print $2}' /proc/meminfo",
-    "printf '__FREE_KB__='; awk '/MemAvailable/{print $2}' /proc/meminfo",
     "printf '__DISK_FREE_KB__='; df -Pk / 2>/dev/null | awk 'NR==2 {print $4}'",
-    "printf '__CPU__='; (nproc 2>/dev/null || echo 1)",
     "printf '__UID__='; id -u",
-    "printf '__USER__='; id -un",
     "printf '__CURL__='; command -v curl >/dev/null && echo yes || echo no",
     "printf '__PKG_MANAGER__='; if command -v apt-get >/dev/null; then echo apt; elif command -v dnf >/dev/null; then echo dnf; elif command -v yum >/dev/null; then echo yum; else echo unknown; fi",
   ].join("; ");
-  const result = await execSsh(session.client, command, { timeoutMs: 10_000 });
+  const result = await execSsh(session.client, command, { timeoutMs: 5_000 });
   if (result.code !== 0) throw new Error(result.stderr || "无法读取服务器环境");
   return parseServerInspectionOutput(session, result.stdout);
 }

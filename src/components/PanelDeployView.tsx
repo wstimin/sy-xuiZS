@@ -37,7 +37,7 @@ const DEPLOY_STEPS_INFO = [
   { step: 1, title: 'SSH 握手与凭据校验', desc: '建立 SSH 会话并记录远程主机密钥指纹' },
   { step: 2, title: '服务器环境检测', desc: '读取系统、架构、内存、systemd 与权限信息' },
   { step: 3, title: '生成安装参数', desc: '生成端口、Web 路径、管理员凭据与 SSL 模式' },
-  { step: 4, title: '执行官方安装器', desc: '通过 SSH 流式执行 3x-ui 官方无人值守安装器' },
+  { step: 4, title: '执行安装脚本', desc: '通过 SSH 执行所选安装脚本并安全收集输出' },
   { step: 5, title: '安装程序处理中', desc: '由官方安装器安装程序并写入面板配置' },
   { step: 6, title: '面板配置初始化', desc: '初始化管理员、数据库及 API 访问设置' },
   { step: 7, title: '服务状态验证', desc: '检查 x-ui systemd 服务并读取安装结果' },
@@ -166,7 +166,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     setSshTestError(null);
 
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 30_000);
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
     try {
       const res = await fetch('/api/test-ssh', {
         method: 'POST',
@@ -185,7 +185,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       showToast('SSH 连接及系统环境检测成功！', `网络延迟 ${data.details.latencyMs}ms | ${data.details.osName}`, 'success');
     } catch (err: any) {
       const errMsg = err?.name === 'AbortError'
-        ? 'SSH 检测超过 30 秒，请检查服务器安全组、防火墙、SSH 端口以及反向代理超时设置'
+        ? 'SSH 检测超过 15 秒，请检查服务器安全组、防火墙和 SSH 端口'
         : err.message || '请检查 IP、端口、密码或云服务商安全组';
       setSshTestError(errMsg);
       showToast('SSH 连接测试失败', errMsg, 'error');
@@ -875,7 +875,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               <div className="flex items-center gap-2">
                 <Activity className={`w-5 h-5 ${deployError ? 'text-rose-400' : 'text-indigo-400 animate-spin'}`} />
                 <h3 className="text-base font-bold text-white">
-                  {deployError ? '3x-ui 自动化安装失败' : isDeploying ? '3x-ui 自动化安装进行中' : '3x-ui 自动化安装日志'}
+                  {deployError ? '3x-ui 自动化安装失败' : isDeploying ? '3x-ui 自动化安装进行中' : '3x-ui 自动化安装状态'}
                 </h3>
               </div>
               <div className="flex items-center gap-3 font-mono text-xs">
@@ -945,12 +945,12 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             })}
           </div>
 
-          {/* Realtime Console Terminal Log */}
+          {/* Deployment status */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs text-zinc-400 font-mono">
               <span className="flex items-center gap-2">
                 <Terminal className="w-4 h-4 text-indigo-400" />
-                控制台执行日志 (SSH Execution Stream)
+                部署状态
               </span>
               <span className="text-[11px] text-zinc-500">
                 已生成 {deployLogs.length} 条记录
@@ -1059,7 +1059,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-[11px] font-mono text-zinc-400">API Token 访问令牌</label>
                   <span className={resultModal.apiToken ? 'text-[10px] text-emerald-400' : 'text-[10px] text-amber-400'}>
-                    {resultModal.apiToken ? '跳转搭建节点时自动填写' : '面板未返回，可在节点页重新获取'}
+                    {resultModal.apiToken ? '跳转搭建节点时自动填写' : '缺少 Token，无法创建节点'}
                   </span>
                 </div>
                 <div className="flex items-start justify-between gap-2 p-2.5 rounded-xl bg-black/40 border border-white/10 text-zinc-200 font-mono text-xs">
@@ -1089,22 +1089,6 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                     {resultModal.path}
                   </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Generated Install Shell Command */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-zinc-400 font-mono">
-                <span>部署命令处理说明</span>
-                <button
-                  onClick={() => handleCopy(resultModal.installCommand, 'cmd')}
-                  className="text-indigo-400 hover:underline flex items-center gap-1"
-                >
-                  {copiedField === 'cmd' ? '已复制' : '复制命令'}
-                </button>
-              </div>
-              <div className="p-3 rounded-xl bg-black/40 border border-white/10 font-mono text-[11px] text-zinc-300 break-all select-all">
-                {resultModal.installCommand}
               </div>
             </div>
 

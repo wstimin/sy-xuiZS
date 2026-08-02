@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
-import { buildInbound, buildSubscriptionUrl, InboundInput } from "./server/inbound-builder.js";
+import { buildInbound, InboundInput } from "./server/inbound-builder.js";
 import { buildInstallCommand, connectSsh, execSsh, inspectServer, SshInput } from "./server/ssh.js";
 import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
 import { parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
@@ -158,20 +158,27 @@ async function startServer() {
           : undefined,
         configurePanelAfterInstall: true,
       });
-      let buffered = "";
-      const relay = (prefix: string) => (text: string) => {
-        buffered += text;
-        const lines = buffered.split(/\r?\n/);
-        buffered = lines.pop() || "";
-        for (const line of lines) if (line.trim()) write({ type: "log", step: 4, message: `${prefix} ${line}` });
-      };
-      const install = await execSsh(session.client, command, {
-        timeoutMs: 20 * 60_000,
-        onStdout: relay("[3X-UI]"),
-        onStderr: relay("[3X-UI]"),
-      });
-      if (buffered.trim()) write({ type: "log", step: 4, message: `[3X-UI] ${buffered}` });
-      if (install.code !== 0) throw new Error(`3x-ui 安装脚本退出码 ${install.code}`);
+      write({ type: "log", step: 4, message: `[INSTALL] 正在执行${scriptLabel}，安装输出已在后端安全收集` });
+      const installProgressTimers = [
+        setTimeout(() => write({ type: "log", step: 5, message: "[INSTALL] 正在安装组件并写入面板配置" }), 12_000),
+        setTimeout(() => write({ type: "log", step: 6, message: "[CONFIG] 正在初始化面板服务与访问参数" }), 35_000),
+      ];
+      let install;
+      try {
+        install = await execSsh(session.client, command, {
+          timeoutMs: 20 * 60_000,
+        });
+      } finally {
+        installProgressTimers.forEach(clearTimeout);
+      }
+      if (install.code !== 0) {
+        const lastError = install.stderr
+          .split(/\r?\n/)
+          .map(line => line.trim())
+          .filter(line => line && !/curl|bash\s|https?:\/\/|token|password|username/i.test(line))
+          .at(-1);
+        throw new Error(lastError ? `3x-ui 安装失败：${lastError.slice(0, 240)}` : `3x-ui 安装脚本退出码 ${install.code}`);
+      }
 
       write({ type: "log", step: 7, message: "[VERIFY] 正在验证服务和读取安装结果" });
       const sudo = systemInfo.isRoot ? "" : "sudo -n ";
@@ -192,22 +199,28 @@ async function startServer() {
         write({ type: "log", step: 8, message: "[TOKEN] 已从安装结果中提取面板 API Token" });
       }
       if (!apiToken) {
-        try {
-          const tokenClient = new XuiClient({
-            panelAddress: domain || host,
-            panelPort: installedPort,
-            panelPath: installedPath,
-            panelProtocol: accessUrl.startsWith("https://") ? "https" : "http",
-            panelUser: username,
-            panelPass: password,
-            allowInsecureTls: true,
-          });
-          await tokenClient.authenticate();
-          apiToken = await tokenClient.getApiToken();
-          write({ type: "log", step: 8, message: "[TOKEN] 已从面板读取 API Token（首次读取时由面板自动生成）" });
-        } catch (error) {
-          write({ type: "log", step: 8, message: `[TOKEN] 面板未自动返回 Token，可部署后在节点页面重新获取：${errorMessage(error)}` });
+        write({ type: "log", step: 8, message: "[TOKEN] 正在读取节点创建所需的 API Token" });
+        let tokenError: unknown;
+        for (let attempt = 1; attempt <= 3 && !apiToken; attempt += 1) {
+          try {
+            const tokenClient = new XuiClient({
+              panelAddress: domain || host,
+              panelPort: installedPort,
+              panelPath: installedPath,
+              panelProtocol: accessUrl.startsWith("https://") ? "https" : "http",
+              panelUser: username,
+              panelPass: password,
+              allowInsecureTls: true,
+            });
+            await tokenClient.authenticate();
+            apiToken = await tokenClient.getApiToken();
+          } catch (error) {
+            tokenError = error;
+            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1_000));
+          }
         }
+        if (!apiToken) throw new Error(`面板已安装，但未能读取创建节点所需的 API Token：${errorMessage(tokenError)}`);
+        write({ type: "log", step: 8, message: "[TOKEN] API Token 已读取并将自动带入节点页面" });
       }
 
       const result = {
@@ -221,10 +234,10 @@ async function startServer() {
         username,
         password,
         apiToken,
+        webCertFile: installed.WEB_CERT_FILE || undefined,
+        webKeyFile: installed.WEB_KEY_FILE || undefined,
         sslEnabled: accessUrl.startsWith("https://"),
-        installCommand: "已通过 SSH 安全执行，命令包含敏感凭据，未回传到浏览器。",
         scriptType,
-        scriptUrl,
         systemInfo,
       };
       write({ type: "log", step: 9, message: "[SUCCESS] 3x-ui 服务已启动，安装结果验证通过" });
@@ -234,17 +247,6 @@ async function startServer() {
     } finally {
       session?.client.end();
       res.end();
-    }
-  });
-
-  app.post("/api/get-panel-token", async (req, res) => {
-    try {
-      const client = new XuiClient(xuiOptions(req.body));
-      await client.authenticate();
-      const token = await client.getApiToken();
-      res.json({ success: true, message: "已读取 3x-ui API Token；面板首次读取时会自动生成", token, details: { accessUrl: client.baseUrl } });
-    } catch (error) {
-      sendError(res, error);
     }
   });
 
@@ -267,7 +269,7 @@ async function startServer() {
     const write = (event: Record<string, unknown>) => {
       if (!res.writableEnded && !res.destroyed) res.write(`${JSON.stringify(event)}\n`);
     };
-    const progress = (step: number, message: string) => write({ type: "progress", step, total: 8, message });
+    const progress = (step: number, message: string) => write({ type: "progress", step, total: 5, message });
     const cancellation = new AbortController();
     const handleDisconnect = () => {
       if (!res.writableEnded) cancellation.abort();
@@ -281,31 +283,19 @@ async function startServer() {
     let originalXrayTemplate: { config: unknown; outboundTestUrl: string } | undefined;
     let xrayTemplateUpdated = false;
     try {
-      progress(1, "正在连接并认证 3x-ui 面板");
+      const panelToken = optionalString(body.panelToken);
+      if (!panelToken) throw new Error("缺少 3x-ui API Token，请从面板搭建结果进入节点页面或手动填写 Token");
+
+      progress(1, body.security === "Reality" ? "正在生成 Reality 安全参数" : "正在准备节点参数");
       client = new XuiClient(xuiOptions(body, cancellation.signal));
-      const hasPanelToken = Boolean(optionalString(body.panelToken));
-      if (!hasPanelToken) await client.authenticate();
-      if (cancellation.signal.aborted) throw new Error("节点创建已终止");
-
-      const canReadSessionSettings = !hasPanelToken
-        && Boolean(optionalString(body.panelUser) && optionalString(body.panelPass));
-      const settingsPromise = canReadSessionSettings
-        ? client.getSettings(2_500).catch(() => ({} as Record<string, any>))
-        : Promise.resolve({} as Record<string, any>);
-
-      progress(2, hasPanelToken ? "API Token 已加载，正在校验面板权限" : "面板登录成功，正在获取 API Token");
-      if (!hasPanelToken && optionalString(body.panelUser) && optionalString(body.panelPass)) {
-        try {
-          await client.getApiToken();
-        } catch {
-          // Older panels can still use the authenticated Session for /panel/api/**.
-        }
-      }
-      if (cancellation.signal.aborted) throw new Error("节点创建已终止");
-
-      progress(3, body.security === "Reality" ? "正在由面板生成 Reality 密钥与自动伪装参数" : body.security === "TLS" ? "正在读取面板 TLS 证书配置" : "正在准备节点安全参数");
       const reality = body.security === "Reality" ? await client.getRealityKeyPair() : undefined;
-      const tlsFiles = body.security === "TLS" ? await client.getWebCertFiles() : undefined;
+      const tlsFiles = body.security === "TLS" ? {
+        webCertFile: optionalString(body.tlsCertFile),
+        webKeyFile: optionalString(body.tlsKeyFile),
+      } : undefined;
+      if (tlsFiles && (!tlsFiles.webCertFile || !tlsFiles.webKeyFile)) {
+        throw new Error("缺少面板安装阶段读取的 TLS 证书路径，请重新搭建面板或先读取面板证书");
+      }
       const inboundInput = tlsFiles ? {
         ...body,
         sni: optionalString(body.sni) || cleanHostInput(body.panelAddress),
@@ -315,18 +305,15 @@ async function startServer() {
       built = buildInbound(inboundInput, reality);
       if (cancellation.signal.aborted) throw new Error("节点创建已终止");
 
-      progress(4, "节点参数已生成，正在写入 3x-ui 入站");
+      progress(2, "正在通过 API Token 创建入站");
       const created = await client.addInbound(built.payload);
       inboundId = Number(created?.id || 0);
       if (!inboundId) {
-        progress(5, "入站已提交，正在确认节点编号");
         const list = await client.request<any[]>("panel/api/inbounds/list");
         inboundId = Number(list.find((item) => item?.tag === built.tag)?.id || 0);
       }
       if (!inboundId) throw new Error("3x-ui 已返回创建成功，但无法确认新入站 ID");
       if (cancellation.signal.aborted) throw new Error("节点创建已终止");
-
-      progress(5, `节点入站创建成功（ID ${inboundId}）`);
 
       const parsedSocks = parseSocksInput(body.socksRawInput);
       let socksList = parsedSocks;
@@ -335,7 +322,11 @@ async function startServer() {
       let socksConfigured = false;
       let socksExplanation = "未配置 SOCKS 出站，入站流量使用面板默认路由。";
       if (body.autoOutbound && parsedSocks.length) {
-        progress(6, `正在写入 ${parsedSocks.length} 个 SOCKS 出站与路由规则`);
+        progress(3, `正在写入 ${parsedSocks.length} 个 SOCKS 出站与路由规则`);
+        if (!optionalString(body.panelUser) || !optionalString(body.panelPass)) {
+          throw new Error("SOCKS 链式路由需要面板用户名和密码");
+        }
+        await client.authenticate();
         const current = await client.getXrayTemplate();
         const config = current.xraySetting;
         originalXrayTemplate = { config, outboundTestUrl: current.outboundTestUrl || "" };
@@ -350,12 +341,11 @@ async function startServer() {
           ? `已向 3x-ui 全局 Xray 模板写入 ${socksList.length} 个 SOCKS 出站，并为该入站绑定随机负载均衡器。`
           : `已向 3x-ui 全局 Xray 模板写入 ${socksList.length} 个 SOCKS 出站，并绑定该入站路由。`;
       } else {
-        progress(6, "无需配置 SOCKS 路由，跳过全局模板修改");
+        progress(3, "无需配置额外路由");
       }
       if (cancellation.signal.aborted) throw new Error("节点创建已终止");
 
-      progress(7, "正在生成分享链接并整理创建结果");
-      const settings = await settingsPromise;
+      progress(4, "正在生成节点链接");
       const address = cleanHostInput(body.panelAddress);
       const realitySettings = built.payload.streamSettings.realitySettings;
       const result = {
@@ -368,7 +358,6 @@ async function startServer() {
         transport: body.transport || "TCP",
         security: body.security || "Reality",
         shareLink: built.shareLink(address, reality?.publicKey),
-        subscriptionUrl: buildSubscriptionUrl(settings, built.clientSubId),
         inboundPort: built.port,
         uuid: built.credential,
         socksConfigured,
@@ -383,14 +372,13 @@ async function startServer() {
           autoGenerated: !optionalString(body.sni),
         } : null,
       };
-      progress(8, "节点创建完成");
+      progress(5, "节点创建完成");
       write({ type: "result", result });
     } catch (error) {
       let rollbackClient = client;
       if (cancellation.signal.aborted) {
         try {
           rollbackClient = new XuiClient(xuiOptions(body));
-          if (!optionalString(body.panelToken)) await rollbackClient.authenticate();
         } catch {
           rollbackClient = undefined;
         }

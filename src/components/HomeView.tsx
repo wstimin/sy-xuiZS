@@ -201,7 +201,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView, onOpenGuide, o
             </div>
             <h3 className="text-base font-bold text-white">3. 点击【搭建节点】导出链接</h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              输入面板 IP 与账号密码，助手会自动读取并优先使用 <strong className="text-emerald-300">API Token</strong>。选择协议或填入 SOCKS5 链式代理，生成二维码导入客户端！
+              面板搭建完成后会自动带入 <strong className="text-emerald-300">API Token</strong> 和 TLS 证书路径。选择协议或填入 SOCKS5 链式代理，快速创建节点并生成二维码！
             </p>
           </div>
         </div>
@@ -217,7 +217,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView, onOpenGuide, o
             <div className="p-3.5 rounded-xl bg-black/20 border border-white/5 space-y-1">
               <span className="font-semibold text-indigo-300 block">Q: 搭建节点时需要手动输入 Token 访问令牌吗？</span>
               <p className="text-zinc-400 leading-relaxed">
-                答：<strong>不需要手动查找</strong>。填写面板账号密码后，可直接点击按钮读取面板 API Token；部分旧版面板不支持 Token 时仍可使用登录 Session 创建节点。
+                答：<strong>从搭建结果进入节点页面时不需要</strong>，Token 会自动带入。手动录入已有面板时需要填写有效 Token，创建过程不会重复登录或读取 Token。
               </p>
             </div>
 

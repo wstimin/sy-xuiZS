@@ -29,14 +29,11 @@ import {
 } from 'lucide-react';
 
 const NODE_DEPLOY_STEPS = [
-  '连接面板',
-  '校验认证',
-  '生成安全参数',
-  '写入入站',
-  '确认节点',
+  '准备参数',
+  '创建入站',
   '配置路由',
-  '生成链接',
-  '创建完成'
+  '生成结果',
+  '完成'
 ];
 
 interface NodeDeployViewProps {
@@ -48,6 +45,8 @@ interface NodeDeployViewProps {
     username: string;
     password?: string;
     apiToken?: string;
+    webCertFile?: string;
+    webKeyFile?: string;
   } | null;
   onNodeCreated: (result: NodeResult) => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
@@ -67,6 +66,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     panelUser: initialPanelData?.username || '',
     panelPass: initialPanelData?.password || '',
     panelToken: initialPanelData?.apiToken || '',
+    tlsCertFile: initialPanelData?.webCertFile || '',
+    tlsKeyFile: initialPanelData?.webKeyFile || '',
 
     nodeName: '',
     protocol: 'VLESS',
@@ -86,7 +87,6 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   });
 
   const [isDeploying, setIsDeploying] = useState(false);
-  const [isFetchingToken, setIsFetchingToken] = useState(false);
   const [isFetchingTls, setIsFetchingTls] = useState(false);
   const [tlsStatus, setTlsStatus] = useState<string | null>(null);
   const [resultModal, setResultModal] = useState<NodeResult | null>(null);
@@ -111,48 +111,6 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     return val.trim().replace(/^(https?:\/\/)+/i, '').replace(/\/.*$/, '').replace(/:[0-9]+$/, '').trim();
   };
 
-  // Read the panel API token through an authenticated session.
-  const handleFetchToken = async () => {
-    const cleanAddress = cleanHostStr(form.panelAddress);
-    if (!cleanAddress) {
-      showToast('请输入 xui 面板地址', '需要面板 IP 或域名才能进行 API 鉴权', 'warning');
-      return;
-    }
-    if (!form.panelUser.trim() || !form.panelPass.trim()) {
-      showToast('请填写面板账号密码', 'API Token 位于登录保护下，需要先建立面板 Session 才能读取', 'warning');
-      return;
-    }
-
-    setIsFetchingToken(true);
-    try {
-      const res = await fetch('/api/get-panel-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          panelAddress: cleanAddress,
-          panelPort: form.panelPort,
-          panelPath: form.panelPath,
-          panelProtocol: form.panelProtocol,
-          allowInsecureTls: form.allowInsecureTls,
-          panelUser: form.panelUser,
-          panelPass: form.panelPass
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || '获取 Token 失败');
-      }
-
-      setForm(prev => ({ ...prev, panelToken: data.token }));
-      showToast('Token 令牌获取成功！', `已从 xui 面板读取 Token: ${data.token.substring(0, 16)}...`, 'success');
-    } catch (err: any) {
-      showToast('获取 Token 失败', err.message || '请检查面板地址及账号密码是否正确', 'error');
-    } finally {
-      setIsFetchingToken(false);
-    }
-  };
-
   const handleFetchTls = async () => {
     const cleanAddress = cleanHostStr(form.panelAddress);
     if (!cleanAddress) {
@@ -173,7 +131,12 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       });
       const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       if (!res.ok || !data.success || !data.files) throw new Error(data.error || '无法读取面板 TLS 配置');
-      setForm(prev => ({ ...prev, sni: prev.sni?.trim() || cleanAddress }));
+      setForm(prev => ({
+        ...prev,
+        sni: prev.sni?.trim() || cleanAddress,
+        tlsCertFile: data.files.webCertFile,
+        tlsKeyFile: data.files.webKeyFile
+      }));
       setTlsStatus(`已获取面板证书：${data.files.webCertFile}`);
       showToast('TLS 证书配置获取成功', '创建节点时将自动使用目标面板的 Web 证书', 'success');
     } catch (err: any) {
@@ -196,7 +159,9 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
         panelProtocol: initialPanelData.protocol || 'http',
         panelUser: initialPanelData.username,
         panelPass: initialPanelData.password || '',
-        panelToken: initialPanelData.apiToken || ''
+        panelToken: initialPanelData.apiToken || '',
+        tlsCertFile: initialPanelData.webCertFile || '',
+        tlsKeyFile: initialPanelData.webKeyFile || ''
       }));
     }
   }, [initialPanelData]);
@@ -296,8 +261,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       setForm(prev => ({ ...prev, panelAddress: cleanAddress }));
     }
 
-    if (!form.panelToken?.trim() && (!form.panelUser.trim() || !form.panelPass.trim())) {
-      showToast('缺少面板认证信息', '请填写用户名和密码，或提供 3x-ui API Token', 'warning');
+    if (!form.panelToken?.trim()) {
+      showToast('缺少 API Token', '请从面板搭建结果进入节点页面，或手动填写 3x-ui API Token', 'warning');
       return;
     }
 
@@ -307,8 +272,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       showToast('配置存在协议冲突', secCheck.reason || '请修正协议组合', 'error');
       return;
     }
-    if (form.security === 'TLS' && (!form.panelUser.trim() || !form.panelPass.trim())) {
-      showToast('TLS 需要面板账号密码', '面板证书路径只能通过登录 Session 获取', 'warning');
+    if (form.security === 'TLS' && (!form.tlsCertFile?.trim() || !form.tlsKeyFile?.trim())) {
+      showToast('缺少 TLS 证书路径', '请从刚搭建完成的面板进入，或先读取一次面板证书', 'warning');
       return;
     }
     if (form.autoOutbound && parsedSocksList.length > 0 && (!form.panelUser.trim() || !form.panelPass.trim())) {
@@ -320,7 +285,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     deployControllerRef.current = controller;
     setIsDeploying(true);
     setDeployStep(1);
-    setDeployMessage('正在连接 3x-ui 面板');
+    setDeployMessage('正在准备节点参数');
     setDeployError(null);
     setElapsedTime(0);
 
@@ -328,7 +293,12 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       const res = await fetch('/api/deploy-node', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, panelAddress: cleanAddress, sni: '', shortId: '' }),
+        body: JSON.stringify({
+          ...form,
+          panelAddress: cleanAddress,
+          sni: form.security === 'Reality' ? '' : form.sni,
+          shortId: form.security === 'Reality' ? '' : form.shortId
+        }),
         signal: controller.signal
       });
       if (!res.ok || !res.body) throw new Error(`节点创建请求失败，HTTP ${res.status}`);
@@ -368,7 +338,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       setDeployMessage('节点创建完成');
       onNodeCreated(result);
       setResultModal(result);
-      showToast('节点创建成功', '已通过 3x-ui 官方 API 创建并验证入站', 'success');
+      showToast('节点创建成功', '已通过 3x-ui API 快速创建入站', 'success');
     } catch (err: any) {
       if (err?.name === 'AbortError') {
         setDeployMessage('已终止创建，后端正在回滚本次变更');
@@ -512,47 +482,27 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
           </div>
 
-          {/* Token Field & Auto-Generate Token Action */}
+          {/* Token Field */}
           <div className="pt-2 border-t border-white/10 space-y-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <label className="text-xs font-medium text-zinc-300 flex items-center gap-2">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                <span>API Token 访问令牌（兼容模式）</span>
-                <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                  有 Token 时优先使用
-                </span>
-              </label>
-
-              <button
-                type="button"
-                onClick={handleFetchToken}
-                disabled={isFetchingToken}
-                className="px-3 py-1 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-medium flex items-center gap-1.5 transition-all self-start sm:self-auto disabled:opacity-50 cursor-pointer"
-              >
-                {isFetchingToken ? (
-                  <>
-                    <div className="w-3 h-3 border-2 border-indigo-400/30 border-t-indigo-400 rounded-full animate-spin" />
-                    <span>正在登录获取 Token...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>自动登录并读取 Token</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <label className="text-xs font-medium text-zinc-300 flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <span>API Token 访问令牌</span>
+              <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                搭建面板后自动带入
+              </span>
+            </label>
 
             <input
               type="password"
-              placeholder="粘贴面板 API Token，或点击右上方自动读取"
+              required
+              placeholder="请填写面板 API Token"
               value={form.panelToken || ''}
               onChange={e => setForm({ ...form, panelToken: e.target.value })}
               className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-indigo-200 text-xs font-mono outline-none transition-all"
             />
 
             <p className="text-[11px] text-zinc-400 leading-relaxed bg-black/30 p-2.5 rounded-xl border border-white/5">
-              <strong>Token 认证说明：</strong>部分面板版本或安全配置要求 API Token 才能创建入站。填写或自动读取后，后端会优先使用 Bearer Token 调用 <code>/panel/api/**</code> 管理接口；Token 读取、TLS 证书和 Xray 全局配置仍使用账号密码 Session。Token 不会写入浏览器历史记录。
+              <strong>快速创建：</strong>所有协议均直接使用 Bearer Token 调用 <code>/panel/api/**</code> 创建入站，不再执行登录、认证检查或重复读取 Token。账号密码仅在配置 SOCKS 链式路由时使用，Token 不会写入浏览器历史记录。
             </p>
           </div>
         </div>
@@ -703,18 +653,27 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
             <div className="p-4 rounded-xl bg-white/5 border border-emerald-500/30 space-y-3 animate-in fade-in duration-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <div className="text-xs font-semibold text-emerald-300">自动获取 TLS 证书</div>
-                  <p className="text-[11px] text-zinc-400 mt-1">从目标 3x-ui 的 Web TLS 配置读取证书和私钥路径，创建节点时后端也会再次自动获取。</p>
+                  <div className="text-xs font-semibold text-emerald-300">复用面板 TLS 证书</div>
+                  <p className="text-[11px] text-zinc-400 mt-1">
+                    {form.tlsCertFile && form.tlsKeyFile
+                      ? '已使用面板安装阶段读取的证书路径，创建节点时不会再次请求。'
+                      : '当前没有缓存证书路径；手动录入旧面板时可读取一次。'}
+                  </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleFetchTls}
-                  disabled={isFetchingTls}
-                  className="shrink-0 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-medium disabled:opacity-50"
-                >
-                  {isFetchingTls ? '正在获取...' : '从面板获取 TLS'}
-                </button>
+                {(!form.tlsCertFile || !form.tlsKeyFile) && (
+                  <button
+                    type="button"
+                    onClick={handleFetchTls}
+                    disabled={isFetchingTls}
+                    className="shrink-0 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-medium disabled:opacity-50"
+                  >
+                    {isFetchingTls ? '正在读取...' : '读取一次证书'}
+                  </button>
+                )}
               </div>
+              {form.tlsCertFile && form.tlsKeyFile && (
+                <p className="text-[11px] text-emerald-300 break-all p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">已复用面板证书：{form.tlsCertFile}</p>
+              )}
               {tlsStatus && <p className="text-[11px] text-zinc-300 break-all p-2.5 rounded-lg bg-black/30 border border-white/5">{tlsStatus}</p>}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-zinc-300 flex items-center justify-between">
@@ -728,7 +687,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
                   onChange={e => setForm({ ...form, sni: cleanHostStr(e.target.value) })}
                   className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-emerald-500 text-white text-sm placeholder-zinc-500 outline-none transition-all"
                 />
-                <p className="text-[11px] text-zinc-500">这里只填写证书对应的域名；证书和私钥路径始终由后端从目标面板自动读取。</p>
+                <p className="text-[11px] text-zinc-500">这里只填写证书对应的域名；证书和私钥路径直接复用面板搭建结果。</p>
               </div>
             </div>
           )}

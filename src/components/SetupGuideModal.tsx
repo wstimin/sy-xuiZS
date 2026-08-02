@@ -250,10 +250,10 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2">
                     <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
                       <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] flex items-center justify-center font-mono">1</span>
-                      填入 xui 面板信息（API Token 可自动获取或手动填写）
+                      填入 xui 面板信息（搭建结果会自动带入 API Token）
                     </div>
                     <p className="text-xs text-zinc-400 leading-relaxed pl-6">
-                      输入您的面板 IP、端口、路径与管理员账号密码，再点击读取 Token。面板首次读取时会自动生成 Token，后续管理接口优先使用 Bearer Token。
+                      从面板搭建结果跳转时，地址、账号、API Token 和 TLS 证书路径会自动填写。手动录入已有面板时请直接填写有效 Token。
                     </p>
                   </div>
 
@@ -317,7 +317,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                     Q: 搭建节点的时候不输入 Token 访问令牌能不能搭建成功？
                   </div>
                   <div className="text-zinc-300 leading-relaxed pl-6">
-                    <strong>支持，但建议先自动读取。</strong> 部分旧版面板允许使用账号密码 Session 创建节点；需要 Bearer Token 的面板版本，应先填写账号密码并点击“自动登录并读取 Token”。
+                    <strong>不能。</strong> 创建节点统一要求 API Token，并直接通过 Bearer Token 调用管理 API，避免重复登录和认证检查。
                   </div>
                 </div>
 
