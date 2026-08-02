@@ -61,7 +61,7 @@ function makeStreamSettings(input: InboundInput, reality?: { privateKey: string;
   if (network === "tcp") stream.tcpSettings = { acceptProxyProtocol: false, header: { type: "none" } };
   if (network === "ws") stream.wsSettings = { acceptProxyProtocol: false, path, host: optionalString(input.sni), headers: {}, heartbeatPeriod: 0 };
   if (network === "grpc") stream.grpcSettings = { serviceName: path.replace(/^\//, ""), authority: "", multiMode: false, user_agent: "" };
-  if (network === "kcp") stream.kcpSettings = { mtu: 1350, tti: 50, uplinkCapacity: 5, downlinkCapacity: 20, congestion: false, readBufferSize: 2, writeBufferSize: 2, seed: "", header: { type: "none" } };
+  if (network === "kcp") stream.kcpSettings = { mtu: 1350, tti: 20, uplinkCapacity: 5, downlinkCapacity: 20, cwndMultiplier: 1, maxSendingWindow: 2_097_152 };
 
   if (security === "Reality") {
     if (input.protocol !== "VLESS" || transport !== "TCP") throw new Error("当前稳定实现仅支持 VLESS + TCP + Reality");
@@ -113,6 +113,7 @@ export function buildInbound(input: InboundInput, reality?: { privateKey: string
   const transport = input.transport || "TCP";
   const security = input.security || "Reality";
   if (protocol === "Shadowsocks" && (transport !== "TCP" || security !== "None")) throw new Error("Shadowsocks 当前仅支持 TCP + None");
+  if (transport === "mKCP" && security !== "None") throw new Error("mKCP 不支持 TLS 或 Reality，请使用 None");
   if (security === "Reality" && (protocol !== "VLESS" || transport !== "TCP")) throw new Error("Reality 当前仅支持 VLESS + TCP");
 
   const port = input.inboundPort ? validPort(input.inboundPort) : 15_000 + Math.floor(Math.random() * 40_000);
@@ -123,6 +124,7 @@ export function buildInbound(input: InboundInput, reality?: { privateKey: string
   const expiryTime = input.expireDays && input.expireDays > 0 ? Date.now() + input.expireDays * 86_400_000 : 0;
   const totalGB = input.trafficLimitGb && input.trafficLimitGb > 0 ? Math.round(input.trafficLimitGb * 1024 ** 3) : 0;
   let credential: string = randomUUID();
+  let shadowsocksServerPassword = "";
   let settings: Record<string, any>;
 
   const commonClient = { email, limitIp: 0, totalGB, expiryTime, enable: true, tgId: 0, subId, comment: "", reset: 0 };
@@ -133,7 +135,8 @@ export function buildInbound(input: InboundInput, reality?: { privateKey: string
     settings = { clients: [{ password: credential, ...commonClient }], fallbacks: [] };
   } else {
     credential = randomBytes(16).toString("base64");
-    settings = { method: "2022-blake3-aes-128-gcm", password: randomBytes(16).toString("base64"), network: "tcp,udp", clients: [{ method: "", password: credential, ...commonClient }], ivCheck: false };
+    shadowsocksServerPassword = randomBytes(16).toString("base64");
+    settings = { method: "2022-blake3-aes-128-gcm", password: shadowsocksServerPassword, network: "tcp,udp", clients: [{ method: "", password: credential, ...commonClient }], ivCheck: false };
   }
 
   const streamSettings = makeStreamSettings({ ...input, protocol, transport, security }, reality);
@@ -157,24 +160,33 @@ export function buildInbound(input: InboundInput, reality?: { privateKey: string
     clientSubId: subId,
     tag,
     port,
-    shareLink: (address, realityPublicKey) => buildShareLink({ input: { ...input, protocol, transport, security }, address, port, name, credential, streamSettings, realityPublicKey }),
+    shareLink: (address, realityPublicKey) => buildShareLink({ input: { ...input, protocol, transport, security }, address, port, name, credential, shadowsocksServerPassword, streamSettings, realityPublicKey }),
   };
 }
 
-function buildShareLink(args: { input: InboundInput & { protocol: Protocol; transport: Transport; security: Security }; address: string; port: number; name: string; credential: string; streamSettings: any; realityPublicKey?: string }) {
-  const { input, address, port, name, credential, streamSettings } = args;
+function buildShareLink(args: { input: InboundInput & { protocol: Protocol; transport: Transport; security: Security }; address: string; port: number; name: string; credential: string; shadowsocksServerPassword?: string; streamSettings: any; realityPublicKey?: string }) {
+  const { input, address, port, name, credential, shadowsocksServerPassword, streamSettings } = args;
   const label = encodeURIComponent(name);
   const type = transportMap[input.transport];
   if (input.protocol === "Shadowsocks") {
-    const auth = Buffer.from(`2022-blake3-aes-128-gcm:${credential}`).toString("base64url");
+    if (!shadowsocksServerPassword) throw new Error("Shadowsocks 2022 缺少服务器主密钥");
+    const auth = Buffer.from(`2022-blake3-aes-128-gcm:${shadowsocksServerPassword}:${credential}`).toString("base64url");
     return `ss://${auth}@${address}:${port}#${label}`;
   }
   if (input.protocol === "VMess") {
-    return `vmess://${Buffer.from(JSON.stringify({ v: "2", ps: name, add: address, port: String(port), id: credential, aid: "0", scy: "auto", net: type, type: "none", host: optionalString(input.sni), path: streamSettings.wsSettings?.path || streamSettings.grpcSettings?.serviceName || "", tls: input.security === "TLS" ? "tls" : "", sni: optionalString(input.sni) })).toString("base64")}`;
+    return `vmess://${Buffer.from(JSON.stringify({ v: "2", ps: name, add: address, port: String(port), id: credential, aid: "0", scy: "auto", net: type, type: "none", host: optionalString(input.sni), path: streamSettings.wsSettings?.path || streamSettings.grpcSettings?.serviceName || "", mtu: streamSettings.kcpSettings?.mtu, tti: streamSettings.kcpSettings?.tti, tls: input.security === "TLS" ? "tls" : "", sni: optionalString(input.sni) })).toString("base64")}`;
   }
   const params = new URLSearchParams({ type, security: input.security.toLowerCase() });
-  if (type === "ws") params.set("path", streamSettings.wsSettings.path);
+  if (type === "ws") {
+    params.set("path", streamSettings.wsSettings.path);
+    const host = optionalString(streamSettings.wsSettings.host);
+    if (host) params.set("host", host);
+  }
   if (type === "grpc") params.set("serviceName", streamSettings.grpcSettings.serviceName);
+  if (type === "kcp") {
+    params.set("mtu", String(streamSettings.kcpSettings.mtu));
+    params.set("tti", String(streamSettings.kcpSettings.tti));
+  }
   const effectiveSni = input.security === "Reality"
     ? streamSettings.realitySettings?.serverNames?.[0]
     : optionalString(input.sni);

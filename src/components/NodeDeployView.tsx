@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 
 const NODE_DEPLOY_STEPS = [
-  '准备参数',
+  '安全参数',
   '创建入站',
   '配置路由',
   '生成结果',
@@ -188,7 +188,9 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
         ...prev,
         protocol: newProtocol,
         transport: nextTrans,
-        security: nextSec
+        security: nextSec,
+        inboundPort: '',
+        pathOrServiceName: nextTrans === 'WebSocket' || nextTrans === 'gRPC' ? prev.pathOrServiceName : ''
       };
     });
   };
@@ -200,8 +202,12 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       const secCheck = checkSecurityAllowed(prev.protocol, newTransport, nextSec);
       if (!secCheck.allowed) {
         // Auto pick valid default security
-        if (prev.protocol === 'VLESS' && newTransport === 'TCP') {
+        if (newTransport === 'mKCP') {
+          nextSec = 'None';
+        } else if (prev.protocol === 'VLESS' && newTransport === 'TCP') {
           nextSec = 'Reality';
+        } else if (prev.protocol === 'Trojan') {
+          nextSec = 'TLS';
         } else {
           nextSec = 'TLS';
         }
@@ -210,7 +216,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       return {
         ...prev,
         transport: newTransport,
-        security: nextSec
+        security: nextSec,
+        pathOrServiceName: newTransport === 'WebSocket' || newTransport === 'gRPC' ? prev.pathOrServiceName : ''
       };
     });
   };
@@ -286,7 +293,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     deployControllerRef.current = controller;
     setIsDeploying(true);
     setDeployStep(1);
-    setDeployMessage('正在准备节点参数');
+    setDeployMessage(form.security === 'Reality' ? '正在向面板获取 Reality 密钥' : '正在生成安全参数');
     setDeployError(null);
     setElapsedTime(0);
 
@@ -337,6 +344,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
       setDeployStep(NODE_DEPLOY_STEPS.length);
       setDeployMessage('节点创建完成');
+      setForm(prev => ({ ...prev, inboundPort: '' }));
       onNodeCreated(result);
       setResultModal(result);
       showToast('节点创建成功', '已通过 3x-ui API 快速创建入站', 'success');

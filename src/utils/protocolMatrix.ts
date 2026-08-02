@@ -24,6 +24,13 @@ export function checkSecurityAllowed(
   transport: TransportType,
   security: SecurityType
 ): RuleCheckResult {
+  if (transport === 'mKCP' && security !== 'None') {
+    return {
+      allowed: false,
+      reason: 'mKCP 不支持 TLS 或 Reality，请使用 None'
+    };
+  }
+
   // 1. Reality Check
   if (security === 'Reality') {
     if (protocol !== 'VLESS') {

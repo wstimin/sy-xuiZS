@@ -150,6 +150,7 @@ async function startServer() {
     res.status(200);
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
     const write = (event: Record<string, unknown>) => res.write(`${JSON.stringify(event)}\n`);
     let session;
@@ -317,6 +318,7 @@ async function startServer() {
     res.status(200);
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
     const write = (event: Record<string, unknown>) => {
       if (!res.writableEnded && !res.destroyed) res.write(`${JSON.stringify(event)}\n`);
@@ -338,9 +340,14 @@ async function startServer() {
       const panelToken = optionalString(body.panelToken);
       if (!panelToken) throw new Error("缺少 3x-ui API Token，请从面板搭建结果进入节点页面或手动填写 Token");
 
-      progress(1, body.security === "Reality" ? "正在生成 Reality 安全参数" : "正在准备节点参数");
       client = new XuiClient(xuiOptions(body, cancellation.signal));
-      const reality = body.security === "Reality" ? await client.getRealityKeyPair() : undefined;
+      let reality: { privateKey: string; publicKey: string } | undefined;
+      if (body.security === "Reality") {
+        progress(1, "正在向 3x-ui 获取 Reality 密钥");
+        reality = await client.getRealityKeyPair();
+      } else {
+        progress(1, "正在生成节点安全参数");
+      }
       const tlsFiles = body.security === "TLS" ? {
         webCertFile: optionalString(body.tlsCertFile),
         webKeyFile: optionalString(body.tlsKeyFile),
@@ -357,7 +364,7 @@ async function startServer() {
       built = buildInbound(inboundInput, reality);
       if (cancellation.signal.aborted) throw new Error("节点创建已终止");
 
-      progress(2, "正在通过 API Token 创建入站");
+      progress(2, `正在创建 ${body.protocol || "VLESS"} 入站`);
       const created = await client.addInbound(built.payload);
       inboundId = Number(created?.id || 0);
       if (!inboundId) {

@@ -53,10 +53,53 @@ test("TLS inbound uses certificate paths obtained from the panel", () => {
   assert.equal(built.payload.streamSettings.wsSettings.path, "/ws/");
 });
 
+test("Shadowsocks 2022 share link combines the server and client keys", () => {
+  const built = buildInbound({
+    nodeName: "ss-node",
+    protocol: "Shadowsocks",
+    transport: "TCP",
+    security: "None",
+    inboundPort: 8388,
+  });
+  const settings = built.payload.settings;
+  const encoded = built.shareLink("node.example.com").match(/^ss:\/\/([^@]+)@/)?.[1];
+  assert.ok(encoded);
+  assert.equal(
+    Buffer.from(encoded, "base64url").toString(),
+    `${settings.method}:${settings.password}:${settings.clients[0].password}`,
+  );
+});
+
+test("mKCP and WebSocket links preserve the server transport parameters", () => {
+  const kcp = buildInbound({
+    protocol: "VLESS",
+    transport: "mKCP",
+    security: "None",
+    inboundPort: 24444,
+  });
+  assert.equal(kcp.payload.streamSettings.kcpSettings.tti, 20);
+  const kcpLink = new URL(kcp.shareLink("node.example.com"));
+  assert.equal(kcpLink.searchParams.get("mtu"), "1350");
+  assert.equal(kcpLink.searchParams.get("tti"), "20");
+
+  const ws = buildInbound({
+    protocol: "VLESS",
+    transport: "WebSocket",
+    security: "None",
+    inboundPort: 25555,
+    sni: "cdn.example.com",
+    pathOrServiceName: "/ws",
+  });
+  const wsLink = new URL(ws.shareLink("node.example.com"));
+  assert.equal(wsLink.searchParams.get("path"), "/ws/");
+  assert.equal(wsLink.searchParams.get("host"), "cdn.example.com");
+});
+
 test("unsupported combinations and incomplete TLS are rejected", () => {
   assert.throws(() => buildInbound({ protocol: "VLESS", transport: "gRPC", security: "Reality" }), /仅支持 VLESS \+ TCP/);
   assert.throws(() => buildInbound({ protocol: "VMess", transport: "TCP", security: "TLS", sni: "example.com" }), /面板返回的证书配置/);
   assert.throws(() => buildInbound({ protocol: "Shadowsocks", transport: "WebSocket", security: "None" }), /仅支持 TCP/);
+  assert.throws(() => buildInbound({ protocol: "VMess", transport: "mKCP", security: "TLS" }), /mKCP 不支持 TLS/);
 });
 
 test("subscription URL is returned only when enabled by the real panel", () => {
