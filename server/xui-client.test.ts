@@ -7,6 +7,7 @@ import {
   parseApiTokenResponse,
   parseWebCertFiles,
   parseXrayTemplateResponse,
+  serializeInboundForm,
   serializeInboundPayload,
   XuiClient,
 } from "./xui-client.js";
@@ -69,6 +70,25 @@ test("serializeInboundPayload encodes the JSON string fields expected by 3x-ui",
   assert.equal(payload.settings, '{"clients":[{"id":"uuid"}]}');
   assert.equal(payload.streamSettings, '{"network":"tcp"}');
   assert.equal(payload.sniffing, '{"enabled":true}');
+});
+
+test("serializeInboundForm matches the native 3x-ui inbound form model", () => {
+  const form = serializeInboundForm({
+    port: 443,
+    enable: true,
+    settings: { clients: [{ id: "uuid" }] },
+    streamSettings: { network: "tcp" },
+    sniffing: { enabled: true },
+    clientStats: [{ id: 1 }],
+    nodeId: 99,
+  });
+  assert.equal(form.get("port"), "443");
+  assert.equal(form.get("enable"), "true");
+  assert.deepEqual(JSON.parse(form.get("settings") || ""), { clients: [{ id: "uuid" }] });
+  assert.deepEqual(JSON.parse(form.get("streamSettings") || ""), { network: "tcp" });
+  assert.deepEqual(JSON.parse(form.get("sniffing") || ""), { enabled: true });
+  assert.equal(form.has("clientStats"), false);
+  assert.equal(form.has("nodeId"), false);
 });
 
 test("parseApiTokenFromOutput extracts installer tokens and strips ANSI colors", () => {
@@ -232,7 +252,7 @@ test("XuiClient reads TLS settings directly from legacy panels with saved creden
   assert.equal(calls[1].headers.get("Cookie"), "3x-ui=legacy-session");
 });
 
-test("XuiClient uses Bearer Token for management APIs and serializes inbound fields", async () => {
+test("XuiClient uses Bearer Token and native form encoding for management APIs", async () => {
   const calls: Array<{ url: URL; method: string; headers: Headers; body: string }> = [];
   const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
     const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
@@ -268,10 +288,11 @@ test("XuiClient uses Bearer Token for management APIs and serializes inbound fie
   assert.equal(calls[0].headers.get("Authorization"), "Bearer bearer-token");
   assert.equal(calls[1].headers.get("Authorization"), "Bearer bearer-token");
   assert.equal(calls[1].headers.get("X-CSRF-Token"), null);
-  const body = JSON.parse(calls[1].body);
-  assert.equal(body.settings, '{"clients":[]}');
-  assert.equal(body.streamSettings, '{"network":"tcp"}');
-  assert.equal(body.sniffing, '{"enabled":true}');
+  assert.match(calls[1].headers.get("Content-Type") || "", /^application\/x-www-form-urlencoded/);
+  const body = new URLSearchParams(calls[1].body);
+  assert.equal(body.get("settings"), '{"clients":[]}');
+  assert.equal(body.get("streamSettings"), '{"network":"tcp"}');
+  assert.equal(body.get("sniffing"), '{"enabled":true}');
 });
 
 test("XuiClient aborts an in-flight panel request when the parent signal is cancelled", async () => {

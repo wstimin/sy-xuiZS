@@ -160,6 +160,34 @@ export function serializeInboundPayload(payload: Record<string, unknown>): Recor
   return result;
 }
 
+export function serializeInboundForm(payload: Record<string, unknown>): URLSearchParams {
+  const serialized = serializeInboundPayload(payload);
+  const form = new URLSearchParams();
+  for (const field of [
+    "id",
+    "up",
+    "down",
+    "total",
+    "remark",
+    "enable",
+    "expiryTime",
+    "trafficReset",
+    "lastTrafficResetTime",
+    "listen",
+    "port",
+    "protocol",
+    "tag",
+    "settings",
+    "streamSettings",
+    "sniffing",
+  ]) {
+    const value = serialized[field];
+    if (value === undefined || value === null) continue;
+    form.set(field, String(value));
+  }
+  return form;
+}
+
 export function normalizePanelBaseUrl(options: XuiClientOptions): string {
   const raw = requiredString(options.panelAddress, "面板地址");
   let parsed: URL;
@@ -248,8 +276,8 @@ export class XuiClient {
   async addInbound(payload: Record<string, unknown>, protocol = "节点", timeoutMs = 20_000): Promise<any> {
     return this.request("panel/api/inbounds/add", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(serializeInboundPayload(payload)),
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+      body: serializeInboundForm(payload),
     }, timeoutMs, `3x-ui 创建 ${protocol} 入站超时，面板的 Xray 热加载未及时返回`);
   }
 

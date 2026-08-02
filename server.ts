@@ -88,6 +88,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function formatElapsed(milliseconds: number): string {
+  if (milliseconds < 1_000) return `${milliseconds}ms`;
+  return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
+}
+
 function sendError(res: Response, error: unknown, status = 400) {
   if (!res.headersSent) res.status(status).json({ success: false, error: errorMessage(error) });
 }
@@ -401,7 +406,9 @@ async function startServer() {
       let reality: { privateKey: string; publicKey: string } | undefined;
       if (body.security === "Reality") {
         progress(1, "正在向 3x-ui 获取 Reality 密钥");
+        const realityStartedAt = Date.now();
         reality = await client.getRealityKeyPair();
+        progress(1, `Reality 密钥已获取（${formatElapsed(Date.now() - realityStartedAt)}）`);
       } else {
         progress(1, "正在生成节点安全参数");
       }
@@ -424,7 +431,9 @@ async function startServer() {
 
       progress(1, "节点参数已生成");
       progress(2, `正在调用 3x-ui 创建 ${body.protocol || "VLESS"} 入站`);
+      const inboundStartedAt = Date.now();
       const created = await client.addInbound(built.payload, body.protocol || "VLESS");
+      progress(2, `3x-ui 入站已创建（${formatElapsed(Date.now() - inboundStartedAt)}）`);
       inboundId = Number(created?.id || 0);
       inboundTag = optionalString(created?.tag) || built.tag;
       if (!inboundId) {
