@@ -388,6 +388,7 @@ async function startServer() {
     let inboundTag = "";
     let originalXrayTemplate: { config: unknown; outboundTestUrl: string } | undefined;
     let xrayTemplateUpdated = false;
+    let xrayRestartAttempted = false;
     try {
       const panelToken = optionalString(body.panelToken);
       if (!panelToken) throw new Error("缺少 3x-ui API Token，请从面板搭建结果进入节点页面或手动填写 Token");
@@ -457,13 +458,24 @@ async function startServer() {
         const injected = injectSocksRouting(config, parsedSocks, inboundTag, body.autoRouting !== false, body.enableLoadBalance === true);
         xrayTemplateUpdated = true;
         await client.updateXrayTemplate(injected.config, current.outboundTestUrl || "");
+        progress(3, "SOCKS 路由已保存，正在重载 Xray");
+        xrayRestartAttempted = true;
+        await client.restartXray();
+        const confirmed = findInboundRecord(await client.listInbounds(), {
+          tag: inboundTag,
+          protocol: body.protocol || "VLESS",
+          port: built.port,
+        });
+        if (!confirmed) throw new Error("Xray 重载后无法确认新入站，已撤销本次 SOCKS 节点创建");
+        inboundId = Number(confirmed.id || inboundId);
+        inboundTag = optionalString(confirmed.tag) || inboundTag;
         socksList = injected.proxies;
         outbounds = injected.outbounds;
         rules = injected.rules;
         socksConfigured = true;
         socksExplanation = injected.balancer
-          ? `已向 3x-ui 全局 Xray 模板写入 ${socksList.length} 个 SOCKS 出站，并为该入站绑定随机负载均衡器。`
-          : `已向 3x-ui 全局 Xray 模板写入 ${socksList.length} 个 SOCKS 出站，并绑定该入站路由。`;
+          ? `已写入并重载 ${socksList.length} 个 SOCKS 出站，并为该入站绑定随机负载均衡器。`
+          : `已写入并重载 ${socksList.length} 个 SOCKS 出站，并绑定该入站路由。`;
       } else {
         progress(3, "无需配置额外路由");
       }
@@ -531,6 +543,13 @@ async function startServer() {
           await rollbackClient.deleteInbound(inboundId);
         } catch {
           // Preserve the original failure; the progress response already explains the operation failed.
+        }
+      }
+      if (rollbackClient && xrayRestartAttempted) {
+        try {
+          await rollbackClient.restartXray();
+        } catch {
+          // Preserve the original failure after making a best-effort runtime rollback.
         }
       }
       write({ type: "error", error: errorMessage(error), cancelled: cancellation.signal.aborted });

@@ -296,12 +296,26 @@ export class XuiClient {
     await this.sessionRequest("panel/xray/update", init);
   }
 
-  private async sessionRequest<T>(apiPath: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<T> {
+  async restartXray(timeoutMs = 20_000): Promise<void> {
+    await this.sessionRequest(
+      "panel/api/server/restartXrayService",
+      { method: "POST" },
+      timeoutMs,
+      "SOCKS 路由已保存，但 Xray 重载超时",
+    );
+  }
+
+  private async sessionRequest<T>(
+    apiPath: string,
+    init: RequestInit = {},
+    timeoutMs = 15_000,
+    timeoutMessage?: string,
+  ): Promise<T> {
     await this.authenticateSession();
-    let response = await this.rawRequest(apiPath, init, true, true, timeoutMs);
+    let response = await this.rawRequest(apiPath, init, true, true, timeoutMs, timeoutMessage);
     if (response.status === 403 && !this.isSafeMethod(init.method)) {
       await this.refreshCsrfToken();
-      response = await this.rawRequest(apiPath, init, true, true, timeoutMs);
+      response = await this.rawRequest(apiPath, init, true, true, timeoutMs, timeoutMessage);
     }
     const data = await this.parseResponse<T>(response, apiPath);
     if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${apiPath}`);

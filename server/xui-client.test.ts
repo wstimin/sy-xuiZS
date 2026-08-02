@@ -361,6 +361,9 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
     if (url.pathname === "/base/panel/xray/update") {
       return Response.json({ success: true });
     }
+    if (url.pathname === "/base/panel/api/server/restartXrayService") {
+      return Response.json({ success: true });
+    }
     throw new Error(`Unexpected request: ${url.pathname}`);
   }) as typeof fetch;
 
@@ -383,6 +386,7 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
     { outbounds: [{ tag: "proxy", protocol: "socks" }], routing: { rules: [] } },
     "https://example.net/generate_204",
   );
+  await client.restartXray();
 
   assert.deepEqual(calls.map((call) => [call.method, call.url.pathname]), [
     ["POST", "/base/login"],
@@ -392,6 +396,7 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
     ["POST", "/base/panel/api/inbounds/del/31"],
     ["POST", "/base/panel/xray/"],
     ["POST", "/base/panel/xray/update"],
+    ["POST", "/base/panel/api/server/restartXrayService"],
   ]);
 
   for (const call of calls.slice(3, 5)) {
@@ -412,4 +417,35 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
     routing: { rules: [] },
   });
   assert.equal(updateBody.get("outboundTestUrl"), "https://example.net/generate_204");
+});
+
+test("XuiClient reports the Xray reload stage when restart times out", async () => {
+  const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    if (url.pathname === "/login") {
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=logged-in; Path=/; HttpOnly" },
+      });
+    }
+    if (url.pathname === "/panel/api/server/restartXrayService") {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelUser: "admin",
+    panelPass: "password",
+    panelToken: "bearer-token",
+  }, mockFetch);
+
+  await assert.rejects(client.restartXray(10), /SOCKS 路由已保存，但 Xray 重载超时/);
 });
