@@ -10,7 +10,7 @@ import { createServer as createViteServer } from "vite";
 import { buildInbound, InboundInput } from "./server/inbound-builder.js";
 import { buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, inspectServer, SshInput } from "./server/ssh.js";
 import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
-import { parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
+import { findInboundRecord, parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
 
 type ServerInspection = Awaited<ReturnType<typeof inspectServer>>;
@@ -333,6 +333,11 @@ async function startServer() {
         webKeyFile: installed.WEB_KEY_FILE || undefined,
         sslEnabled: accessUrl.startsWith("https://"),
         scriptType,
+        panelFlavor: scriptType === "recommended"
+          ? "mogai"
+          : scriptType === "official"
+            ? "official"
+            : "compatible",
         systemInfo,
       };
       write({ type: "log", step: 9, message: "[SUCCESS] 3x-ui 服务已启动，安装结果验证通过" });
@@ -365,7 +370,9 @@ async function startServer() {
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
     const write = (event: Record<string, unknown>) => {
-      if (!res.writableEnded && !res.destroyed) res.write(`${JSON.stringify(event)}\n`);
+      if (res.writableEnded || res.destroyed) return;
+      res.write(`${JSON.stringify(event)}\n`);
+      (res as Response & { flush?: () => void }).flush?.();
     };
     const progress = (step: number, message: string) => write({ type: "progress", step, total: 5, message });
     const cancellation = new AbortController();
@@ -378,11 +385,16 @@ async function startServer() {
     let client: XuiClient | undefined;
     let built: ReturnType<typeof buildInbound> | undefined;
     let inboundId = 0;
+    let inboundTag = "";
     let originalXrayTemplate: { config: unknown; outboundTestUrl: string } | undefined;
     let xrayTemplateUpdated = false;
     try {
       const panelToken = optionalString(body.panelToken);
       if (!panelToken) throw new Error("缺少 3x-ui API Token，请从面板搭建结果进入节点页面或手动填写 Token");
+
+      const panelFlavor = ["mogai", "official", "compatible"].includes(body.panelFlavor)
+        ? body.panelFlavor
+        : "compatible";
 
       client = new XuiClient(xuiOptions(body, cancellation.signal));
       let reality: { privateKey: string; publicKey: string } | undefined;
@@ -401,19 +413,28 @@ async function startServer() {
       }
       const inboundInput = tlsFiles ? {
         ...body,
+        panelFlavor,
         sni: optionalString(body.sni) || cleanHostInput(body.panelAddress),
         tlsCertFile: tlsFiles.webCertFile,
         tlsKeyFile: tlsFiles.webKeyFile,
-      } : body;
+      } : { ...body, panelFlavor };
       built = buildInbound(inboundInput, reality);
       if (cancellation.signal.aborted) throw new Error("节点创建已终止");
 
-      progress(2, `正在创建 ${body.protocol || "VLESS"} 入站`);
-      const created = await client.addInbound(built.payload);
+      progress(1, "节点参数已生成");
+      progress(2, `正在调用 3x-ui 创建 ${body.protocol || "VLESS"} 入站`);
+      const created = await client.addInbound(built.payload, body.protocol || "VLESS");
       inboundId = Number(created?.id || 0);
+      inboundTag = optionalString(created?.tag) || built.tag;
       if (!inboundId) {
-        const list = await client.request<any[]>("panel/api/inbounds/list");
-        inboundId = Number(list.find((item) => item?.tag === built.tag)?.id || 0);
+        const list = await client.listInbounds();
+        const matched = findInboundRecord(list, {
+          tag: built.tag,
+          protocol: body.protocol || "VLESS",
+          port: built.port,
+        });
+        inboundId = Number(matched?.id || 0);
+        inboundTag = optionalString(matched?.tag) || inboundTag;
       }
       if (!inboundId) throw new Error("3x-ui 已返回创建成功，但无法确认新入站 ID");
       if (cancellation.signal.aborted) throw new Error("节点创建已终止");
@@ -433,7 +454,7 @@ async function startServer() {
         const current = await client.getXrayTemplate();
         const config = current.xraySetting;
         originalXrayTemplate = { config, outboundTestUrl: current.outboundTestUrl || "" };
-        const injected = injectSocksRouting(config, parsedSocks, built.tag, body.autoRouting !== false, body.enableLoadBalance === true);
+        const injected = injectSocksRouting(config, parsedSocks, inboundTag, body.autoRouting !== false, body.enableLoadBalance === true);
         xrayTemplateUpdated = true;
         await client.updateXrayTemplate(injected.config, current.outboundTestUrl || "");
         socksList = injected.proxies;
@@ -454,7 +475,7 @@ async function startServer() {
       const result = {
         id: `node-${Date.now()}`,
         inboundId,
-        inboundTag: built.tag,
+        inboundTag,
         createdAt: new Date().toLocaleString("zh-CN"),
         nodeName: optionalString(body.nodeName) || `node-${built.port}`,
         protocol: body.protocol || "VLESS",
@@ -495,8 +516,12 @@ async function startServer() {
       }
       if (rollbackClient && !inboundId && built) {
         try {
-          const list = await rollbackClient.request<any[]>("panel/api/inbounds/list");
-          inboundId = Number(list.find((item) => item?.tag === built?.tag)?.id || 0);
+          const list = await rollbackClient.listInbounds();
+          inboundId = Number(findInboundRecord(list, {
+            tag: built.tag,
+            protocol: body.protocol || "VLESS",
+            port: built.port,
+          })?.id || 0);
         } catch {
           // The add request may have been cancelled before the panel created anything.
         }

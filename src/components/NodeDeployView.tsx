@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
-import { NodeDeployForm, NodeResult, ProtocolType, TransportType, SecurityType } from '../types';
+import { NodeDeployForm, NodeResult, ProtocolType, TransportType, SecurityType, PanelFlavor } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { parseSocksInput } from '../utils/socksParser';
 import {
@@ -45,6 +45,7 @@ interface NodeDeployViewProps {
     username: string;
     password?: string;
     apiToken?: string;
+    panelFlavor?: PanelFlavor;
     webCertFile?: string;
     webKeyFile?: string;
   } | null;
@@ -66,6 +67,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     panelUser: initialPanelData?.username || '',
     panelPass: initialPanelData?.password || '',
     panelToken: initialPanelData?.apiToken || '',
+    panelFlavor: initialPanelData?.panelFlavor || 'compatible',
     tlsCertFile: initialPanelData?.webCertFile || '',
     tlsKeyFile: initialPanelData?.webKeyFile || '',
 
@@ -161,6 +163,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
         panelUser: initialPanelData.username,
         panelPass: initialPanelData.password || '',
         panelToken: initialPanelData.apiToken || '',
+        panelFlavor: initialPanelData.panelFlavor || 'compatible',
         tlsCertFile: initialPanelData.webCertFile || '',
         tlsKeyFile: initialPanelData.webKeyFile || ''
       }));

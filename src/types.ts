@@ -4,6 +4,8 @@ export type AuthType = 'password' | 'privateKey';
 
 export type ScriptType = 'recommended' | 'official' | 'custom';
 
+export type PanelFlavor = 'mogai' | 'official' | 'compatible';
+
 export type ProtocolType = 'VLESS' | 'VMess' | 'Trojan' | 'Shadowsocks';
 
 export type TransportType = 'TCP' | 'WebSocket' | 'gRPC' | 'mKCP';
@@ -44,6 +46,7 @@ export interface PanelResult {
   webKeyFile?: string;
   sslEnabled: boolean;
   scriptType?: string;
+  panelFlavor?: PanelFlavor;
 }
 
 export interface SocksItem {
@@ -67,6 +70,7 @@ export interface NodeDeployForm {
   panelUser: string;
   panelPass: string;
   panelToken?: string;
+  panelFlavor: PanelFlavor;
   tlsCertFile?: string;
   tlsKeyFile?: string;
 

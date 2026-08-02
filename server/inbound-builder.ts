@@ -4,6 +4,22 @@ import { normalizeWebPath, optionalString, randomToken, validPort } from "./vali
 export type Protocol = "VLESS" | "VMess" | "Trojan" | "Shadowsocks";
 export type Transport = "TCP" | "WebSocket" | "gRPC" | "mKCP";
 export type Security = "None" | "TLS" | "Reality";
+export type PanelFlavor = "mogai" | "official" | "compatible";
+
+interface PanelProfile {
+  shadowsocksMethod: "2022-blake3-aes-256-gcm";
+  shadowsocksKeyBytes: 32;
+}
+
+const PANEL_PROFILES: Record<PanelFlavor, PanelProfile> = {
+  // wstimin/mogai-3xui 2.9.4+ defaults.
+  mogai: { shadowsocksMethod: "2022-blake3-aes-256-gcm", shadowsocksKeyBytes: 32 },
+  // Current official 3x-ui uses the same SS 2022 wire format, but remains
+  // an independent profile so future upstream changes do not alter mogai.
+  official: { shadowsocksMethod: "2022-blake3-aes-256-gcm", shadowsocksKeyBytes: 32 },
+  // Manual panels receive the broadly supported common payload.
+  compatible: { shadowsocksMethod: "2022-blake3-aes-256-gcm", shadowsocksKeyBytes: 32 },
+};
 
 export interface InboundInput {
   nodeName?: string;
@@ -18,6 +34,7 @@ export interface InboundInput {
   tlsCertFile?: string;
   tlsKeyFile?: string;
   pathOrServiceName?: string;
+  panelFlavor?: PanelFlavor;
 }
 
 export interface BuiltInbound {
@@ -56,11 +73,12 @@ function makeStreamSettings(input: InboundInput, reality?: { privateKey: string;
   const security = input.security || "Reality";
   const network = transportMap[transport];
   const path = normalizeWebPath(input.pathOrServiceName || "/xui-node");
+  const serviceName = path.replace(/^\/+|\/+$/g, "");
   const stream: Record<string, any> = { network, security: security.toLowerCase() };
 
   if (network === "tcp") stream.tcpSettings = { acceptProxyProtocol: false, header: { type: "none" } };
   if (network === "ws") stream.wsSettings = { acceptProxyProtocol: false, path, host: optionalString(input.sni), headers: {}, heartbeatPeriod: 0 };
-  if (network === "grpc") stream.grpcSettings = { serviceName: path.replace(/^\//, ""), authority: "", multiMode: false, user_agent: "" };
+  if (network === "grpc") stream.grpcSettings = { serviceName, authority: "", multiMode: false };
   if (network === "kcp") stream.kcpSettings = { mtu: 1350, tti: 20, uplinkCapacity: 5, downlinkCapacity: 20, cwndMultiplier: 1, maxSendingWindow: 2_097_152 };
 
   if (security === "Reality") {
@@ -112,6 +130,8 @@ export function buildInbound(input: InboundInput, reality?: { privateKey: string
   const protocol = input.protocol || "VLESS";
   const transport = input.transport || "TCP";
   const security = input.security || "Reality";
+  const panelFlavor = input.panelFlavor || "compatible";
+  const panelProfile = PANEL_PROFILES[panelFlavor];
   if (protocol === "Shadowsocks" && (transport !== "TCP" || security !== "None")) throw new Error("Shadowsocks 当前仅支持 TCP + None");
   if (transport === "mKCP" && security !== "None") throw new Error("mKCP 不支持 TLS 或 Reality，请使用 None");
   if (security === "Reality" && (protocol !== "VLESS" || transport !== "TCP")) throw new Error("Reality 当前仅支持 VLESS + TCP");
@@ -128,30 +148,34 @@ export function buildInbound(input: InboundInput, reality?: { privateKey: string
   let settings: Record<string, any>;
 
   const commonClient = { email, limitIp: 0, totalGB, expiryTime, enable: true, tgId: 0, subId, comment: "", reset: 0 };
-  if (protocol === "VLESS") settings = { clients: [{ id: credential, flow: security === "Reality" ? "xtls-rprx-vision" : "", ...commonClient }], decryption: "none", encryption: "none", fallbacks: [] };
+  if (protocol === "VLESS") settings = { clients: [{ id: credential, flow: security === "Reality" ? "xtls-rprx-vision" : "", ...commonClient }], decryption: "none", encryption: "none" };
   else if (protocol === "VMess") settings = { clients: [{ id: credential, security: "auto", ...commonClient }] };
   else if (protocol === "Trojan") {
     credential = randomToken(16);
-    settings = { clients: [{ password: credential, ...commonClient }], fallbacks: [] };
+    settings = { clients: [{ password: credential, ...commonClient }] };
   } else {
-    credential = randomBytes(16).toString("base64");
-    shadowsocksServerPassword = randomBytes(16).toString("base64");
-    settings = { method: "2022-blake3-aes-128-gcm", password: shadowsocksServerPassword, network: "tcp,udp", clients: [{ method: "", password: credential, ...commonClient }], ivCheck: false };
+    credential = randomBytes(panelProfile.shadowsocksKeyBytes).toString("base64");
+    shadowsocksServerPassword = randomBytes(panelProfile.shadowsocksKeyBytes).toString("base64");
+    settings = { method: panelProfile.shadowsocksMethod, password: shadowsocksServerPassword, network: "tcp,udp", clients: [{ method: "", password: credential, ...commonClient }], ivCheck: false };
   }
 
   const streamSettings = makeStreamSettings({ ...input, protocol, transport, security }, reality);
   const payload = {
     enable: true,
+    up: 0,
+    down: 0,
     remark: name,
     listen: "",
     port,
     protocol: protocol.toLowerCase(),
     expiryTime: 0,
     total: 0,
+    trafficReset: "never",
+    lastTrafficResetTime: 0,
     tag,
     settings,
     streamSettings,
-    sniffing: { enabled: true, destOverride: ["http", "tls", "quic", "fakedns"], metadataOnly: false, routeOnly: false, ipsExcluded: [], domainsExcluded: [] },
+    sniffing: { enabled: true, destOverride: ["http", "tls", "quic", "fakedns"], metadataOnly: false, routeOnly: false },
   };
 
   return {
@@ -170,7 +194,7 @@ function buildShareLink(args: { input: InboundInput & { protocol: Protocol; tran
   const type = transportMap[input.transport];
   if (input.protocol === "Shadowsocks") {
     if (!shadowsocksServerPassword) throw new Error("Shadowsocks 2022 缺少服务器主密钥");
-    const auth = Buffer.from(`2022-blake3-aes-128-gcm:${shadowsocksServerPassword}:${credential}`).toString("base64url");
+    const auth = Buffer.from(`${input.panelFlavor ? PANEL_PROFILES[input.panelFlavor].shadowsocksMethod : PANEL_PROFILES.compatible.shadowsocksMethod}:${shadowsocksServerPassword}:${credential}`).toString("base64url");
     return `ss://${auth}@${address}:${port}#${label}`;
   }
   if (input.protocol === "VMess") {

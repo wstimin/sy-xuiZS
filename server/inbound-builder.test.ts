@@ -54,20 +54,59 @@ test("TLS inbound uses certificate paths obtained from the panel", () => {
 });
 
 test("Shadowsocks 2022 share link combines the server and client keys", () => {
+  for (const panelFlavor of ["mogai", "official", "compatible"] as const) {
+    const built = buildInbound({
+      nodeName: `ss-${panelFlavor}`,
+      protocol: "Shadowsocks",
+      transport: "TCP",
+      security: "None",
+      inboundPort: 8388,
+      panelFlavor,
+    });
+    const settings = built.payload.settings;
+    const encoded = built.shareLink("node.example.com").match(/^ss:\/\/([^@]+)@/)?.[1];
+    assert.equal(settings.method, "2022-blake3-aes-256-gcm");
+    assert.equal(Buffer.from(settings.password, "base64").length, 32);
+    assert.equal(Buffer.from(settings.clients[0].password, "base64").length, 32);
+    assert.ok(encoded);
+    assert.equal(
+      Buffer.from(encoded, "base64url").toString(),
+      `${settings.method}:${settings.password}:${settings.clients[0].password}`,
+    );
+  }
+});
+
+test("common protocol payloads match the panel's persisted defaults", () => {
+  for (const protocol of ["VLESS", "VMess", "Trojan"] as const) {
+    const built = buildInbound({
+      protocol,
+      transport: "TCP",
+      security: "None",
+      panelFlavor: "mogai",
+    });
+    assert.equal(built.payload.up, 0);
+    assert.equal(built.payload.down, 0);
+    assert.equal(built.payload.trafficReset, "never");
+    assert.equal(built.payload.lastTrafficResetTime, 0);
+    assert.equal("fallbacks" in built.payload.settings, false);
+    assert.equal("ipsExcluded" in built.payload.sniffing, false);
+    assert.equal("domainsExcluded" in built.payload.sniffing, false);
+  }
+});
+
+test("gRPC payload omits fields not serialized by mogai 2.9.4 and 2.9.5", () => {
   const built = buildInbound({
-    nodeName: "ss-node",
-    protocol: "Shadowsocks",
-    transport: "TCP",
+    protocol: "VMess",
+    transport: "gRPC",
     security: "None",
-    inboundPort: 8388,
+    panelFlavor: "mogai",
+    pathOrServiceName: "/service",
   });
-  const settings = built.payload.settings;
-  const encoded = built.shareLink("node.example.com").match(/^ss:\/\/([^@]+)@/)?.[1];
-  assert.ok(encoded);
-  assert.equal(
-    Buffer.from(encoded, "base64url").toString(),
-    `${settings.method}:${settings.password}:${settings.clients[0].password}`,
-  );
+  assert.deepEqual(built.payload.streamSettings.grpcSettings, {
+    serviceName: "service",
+    authority: "",
+    multiMode: false,
+  });
 });
 
 test("mKCP and WebSocket links preserve the server transport parameters", () => {

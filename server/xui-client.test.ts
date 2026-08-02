@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  findInboundRecord,
   mergeCookieHeader,
   parseApiTokenFromOutput,
   parseApiTokenResponse,
@@ -9,6 +10,16 @@ import {
   serializeInboundPayload,
   XuiClient,
 } from "./xui-client.js";
+
+test("findInboundRecord supports panel-generated tags", () => {
+  const list = [
+    { id: 11, tag: "inbound-443", protocol: "vless", port: 443 },
+    { id: 12, tag: "inbound-8388", protocol: "shadowsocks", port: 8388 },
+  ];
+  assert.equal(findInboundRecord(list, { tag: "local-tag", protocol: "Shadowsocks", port: 8388 })?.id, 12);
+  assert.equal(findInboundRecord(list, { tag: "inbound-443", protocol: "Trojan", port: 9999 })?.id, 11);
+  assert.equal(findInboundRecord(list, { tag: "missing", protocol: "VMess", port: 2053 }), undefined);
+});
 
 test("mergeCookieHeader preserves the CSRF session and replaces updated cookies", () => {
   const cookie = mergeCookieHeader(
@@ -289,6 +300,25 @@ test("XuiClient aborts an in-flight panel request when the parent signal is canc
   await started;
   controller.abort();
   await assert.rejects(request, /节点创建已终止/);
+});
+
+test("XuiClient reports the inbound creation stage when add times out", async () => {
+  const mockFetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    });
+  }) as typeof fetch;
+
+  const client = new XuiClient({ panelAddress: "panel.example", panelToken: "bearer-token" }, mockFetch);
+  await assert.rejects(
+    client.addInbound({ port: 8388 }, "Shadowsocks", 10),
+    /3x-ui 创建 Shadowsocks 入站超时，面板的 Xray 热加载未及时返回/,
+  );
 });
 
 test("XuiClient uses Bearer for inbound list/delete and Session for Xray settings", async () => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ViewMode, PanelResult, NodeResult, ToastMessage, HistoryItem } from './types';
+import { ViewMode, PanelResult, NodeResult, ToastMessage, HistoryItem, PanelFlavor } from './types';
 import { copyToClipboard } from './utils/clipboard';
 import { Header } from './components/Header';
 import { HomeView } from './components/HomeView';
@@ -27,6 +27,7 @@ export default function App() {
     username: string;
     password?: string;
     apiToken?: string;
+    panelFlavor?: PanelFlavor;
     webCertFile?: string;
     webKeyFile?: string;
   } | null>(null);
@@ -146,6 +147,13 @@ export default function App() {
       username: result.username,
       password: result.password || '',
       apiToken: result.apiToken || '',
+      panelFlavor: result.panelFlavor || (
+        result.scriptType === 'recommended'
+          ? 'mogai'
+          : result.scriptType === 'official'
+            ? 'official'
+            : 'compatible'
+      ),
       webCertFile: result.webCertFile,
       webKeyFile: result.webKeyFile
     });
@@ -267,7 +275,14 @@ export default function App() {
             path: data.path,
             protocol: data.protocol,
             username: data.username,
-            password: ''
+            password: '',
+            panelFlavor: data.panelFlavor || (
+              data.scriptType === 'recommended'
+                ? 'mogai'
+                : data.scriptType === 'official'
+                  ? 'official'
+                  : 'compatible'
+            )
           });
           setCurrentView('node');
           showToast('已载入面板地址', '历史记录不保存密码，请重新输入面板密码或 Token', 'info');

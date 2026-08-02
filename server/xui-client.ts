@@ -26,6 +26,24 @@ export interface XrayTemplateResponse {
 
 type FetchImplementation = typeof fetch;
 
+export class PanelRequestTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PanelRequestTimeoutError";
+  }
+}
+
+export function findInboundRecord(
+  inbounds: any[],
+  expected: { tag: string; protocol: string; port: number },
+): any | undefined {
+  return inbounds.find(item => item?.tag === expected.tag)
+    || inbounds.find(item => (
+      String(item?.protocol || "").toLowerCase() === expected.protocol.toLowerCase()
+      && Number(item?.port) === expected.port
+    ));
+}
+
 function cleanApiToken(value: unknown): string {
   if (typeof value !== "string") return "";
   const token = value.trim().replace(/^['"]|['"]$/g, "");
@@ -210,11 +228,11 @@ export class XuiClient {
     this.sessionAuthenticated = true;
   }
 
-  async request<T>(apiPath: string, init: RequestInit = {}): Promise<T> {
-    let response = await this.rawRequest(apiPath, init, true);
+  async request<T>(apiPath: string, init: RequestInit = {}, timeoutMs = 15_000, timeoutMessage?: string): Promise<T> {
+    let response = await this.rawRequest(apiPath, init, true, false, timeoutMs, timeoutMessage);
     if (response.status === 403 && !optionalString(this.options.panelToken) && !this.isSafeMethod(init.method)) {
       await this.refreshCsrfToken();
-      response = await this.rawRequest(apiPath, init, true);
+      response = await this.rawRequest(apiPath, init, true, false, timeoutMs, timeoutMessage);
     }
     const data = await this.parseResponse<T>(response, apiPath);
     if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${apiPath}`);
@@ -227,12 +245,21 @@ export class XuiClient {
     return this.apiToken;
   }
 
-  async addInbound(payload: Record<string, unknown>): Promise<any> {
+  async addInbound(payload: Record<string, unknown>, protocol = "节点", timeoutMs = 20_000): Promise<any> {
     return this.request("panel/api/inbounds/add", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(serializeInboundPayload(payload)),
-    });
+    }, timeoutMs, `3x-ui 创建 ${protocol} 入站超时，面板的 Xray 热加载未及时返回`);
+  }
+
+  async listInbounds(timeoutMs = 5_000): Promise<any[]> {
+    return this.request<any[]>(
+      "panel/api/inbounds/list",
+      {},
+      timeoutMs,
+      "读取 3x-ui 入站列表超时",
+    );
   }
 
   async deleteInbound(id: number): Promise<void> {
@@ -281,7 +308,14 @@ export class XuiClient {
     return data.obj as T;
   }
 
-  private async rawRequest(apiPath: string, init: RequestInit, authenticated: boolean, forceSession = false, timeoutMs = 15_000): Promise<Response> {
+  private async rawRequest(
+    apiPath: string,
+    init: RequestInit,
+    authenticated: boolean,
+    forceSession = false,
+    timeoutMs = 15_000,
+    timeoutMessage?: string,
+  ): Promise<Response> {
     const headers = new Headers(init.headers);
     const token = this.apiToken;
     if (authenticated && token && !forceSession) {
@@ -309,7 +343,7 @@ export class XuiClient {
     } catch (error: any) {
       if (error?.name === "AbortError") {
         if (this.options.signal?.aborted) throw new Error("节点创建已终止");
-        throw new Error("连接 3x-ui 面板超时");
+        throw new PanelRequestTimeoutError(timeoutMessage || "连接 3x-ui 面板超时");
       }
       const hint = this.baseUrl.startsWith("https://")
         ? "；如面板使用自签名证书，请显式开启“允许自签名证书”"
