@@ -29,6 +29,7 @@ export interface PanelDeployForm {
   autoSSL: boolean;
   scriptType?: ScriptType;
   customScriptUrl?: string;
+  sshSessionId?: string;
 }
 
 export interface PanelResult {

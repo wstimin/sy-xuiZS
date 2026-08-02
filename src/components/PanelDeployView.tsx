@@ -29,6 +29,7 @@ interface SshTestDetails {
   cpuCores: number;
   packageManager: string;
   isRoot: boolean;
+  hasCurl: boolean;
   warnings: string[];
   status: 'compatible' | 'warning' | 'incompatible';
 }
@@ -134,6 +135,10 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     return val.trim().replace(/^(https?:\/\/)/i, '').replace(/\/.*$/, '').replace(/:[0-9]+$/, '').trim();
   };
 
+  const updateSshConnection = (changes: Partial<PanelDeployForm>) => {
+    setForm(prev => ({ ...prev, ...changes, sshSessionId: '' }));
+  };
+
   const handleCopyOneKeyCmd = () => {
     const cmd = "bash <(curl -Ls https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh)";
     handleCopy(cmd, 'onekeycmd');
@@ -164,9 +169,10 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     setIsTestingSSH(true);
     setSshTestResult(null);
     setSshTestError(null);
+    setForm(prev => ({ ...prev, sshSessionId: '' }));
 
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    const timeout = window.setTimeout(() => controller.abort(), 40_000);
     try {
       const res = await fetch('/api/test-ssh', {
         method: 'POST',
@@ -182,10 +188,11 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       }
 
       setSshTestResult(data.details);
+      setForm(prev => ({ ...prev, sshSessionId: data.sshSessionId || '' }));
       showToast('SSH 连接及系统环境检测成功！', `网络延迟 ${data.details.latencyMs}ms | ${data.details.osName}`, 'success');
     } catch (err: any) {
       const errMsg = err?.name === 'AbortError'
-        ? 'SSH 检测超过 15 秒，请检查服务器安全组、防火墙和 SSH 端口'
+        ? 'SSH 检测超过 40 秒，请检查服务器安全组、防火墙和 SSH 端口'
         : err.message || '请检查 IP、端口、密码或云服务商安全组';
       setSshTestError(errMsg);
       showToast('SSH 连接测试失败', errMsg, 'error');
@@ -424,12 +431,12 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               {isTestingSSH ? (
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-indigo-400/30 border-t-indigo-400 rounded-full animate-spin" />
-                  <span>正在握手测速...</span>
+                  <span>正在快速检测...</span>
                 </>
               ) : (
                 <>
                   <Activity className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>测试 SSH 连接与检测系统</span>
+                  <span>快速检测 SSH 与必要环境</span>
                 </>
               )}
             </button>
@@ -445,7 +452,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 required
                 placeholder="例如 192.0.2.1 或 vps.example.com"
                 value={form.ipOrDomain}
-                onChange={e => setForm({ ...form, ipOrDomain: e.target.value })}
+                onChange={e => updateSshConnection({ ipOrDomain: e.target.value })}
                 className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white text-sm placeholder-zinc-500 outline-none transition-all"
               />
             </div>
@@ -457,7 +464,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               <input
                 type="number"
                 value={form.sshPort}
-                onChange={e => setForm({ ...form, sshPort: parseInt(e.target.value, 10) || 22 })}
+                onChange={e => updateSshConnection({ sshPort: parseInt(e.target.value, 10) || 22 })}
                 className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all"
               />
             </div>
@@ -471,7 +478,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               <input
                 type="text"
                 value={form.sshUser}
-                onChange={e => setForm({ ...form, sshUser: e.target.value })}
+                onChange={e => updateSshConnection({ sshUser: e.target.value })}
                 className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all"
               />
             </div>
@@ -485,7 +492,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                       type="radio"
                       name="authType"
                       checked={form.authType === 'password'}
-                      onChange={() => setForm({ ...form, authType: 'password' })}
+                      onChange={() => updateSshConnection({ authType: 'password' })}
                       className="accent-indigo-500"
                     />
                     <span className={form.authType === 'password' ? 'text-indigo-300 font-medium' : 'text-zinc-400'}>SSH 密码</span>
@@ -495,7 +502,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                       type="radio"
                       name="authType"
                       checked={form.authType === 'privateKey'}
-                      onChange={() => setForm({ ...form, authType: 'privateKey' })}
+                      onChange={() => updateSshConnection({ authType: 'privateKey' })}
                       className="accent-indigo-500"
                     />
                     <span className={form.authType === 'privateKey' ? 'text-indigo-300 font-medium' : 'text-zinc-400'}>SSH 私钥</span>
@@ -509,7 +516,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                     type="password"
                     placeholder="输入 root 密码"
                     value={form.sshPassword || ''}
-                    onChange={e => setForm({ ...form, sshPassword: e.target.value })}
+                    onChange={e => updateSshConnection({ sshPassword: e.target.value })}
                     className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm placeholder-zinc-500 outline-none transition-all pr-10"
                   />
                   <Key className="w-4 h-4 text-zinc-500 absolute right-3 top-2.5" />
@@ -520,14 +527,14 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                     rows={3}
                     placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
                     value={form.sshPrivateKey || ''}
-                    onChange={e => setForm({ ...form, sshPrivateKey: e.target.value })}
+                    onChange={e => updateSshConnection({ sshPrivateKey: e.target.value })}
                     className="w-full p-3 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-xs font-mono placeholder-zinc-500 outline-none transition-all resize-none"
                   />
                   <input
                     type="password"
                     placeholder="私钥口令（未加密私钥可留空）"
                     value={form.sshPrivateKeyPassphrase || ''}
-                    onChange={e => setForm({ ...form, sshPrivateKeyPassphrase: e.target.value })}
+                    onChange={e => updateSshConnection({ sshPrivateKeyPassphrase: e.target.value })}
                     className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm placeholder-zinc-500 outline-none transition-all"
                   />
                 </div>
@@ -553,44 +560,33 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                 <div className="system-status-card system-status-card--cyan space-y-0.5">
                   <span className="text-zinc-500 font-mono block">操作系统 OS</span>
                   <span className="system-status-card__value" title={sshTestResult.osName}>{sshTestResult.osName}</span>
                 </div>
 
                 <div className="system-status-card system-status-card--indigo space-y-0.5">
-                  <span className="text-zinc-500 font-mono block">内核 & 架构</span>
-                  <span className="system-status-card__value" title={`${sshTestResult.arch} (${sshTestResult.kernel})`}>{sshTestResult.arch} ({sshTestResult.kernel})</span>
+                  <span className="text-zinc-500 font-mono block">系统架构</span>
+                  <span className="system-status-card__value">{sshTestResult.arch}</span>
                 </div>
 
                 <div className="system-status-card system-status-card--emerald space-y-0.5">
-                  <span className="text-zinc-500 font-mono block">内存状态 (RAM)</span>
-                  <span className="system-status-card__value" title={`${sshTestResult.totalRamMb} MB (可用 ${sshTestResult.freeRamMb} MB)`}>{sshTestResult.totalRamMb} MB (可用 {sshTestResult.freeRamMb} MB)</span>
+                  <span className="text-zinc-500 font-mono block">内存总量</span>
+                  <span className="system-status-card__value">{sshTestResult.totalRamMb} MB</span>
                 </div>
 
                 <div className="system-status-card system-status-card--amber space-y-0.5">
-                  <span className="text-zinc-500 font-mono block">环境依赖库</span>
-                  <span className="system-status-card__value" title={sshTestResult.systemdVersion}>{sshTestResult.systemdVersion}</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                <div className="system-status-card system-status-card--rose">
-                  <span className="text-zinc-500 font-mono block">CPU 核心</span>
-                  <span className="system-status-card__value">{sshTestResult.cpuCores}</span>
+                  <span className="text-zinc-500 font-mono block">systemd</span>
+                  <span className="system-status-card__value">{sshTestResult.systemdAvailable ? '可用' : '不可用'}</span>
                 </div>
                 <div className="system-status-card system-status-card--sky">
                   <span className="text-zinc-500 font-mono block">磁盘可用</span>
                   <span className="system-status-card__value">{sshTestResult.diskFreeMb ? `${Math.round(sshTestResult.diskFreeMb / 1024)} GB` : '未获取'}</span>
                 </div>
                 <div className="system-status-card system-status-card--lime">
-                  <span className="text-zinc-500 font-mono block">包管理器</span>
-                  <span className="system-status-card__value">{sshTestResult.packageManager}</span>
-                </div>
-                <div className="system-status-card system-status-card--violet">
-                  <span className="text-zinc-500 font-mono block">GLIBC</span>
-                  <span className="system-status-card__value" title={sshTestResult.glibcVersion}>{sshTestResult.glibcVersion}</span>
+                  <span className="text-zinc-500 font-mono block">安装依赖</span>
+                  <span className="system-status-card__value">{sshTestResult.packageManager} / curl {sshTestResult.hasCurl ? '可用' : '缺失'}</span>
                 </div>
               </div>
 

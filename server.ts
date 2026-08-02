@@ -3,7 +3,7 @@ import express, { NextFunction, Request, Response } from "express";
 import fs from "node:fs";
 import https from "node:https";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
@@ -12,6 +12,49 @@ import { buildInstallCommand, connectSsh, execSsh, inspectServer, SshInput } fro
 import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
 import { parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
+
+type ServerInspection = Awaited<ReturnType<typeof inspectServer>>;
+type ReusableSshSession = {
+  session: Awaited<ReturnType<typeof connectSsh>>;
+  details: ServerInspection;
+  expiresAt: number;
+  timer: NodeJS.Timeout;
+};
+
+const reusableSshSessions = new Map<string, ReusableSshSession>();
+const SSH_SESSION_TTL_MS = 5 * 60_000;
+
+function cacheSshSession(session: ReusableSshSession["session"], details: ServerInspection): string {
+  const id = randomUUID();
+  const timer = setTimeout(() => {
+    const cached = reusableSshSessions.get(id);
+    if (!cached) return;
+    reusableSshSessions.delete(id);
+    cached.session.client.end();
+  }, SSH_SESSION_TTL_MS);
+  timer.unref();
+  reusableSshSessions.set(id, { session, details, expiresAt: Date.now() + SSH_SESSION_TTL_MS, timer });
+  return id;
+}
+
+function takeSshSession(id: unknown, input: SshInput): ReusableSshSession | undefined {
+  const sessionId = optionalString(id);
+  if (!sessionId) return undefined;
+  const cached = reusableSshSessions.get(sessionId);
+  if (!cached) return undefined;
+  reusableSshSessions.delete(sessionId);
+  clearTimeout(cached.timer);
+
+  const sameTarget = cached.expiresAt > Date.now()
+    && cached.session.host === cleanHostInput(input.ipOrDomain)
+    && cached.session.port === validPort(input.sshPort, 22)
+    && cached.session.user === optionalString(input.sshUser || "root");
+  if (!sameTarget) {
+    cached.session.client.end();
+    return undefined;
+  }
+  return cached;
+}
 
 const RECOMMENDED_INSTALLER = "https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh";
 const OFFICIAL_INSTALLER = "https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh";
@@ -93,7 +136,9 @@ async function startServer() {
     try {
       session = await connectSsh(req.body as SshInput);
       const details = await inspectServer(session);
-      res.json({ success: true, message: "SSH 连接及系统环境检测成功", details });
+      const sshSessionId = cacheSshSession(session, details);
+      session = undefined;
+      res.json({ success: true, message: "SSH 连接及必要环境检测成功", details, sshSessionId });
     } catch (error) {
       sendError(res, error);
     } finally {
@@ -127,11 +172,18 @@ async function startServer() {
       const username = panelUsername(body.panelUsername, `admin_${randomToken(3)}`);
       const password = panelPassword(body.panelPassword, `Xui_${randomBytes(12).toString("base64url")}`);
 
-      write({ type: "log", step: 1, message: `[SSH] 正在连接 ${host}:${body.sshPort || 22}` });
-      session = await connectSsh(body);
-      write({ type: "log", step: 1, message: `[SSH] 连接成功，主机密钥指纹 ${session.fingerprint}` });
-
-      const systemInfo = await inspectServer(session);
+      const reused = takeSshSession(body.sshSessionId, body);
+      let systemInfo: ServerInspection;
+      if (reused) {
+        session = reused.session;
+        systemInfo = reused.details;
+        write({ type: "log", step: 1, message: "[SSH] 已复用刚才通过检测的 SSH 会话" });
+      } else {
+        write({ type: "log", step: 1, message: `[SSH] 正在连接 ${host}:${body.sshPort || 22}` });
+        session = await connectSsh(body);
+        write({ type: "log", step: 1, message: `[SSH] 连接成功，主机密钥指纹 ${session.fingerprint}` });
+        systemInfo = await inspectServer(session);
+      }
       write({ type: "log", step: 2, message: `[OS] ${systemInfo.osName} / ${systemInfo.arch}` });
       if (systemInfo.status === "incompatible") throw new Error("服务器没有可用的 systemd，无法安装 3x-ui 服务");
       if (!systemInfo.isRoot) {

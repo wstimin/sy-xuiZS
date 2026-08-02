@@ -123,7 +123,7 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
     host,
     port,
     username: user,
-    readyTimeout: 8_000,
+    readyTimeout: 20_000,
     keepaliveInterval: 10_000,
     keepaliveCountMax: 3,
   };
@@ -154,7 +154,7 @@ export async function connectSsh(input: SshInput): Promise<SshSession> {
     };
     const timer = setTimeout(() => {
       finishError(Object.assign(new Error("Timed out while waiting for SSH handshake"), { code: "ETIMEDOUT" }));
-    }, 8_000);
+    }, 20_000);
     client.once("ready", () => {
       if (settled) return;
       settled = true;
@@ -281,7 +281,7 @@ export async function inspectServer(session: SshSession) {
     "printf '__CURL__='; command -v curl >/dev/null && echo yes || echo no",
     "printf '__PKG_MANAGER__='; if command -v apt-get >/dev/null; then echo apt; elif command -v dnf >/dev/null; then echo dnf; elif command -v yum >/dev/null; then echo yum; else echo unknown; fi",
   ].join("; ");
-  const result = await execSsh(session.client, command, { timeoutMs: 5_000 });
+  const result = await execSsh(session.client, command, { timeoutMs: 12_000 });
   if (result.code !== 0) throw new Error(result.stderr || "无法读取服务器环境");
   return parseServerInspectionOutput(session, result.stdout);
 }
