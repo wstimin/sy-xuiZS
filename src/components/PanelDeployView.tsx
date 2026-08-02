@@ -651,7 +651,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
         <div className="p-5 sm:p-6 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl space-y-4">
           <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2 border-b border-white/10 pb-3">
             <Lock className="w-4 h-4 text-emerald-400" />
-            3-xui 面板端口与 URL 访问配置
+            xui 面板端口与 URL 访问配置
           </h2>
 
           <div className="grid sm:grid-cols-2 gap-4">
@@ -811,7 +811,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 推荐脚本（默认，兼容客户端更多）
               </option>
               <option value="official" className="bg-zinc-900 text-white">
-                3x-ui 官方脚本
+                官方脚本
               </option>
               <option value="custom" className="bg-zinc-900 text-white">
                 自定义脚本
@@ -820,7 +820,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
             {form.scriptType === 'recommended' && (
               <p className="text-[11px] text-zinc-400 leading-relaxed">
-                默认使用基于官方 2.9.4 修改 UI 的兼容版本，优先适配更多客户端。该脚本安装时要求配置 TLS：有域名使用域名证书，无域名使用 IP 证书。
+                推荐脚本优先适配更多客户端。该脚本安装时要求配置 TLS：有域名使用域名证书，无域名使用 IP 证书。
               </p>
             )}
 

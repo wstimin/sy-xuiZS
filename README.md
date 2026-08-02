@@ -77,13 +77,13 @@ curl -s http://127.0.0.1:1888/api/health
 bash <(curl -Ls https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh)
 ```
 
-界面中仍可单独选择 3x-ui 官方脚本：
+界面中仍可单独选择官方脚本：
 
 ```text
 https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
 ```
 
-两套脚本使用独立的安装逻辑。官方脚本使用其无人值守环境变量；推荐脚本按实际交互顺序自动回答端口和 TLS 选项。安装完成后，两种脚本都会通过官方 `x-ui setting` 命令写入用户填写或助手生成的用户名、密码、端口和 Web 路径，并在确认命令返回成功后重启服务。推荐脚本默认启用 TLS：有域名时申请域名证书，无域名时申请 IP 证书。后端读取面板的实际证书状态、证书路径和 API Token；没有现成 Token 时会在安装完成后读取一次。安装成功弹窗会显示实际生效的账号密码与 Token，并在跳转“搭建节点”时自动填写 Token 和 TLS 证书路径。
+两套脚本使用独立的安装逻辑。官方脚本使用其无人值守环境变量；推荐脚本按实际交互顺序自动回答端口和 TLS 选项。安装完成后，两种脚本都会通过官方 `x-ui setting` 命令写入用户填写或助手生成的用户名、密码、端口和 Web 路径，并在确认命令返回成功后重启服务。推荐脚本优先适配更多客户端。该脚本安装时要求配置 TLS：有域名使用域名证书，无域名使用 IP 证书。后端读取面板的实际证书状态、证书路径和 API Token；没有现成 Token 时会在安装完成后读取一次。安装成功弹窗会显示实际生效的账号密码与 Token，并在跳转“搭建节点”时自动填写 Token 和 TLS 证书路径。
 
 自定义 3x-ui 安装脚本只接受 HTTPS URL。非 root SSH 用户必须具备 `sudo -n` 免密 sudo 权限。
 

@@ -501,9 +501,6 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
               className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-indigo-200 text-xs font-mono outline-none transition-all"
             />
 
-            <p className="text-[11px] text-zinc-400 leading-relaxed bg-black/30 p-2.5 rounded-xl border border-white/5">
-              <strong>快速创建：</strong>所有协议均直接使用 Bearer Token 调用 <code>/panel/api/**</code> 创建入站，不再执行登录、认证检查或重复读取 Token。账号密码仅在配置 SOCKS 链式路由时使用，Token 不会写入浏览器历史记录。
-            </p>
           </div>
         </div>
 
