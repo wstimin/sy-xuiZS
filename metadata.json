@@ -1,0 +1,6 @@
+{
+  "name": "xui面板一键搭建助手",
+  "description": "专注 xui面板 与节点（支持协议联动与 SOCKS 链式代理）的一键搭建助手",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

@@ -1,0 +1,680 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+#  3x-ui 部署助手面板 (Deploy Assistant) - 一键管理与 SSL 自动化脚本
+#  支持系统: Ubuntu 20.04+, Debian 11+, CentOS 8+ / Rocky Linux / AlmaLinux
+# ==============================================================================
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+REPO_URL="${REPO_URL:-https://github.com/wstimin/xui-zhushou.git}"
+TARGET_DIR="/opt/3xui-deploy-assistant"
+APP_NAME="3xui-deploy-assistant"
+SSL_DIR="/etc/3xui-assistant/ssl"
+DEFAULT_PORT="1888"
+APP_PORT="${PORT:-$DEFAULT_PORT}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ACTIVE_PROJECT_DIR="$TARGET_DIR"
+
+load_runtime_config() {
+  local config_dir=""
+  if [ -f "$ACTIVE_PROJECT_DIR/.env" ]; then
+    config_dir="$ACTIVE_PROJECT_DIR"
+  elif [ -f "$SCRIPT_DIR/.env" ]; then
+    config_dir="$SCRIPT_DIR"
+  fi
+
+  if [ -n "$config_dir" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$config_dir/.env"
+    set +a
+  fi
+  APP_PORT="${PORT:-$DEFAULT_PORT}"
+}
+
+check_root() {
+  if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}[ERROR] 请使用 root 权限或 sudo 执行此脚本！${NC}"
+    exit 1
+  fi
+}
+
+detect_pkg_manager() {
+  if command -v apt-get &> /dev/null; then
+    PKG_MANAGER="apt"
+  elif command -v dnf &> /dev/null; then
+    PKG_MANAGER="dnf"
+  elif command -v yum &> /dev/null; then
+    PKG_MANAGER="yum"
+  else
+    echo -e "${RED}[ERROR] 未能识别的包管理器，请确保系统为 Ubuntu/Debian/CentOS/Rocky Linux！${NC}"
+    exit 1
+  fi
+}
+
+pause_if_tty() {
+  if [ -t 0 ]; then
+    read -r -p "按回车键返回主菜单..."
+  fi
+}
+
+install_base_deps() {
+  echo -e "${BLUE}[INFO] 正在检查并补全系统必要基础依赖...${NC}"
+  if [ "$PKG_MANAGER" = "apt" ]; then
+    apt-get update -y > /dev/null 2>&1 || true
+    apt-get install -y curl wget git build-essential ca-certificates lsof net-tools socat openssl > /dev/null 2>&1
+  else
+    $PKG_MANAGER update -y > /dev/null 2>&1 || true
+    $PKG_MANAGER install -y curl wget git make gcc-c++ ca-certificates lsof net-tools socat openssl > /dev/null 2>&1
+  fi
+}
+
+get_public_ip() {
+  SERVER_IP=$(curl -s4 https://api.ipify.org || curl -s4 https://ipv4.icanhazip.com || echo "您的服务器公网IP")
+}
+
+configure_firewall() {
+  load_runtime_config
+  echo -e "${BLUE}[INFO] 正在检测并放行系统防火墙端口 (${APP_PORT}, 80)...${NC}"
+  
+  # 放行 UFW 防火墙 (Ubuntu/Debian)
+  if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "active"; then
+    echo -e "${YELLOW}[INFO] 检测到 UFW 防火墙已开启，放行 ${APP_PORT}/tcp 及 80/tcp 端口...${NC}"
+    ufw allow "${APP_PORT}/tcp" >/dev/null 2>&1 || true
+    ufw allow 80/tcp >/dev/null 2>&1 || true
+    ufw reload >/dev/null 2>&1 || true
+    echo -e "${GREEN}[OK] UFW 防火墙端口设置成功！${NC}"
+  fi
+
+  # 放行 Firewalld 防火墙 (CentOS/RHEL/AlmaLinux)
+  if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
+    echo -e "${YELLOW}[INFO] 检测到 Firewalld 防火墙已开启，放行 ${APP_PORT}/tcp 及 80/tcp 端口...${NC}"
+    firewall-cmd --zone=public --add-port="${APP_PORT}/tcp" --permanent >/dev/null 2>&1 || true
+    firewall-cmd --zone=public --add-port=80/tcp --permanent >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    echo -e "${GREEN}[OK] Firewalld 防火墙端口设置成功！${NC}"
+  fi
+
+  # 放行 iptables
+  if command -v iptables &>/dev/null; then
+    if ! iptables -C INPUT -p tcp --dport "$APP_PORT" -j ACCEPT >/dev/null 2>&1; then
+      iptables -I INPUT -p tcp --dport "$APP_PORT" -j ACCEPT >/dev/null 2>&1 || true
+    fi
+    if ! iptables -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1; then
+      iptables -I INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+install_shortcut() {
+  echo -e "${BLUE}[INFO] 正在配置快捷命令 'sy'...${NC}"
+  SHORTCUT_PATH="/usr/local/bin/sy"
+  
+  cat <<EOF > "$SHORTCUT_PATH"
+#!/usr/bin/env bash
+if [ -f "$ACTIVE_PROJECT_DIR/install.sh" ]; then
+  bash "$ACTIVE_PROJECT_DIR/install.sh" "\$@"
+else
+  echo "[ERROR] 部署助手脚本文件未找到，请重新运行一键安装命令！"
+fi
+EOF
+
+  chmod +x "$SHORTCUT_PATH"
+  cp -f "$SHORTCUT_PATH" /usr/bin/sy >/dev/null 2>&1 || true
+  echo -e "${GREEN}[OK] 快捷调出命令 'sy' 配置成功！今后在任何位置输入 sy 即可打开交互菜单。${NC}"
+}
+
+check_environment() {
+  load_runtime_config
+  echo -e "${CYAN}============================================================${NC}"
+  echo -e "${BOLD}            🔍 本系统与 Linux 服务器运行环境检测            ${NC}"
+  echo -e "${CYAN}============================================================${NC}"
+  
+  # 1. 操作系统
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_NAME=$PRETTY_NAME
+  else
+    OS_NAME=$(uname -s)
+  fi
+  echo -e "🖥️  ${BOLD}操作系统:${NC} ${GREEN}${OS_NAME}${NC}"
+  
+  # 2. CPU 与 内存/磁盘
+  CPU_ARCH=$(uname -m)
+  MEM_TOTAL=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}' || echo "未知")
+  MEM_USED=$(free -m 2>/dev/null | awk '/Mem:/ {print $3}' || echo "未知")
+  DISK_AVAIL=$(df -h / 2>/dev/null | awk 'NR==2 {print $4}' || echo "未知")
+  echo -e "⚙️  ${BOLD}硬件资源:${NC} CPU 架构: ${CPU_ARCH} | 内存使用: ${MEM_USED}MB / ${MEM_TOTAL}MB | 剩余磁盘: ${DISK_AVAIL}"
+  
+  # 3. 网络 IP
+  get_public_ip
+  echo -e "🌐 ${BOLD}公网 IPv4:${NC} ${GREEN}${SERVER_IP}${NC}"
+  
+  # 4. 软件依赖状态
+  echo -e "\n${BOLD}📦 核心依赖环境状态:${NC}"
+  
+  if command -v node &> /dev/null; then
+    NODE_VER=$(node -v)
+    echo -e "  - Node.js:        ${GREEN}已安装 (${NODE_VER})${NC}"
+  else
+    echo -e "  - Node.js:        ${RED}未安装${NC}"
+  fi
+
+  if command -v pm2 &> /dev/null; then
+    echo -e "  - PM2 守护管理:   ${GREEN}已安装${NC}"
+  else
+    echo -e "  - PM2 守护管理:   ${YELLOW}未安装${NC}"
+  fi
+
+  if [ -f "$HOME/.acme.sh/acme.sh" ]; then
+    echo -e "  - acme.sh 证书脚本: ${GREEN}已安装${NC}"
+  else
+    echo -e "  - acme.sh 证书脚本: ${YELLOW}未安装${NC}"
+  fi
+
+  # 5. 本系统及端口占用状态
+  echo -e "\n${BOLD}🔌 核心服务端口占用检测:${NC}"
+  for PORT_NUM in 80 443 "$APP_PORT"; do
+    if lsof -i:$PORT_NUM >/dev/null 2>&1 || netstat -tlpn 2>/dev/null | grep -q ":$PORT_NUM "; then
+      PROC_NAME=$(lsof -i:$PORT_NUM 2>/dev/null | awk 'NR==2 {print $1}' || echo "已占用")
+      echo -e "  - 端口 ${PORT_NUM}: ${RED}被占用 (${PROC_NAME})${NC}"
+    else
+      echo -e "  - 端口 ${PORT_NUM}: ${GREEN}空闲 (可正常使用)${NC}"
+    fi
+  done
+  
+  echo -e "\n${GREEN}[OK] 环境检测完成！${NC}"
+  echo "------------------------------------------------------------"
+  pause_if_tty
+}
+
+install_assistant() {
+  echo -e "${CYAN}============================================================${NC}"
+  echo -e "${BOLD}       🚀 安装 / 更新 3x-ui 部署助手面板 (Deploy Assistant)      ${NC}"
+  echo -e "${CYAN}============================================================${NC}"
+
+  echo -e "${BLUE}[1/5] 检查并补全系统必要依赖...${NC}"
+  install_base_deps
+
+  echo -e "${BLUE}[2/5] 拉取或同步本系统项目代码...${NC}"
+  if [ -f "$SCRIPT_DIR/package.json" ]; then
+    ACTIVE_PROJECT_DIR="$SCRIPT_DIR"
+    cd "$ACTIVE_PROJECT_DIR"
+    echo -e "${GREEN}[OK] 使用当前安装脚本所在的项目目录: $ACTIVE_PROJECT_DIR${NC}"
+  else
+    if [ -d "$TARGET_DIR" ]; then
+      echo -e "${YELLOW}检测到已有项目目录 $TARGET_DIR，正在同步最新源码...${NC}"
+      cd "$TARGET_DIR"
+      if [ -d .git ]; then
+        git pull --ff-only || {
+          echo -e "${RED}[ERROR] 项目更新失败。请检查服务器网络或目标目录中的本地改动。${NC}"
+          return 1
+        }
+      else
+        echo -e "${RED}[ERROR] $TARGET_DIR 已存在但不是 Git 仓库，请先移走该目录后重试。${NC}"
+        return 1
+      fi
+    else
+      echo -e "${GREEN}正在克隆项目仓库到 $TARGET_DIR ...${NC}"
+      git clone "$REPO_URL" "$TARGET_DIR" || {
+        echo -e "${RED}[ERROR] 项目克隆失败，请检查网络或配置正确的 REPO_URL！${NC}"
+        pause_if_tty
+        return 1
+      }
+      cd "$TARGET_DIR"
+    fi
+  fi
+  ACTIVE_PROJECT_DIR="$(pwd)"
+
+  if [ ! -f .env ]; then
+    cp .env.example .env
+    chmod 600 .env
+    echo -e "${GREEN}[OK] 已创建 .env 配置文件；可稍后编辑 $ACTIVE_PROJECT_DIR/.env。${NC}"
+  fi
+  load_runtime_config
+
+  echo -e "${BLUE}[3/5] 检查并补全 Node.js 运行环境...${NC}"
+  NEED_NODE_INSTALL=false
+  if ! command -v node &> /dev/null; then
+    NEED_NODE_INSTALL=true
+    echo -e "${YELLOW}[INFO] 未检测到 Node.js 环境，准备自动安装 Node.js LTS (v20)...${NC}"
+  else
+    NODE_MAJOR_VER=$(node -v | cut -d'.' -f1 | sed 's/v//')
+    if [ "$NODE_MAJOR_VER" -lt 20 ]; then
+      NEED_NODE_INSTALL=true
+      echo -e "${YELLOW}[WARN] 当前 Node.js 版本 (v${NODE_MAJOR_VER}) 过低，准备自动升级至 Node.js LTS (v20)...${NC}"
+    else
+      echo -e "${GREEN}[OK] Node.js 环境正常: $(node -v)${NC}"
+    fi
+  fi
+
+  if [ "$NEED_NODE_INSTALL" = true ]; then
+    echo -e "${BLUE}[INFO] 正在配置 NodeSource 源并安装 Node.js v20 LTS...${NC}"
+    if [ "$PKG_MANAGER" = "apt" ]; then
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+      apt-get install -y nodejs > /dev/null 2>&1
+    else
+      curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+      $PKG_MANAGER install -y nodejs > /dev/null 2>&1
+    fi
+    echo -e "${GREEN}[OK] Node.js 已成功更新安装: $(node -v)${NC}"
+  fi
+
+  echo -e "${BLUE}[4/5] 编译构建项目并配置 PM2 进程守护...${NC}"
+  npm ci
+  npm run test
+  npm run lint
+  npm run build
+
+  if ! command -v pm2 &> /dev/null; then
+    echo -e "${YELLOW}正在全局安装 PM2 进程管理器...${NC}"
+    npm install -g pm2 > /dev/null 2>&1
+  fi
+
+  # 启动或重启 PM2 进程；服务端会从项目目录的 .env 加载端口和认证配置。
+  if pm2 list 2>/dev/null | grep -q "$APP_NAME"; then
+    echo -e "${YELLOW}检测到部署助手面板正在运行，正在重启服务...${NC}"
+    pm2 startOrReload ecosystem.config.cjs --update-env
+  else
+    echo -e "${GREEN}正在启动 PM2 服务进程 (端口: ${APP_PORT})...${NC}"
+    pm2 start ecosystem.config.cjs
+  fi
+
+  if command -v systemctl &>/dev/null; then
+    pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
+  fi
+  pm2 save > /dev/null 2>&1 || true
+
+  echo -e "${BLUE}[5/5] 配置系统防火墙放行与快捷调出命令...${NC}"
+  configure_firewall
+  install_shortcut
+
+  get_public_ip
+
+  echo -e "${GREEN}\n============================================================"
+  echo " 🎉 3x-ui 部署助手面板已成功安装/更新并在后台稳定运行！"
+  echo "============================================================"
+  echo -e "${NC}"
+
+  echo -e "⚡ ${BOLD}快捷调出菜单命令:${NC} 输入 ${GREEN}${BOLD}sy${NC} 即可随时打开控制菜单"
+
+  if [ -f "$SSL_DIR/cert.pem" ] && [ -f "$SSL_DIR/key.pem" ]; then
+    echo -e "🔒 访问协议: ${GREEN}HTTPS (已应用 SSL 安全加密防护)${NC}"
+    echo -e "🌐 面板访问地址: ${CYAN}https://${SERVER_IP}:${APP_PORT}${NC}"
+  else
+    echo -e "🔓 访问协议: ${YELLOW}HTTP (未配置 SSL 证书)${NC}"
+    echo -e "🌐 面板访问地址: ${CYAN}http://${SERVER_IP}:${APP_PORT}${NC}"
+    echo -e "💡 提示: 您可在菜单选择 [2] 为本面板申请域名 SSL 证书并开启 HTTPS 访问。"
+  fi
+
+  echo -e "\n${YELLOW}⚠️ 【重要】如果安装完成后浏览器无法打开页面，请检查：${NC}"
+  echo -e "  1. ${BOLD}云厂商安全组/防火墙${NC}: 请登录阿里云/腾讯云/AWS/甲骨文云后台，在【安全组入站规则】中放行 ${YELLOW}${APP_PORT}${NC} 及 ${YELLOW}80${NC} 端口(TCP)！"
+  echo -e "  2. ${BOLD}VPS 系统防火墙${NC}: 脚本已自动尝试放行 ufw / firewalld / iptables。如仍受阻，可尝试运行: ${CYAN}ufw allow ${APP_PORT}/tcp${NC}"
+  echo -e "  3. ${BOLD}查看服务状态${NC}: 随时输入 ${CYAN}sy${NC} 选择 [3] 查看信息，或运行 ${CYAN}pm2 status${NC} 查看运行状态。"
+  echo "============================================================"
+  pause_if_tty
+}
+
+issue_ssl_cert() {
+  load_runtime_config
+  echo -e "${CYAN}============================================================${NC}"
+  echo -e "${BOLD}     🔒 申请 Let's Encrypt 域名 SSL 证书并应用推送到本面板     ${NC}"
+  echo -e "${CYAN}============================================================${NC}"
+  
+  get_public_ip
+  echo -e "📍 当前 VPS 公网 IP: ${GREEN}${SERVER_IP}${NC}\n"
+  
+  read -p "请输入已正确解析到当前 IP (${SERVER_IP}) 的域名: " DOMAIN_NAME
+  if [ -z "$DOMAIN_NAME" ]; then
+    echo -e "${RED}[ERROR] 域名不能为空！${NC}"
+    pause_if_tty
+    return 1
+  fi
+
+  read -p "请输入联系邮箱 (留空自动使用 admin@$DOMAIN_NAME): " EMAIL_ADDR
+  if [ -z "$EMAIL_ADDR" ]; then
+    EMAIL_ADDR="admin@$DOMAIN_NAME"
+  fi
+
+  # 1. 检查并安装 acme.sh
+  if [ ! -f "$HOME/.acme.sh/acme.sh" ]; then
+    echo -e "\n${BLUE}[1/4] 正在安装 acme.sh 自动化证书脚本...${NC}"
+    curl https://get.acme.sh | sh -s email="$EMAIL_ADDR" > /dev/null 2>&1
+    source "$HOME/.bashrc" >/dev/null 2>&1 || true
+  fi
+
+  ACME_BIN="$HOME/.acme.sh/acme.sh"
+  if [ ! -f "$ACME_BIN" ]; then
+    echo -e "${RED}[ERROR] acme.sh 安装失败，请检查网络通信！${NC}"
+    pause_if_tty
+    return 1
+  fi
+
+  # 设置默认证书商为 Let's Encrypt
+  "$ACME_BIN" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+
+  # 2. 80 端口无缝借用与自动恢复逻辑
+  echo -e "\n${BLUE}[2/4] 检测 80 端口占用状态 (借用 80 端口进行 HTTP 独立验证)...${NC}"
+  STOPPED_SERVICE=""
+
+  if lsof -i:80 >/dev/null 2>&1 || netstat -tlpn 2>/dev/null | grep -q ":80 "; then
+    OCCUPIED_PROC=$(lsof -i:80 2>/dev/null | awk 'NR==2 {print $1}' || echo "")
+    if [ -n "$OCCUPIED_PROC" ]; then
+      echo -e "${YELLOW}[INFO] 检测到 80 端口当前被服务 '${OCCUPIED_PROC}' 占用。${NC}"
+      echo -e "${YELLOW}[INFO] 正在临时暂停该服务以借用 80 端口申请证书...${NC}"
+      
+      if systemctl is-active --quiet "$OCCUPIED_PROC"; then
+        systemctl stop "$OCCUPIED_PROC"
+        STOPPED_SERVICE="$OCCUPIED_PROC"
+      elif command -v nginx &>/dev/null && systemctl is-active --quiet nginx; then
+        systemctl stop nginx
+        STOPPED_SERVICE="nginx"
+      elif command -v apache2 &>/dev/null && systemctl is-active --quiet apache2; then
+        systemctl stop apache2
+        STOPPED_SERVICE="apache2"
+      elif command -v httpd &>/dev/null && systemctl is-active --quiet httpd; then
+        systemctl stop httpd
+        STOPPED_SERVICE="httpd"
+      fi
+    fi
+  fi
+
+  # 清理/恢复机制函数
+  restore_service() {
+    if [ -n "$STOPPED_SERVICE" ]; then
+      echo -e "${YELLOW}[INFO] 证书申请流程结束，正在重启被借用 80 端口的服务 (${STOPPED_SERVICE})...${NC}"
+      systemctl start "$STOPPED_SERVICE" || true
+      echo -e "${GREEN}[OK] 80 端口已完全释放并成功恢复原服务正常运行！${NC}"
+    fi
+  }
+
+  # 3. 申请证书
+  echo -e "\n${BLUE}[3/4] 正在向 Let's Encrypt 发起 80 端口 HTTP-01 验证申请 (${DOMAIN_NAME})...${NC}"
+  
+  mkdir -p "$SSL_DIR"
+
+  set +e
+  "$ACME_BIN" --issue -d "$DOMAIN_NAME" --standalone --httpport 80
+  ACME_EXIT_CODE=$?
+  set -e
+
+  # 无论成功或失败，立即恢复 80 端口的服务！
+  restore_service
+
+  if [ $ACME_EXIT_CODE -ne 0 ]; then
+    echo -e "${RED}\n[ERROR] SSL 证书申请失败！请确认以下事项：${NC}"
+    echo -e "${RED}  1. 域名 ${DOMAIN_NAME} 是否已被 DNS 解析并指向当前 IP (${SERVER_IP})！${NC}"
+    echo -e "${RED}  2. 云服务商防火墙/安全组是否放行了 80 端口入口流量！${NC}"
+    pause_if_tty
+    return 1
+  fi
+
+  # 4. 安装/导出证书并推送到本系统
+  echo -e "\n${BLUE}[4/4] 正在安装证书文件并推送到本部署助手面板配置...${NC}"
+  "$ACME_BIN" --install-cert -d "$DOMAIN_NAME" \
+    --key-file "$SSL_DIR/key.pem" \
+    --fullchain-file "$SSL_DIR/cert.pem" \
+    --reloadcmd "pm2 restart $APP_NAME >/dev/null 2>&1" >/dev/null 2>&1
+  chmod 600 "$SSL_DIR/key.pem"
+  chmod 644 "$SSL_DIR/cert.pem"
+
+  echo -e "${GREEN}[SUCCESS] 证书申请成功并已保存至: ${SSL_DIR}/${NC}"
+
+  # 自动重启 PM2 部署助手，使得 server.ts 自动加载 HTTPS 证书
+  if pm2 list 2>/dev/null | grep -q "$APP_NAME"; then
+    echo -e "${BLUE}[INFO] 正在重启本部署助手面板 PM2 进程以平滑升级至 HTTPS...${NC}"
+    pm2 restart "$APP_NAME" --update-env
+    echo -e "${GREEN}[SUCCESS] 本面板已完成 HTTPS 证书配置与应用更新！${NC}"
+  fi
+
+  echo -e "\n${GREEN}============================================================"
+  echo -e " 🎉 SSL 证书已成功安装并应用到本部署助手面板！"
+  echo -e "============================================================"
+  echo -e "🔒 绑定域名: ${CYAN}${DOMAIN_NAME}${NC}"
+  echo -e "🌐 安全访问地址: ${CYAN}https://${DOMAIN_NAME}:${APP_PORT}${NC}"
+  echo -e "📄 证书路径:   ${SSL_DIR}/cert.pem"
+  echo -e "🔑 密钥路径:   ${SSL_DIR}/key.pem"
+  echo "============================================================"
+
+  pause_if_tty
+}
+
+view_panel_info() {
+  load_runtime_config
+  echo -e "${CYAN}============================================================${NC}"
+  echo -e "${BOLD}            📊 当前部署助手面板与 SSL 运行状态信息            ${NC}"
+  echo -e "${CYAN}============================================================${NC}"
+
+  get_public_ip
+  echo -e "🌐 ${BOLD}服务器公网 IP:${NC} ${GREEN}${SERVER_IP}${NC}"
+
+  # 1. PM2 进程状态
+  echo -e "\n${BOLD}1️⃣  部署助手面板 PM2 服务状态:${NC}"
+  if pm2 list 2>/dev/null | grep -q "$APP_NAME"; then
+    PM2_STATUS=$(pm2 jlist 2>/dev/null | grep -o '"status":"[^"]*"' | head -n1 | cut -d'"' -f4 || echo "online")
+    echo -e "   - 进程名称: ${CYAN}${APP_NAME}${NC}"
+    echo -e "   - 运行状态: ${GREEN}运行中 (${PM2_STATUS})${NC}"
+    echo -e "   - 监听端口: ${CYAN}${APP_PORT}${NC}"
+    echo -e "   - 快捷调出指令: ${GREEN}sy${NC}"
+  else
+    echo -e "   - 运行状态: ${RED}未启动或未安装${NC}"
+  fi
+
+  # 2. SSL 证书与访问协议信息
+  echo -e "\n${BOLD}2️⃣  SSL 安全证书与面板访问入口:${NC}"
+  if [ -f "$SSL_DIR/cert.pem" ] && [ -f "$SSL_DIR/key.pem" ]; then
+    DOMAIN_IN_CERT=$(openssl x509 -subject -noout -in "$SSL_DIR/cert.pem" 2>/dev/null | sed -n 's/.*CN = \([^,]*\).*/\1/p' || echo "未知")
+    EXPIRE_DATE=$(openssl x509 -enddate -noout -in "$SSL_DIR/cert.pem" 2>/dev/null | cut -d= -f2 || echo "未知")
+    
+    echo -e "   - 证书状态: ${GREEN}已配置生效 (HTTPS 访问模式)${NC}"
+    echo -e "   - 绑定域名: ${CYAN}${DOMAIN_IN_CERT}${NC}"
+    echo -e "   - 证书到期: ${CYAN}${EXPIRE_DATE}${NC}"
+    echo -e "   - 域名 HTTPS 链接: ${GREEN}https://${DOMAIN_IN_CERT}:${APP_PORT}${NC}"
+    echo -e "   - IP   HTTPS 链接: ${GREEN}https://${SERVER_IP}:${APP_PORT}${NC}"
+  else
+    echo -e "   - 证书状态: ${YELLOW}未配置 SSL 证书 (当前为 HTTP 访问模式)${NC}"
+    echo -e "   - IP   HTTP  链接: ${CYAN}http://${SERVER_IP}:${APP_PORT}${NC}"
+  fi
+
+  echo -e "\n${CYAN}============================================================${NC}"
+  pause_if_tty
+}
+
+uninstall_all() {
+  echo -e "${RED}============================================================${NC}"
+  echo -e "${BOLD}                 ⚠️  卸载与彻底清除本面板项目                 ${NC}"
+  echo -e "${RED}============================================================${NC}"
+  
+  echo -e "${YELLOW}此操作将停止 PM2 守护进程，并删除一键安装在 ${TARGET_DIR} 的项目与快捷命令。${NC}"
+  if [ "$SCRIPT_DIR" != "$TARGET_DIR" ]; then
+    echo -e "${YELLOW}当前脚本位于 ${SCRIPT_DIR}，该本地源码目录不会被删除。${NC}"
+  fi
+  read -p "确认要继续卸载本面板吗？[y/N]: " CONFIRM
+  if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+    echo -e "${GREEN}已取消卸载操作。${NC}"
+    pause_if_tty
+    return
+  fi
+
+  echo -e "\n${BLUE}[1/3] 停止并删除 PM2 面板守护进程...${NC}"
+  if command -v pm2 &>/dev/null; then
+    pm2 stop "$APP_NAME" >/dev/null 2>&1 || true
+    pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
+    pm2 save >/dev/null 2>&1 || true
+  fi
+
+  echo -e "${BLUE}[2/3] 清理本部署助手面板项目目录 (${TARGET_DIR}) 及快捷调出指令...${NC}"
+  rm -rf "$TARGET_DIR"
+  rm -f /usr/local/bin/sy /usr/bin/sy
+
+  read -p "是否同时删除保存的 SSL 证书文件 (${SSL_DIR})？[y/N]: " REMOVE_SSL
+  if [[ "$REMOVE_SSL" == "y" || "$REMOVE_SSL" == "Y" ]]; then
+    echo -e "${BLUE}[3/3] 正在删除面板 SSL 证书与配置...${NC}"
+    rm -rf "/etc/3xui-assistant"
+    echo -e "${GREEN}[OK] 面板 SSL 证书文件已完全清理！${NC}"
+  fi
+
+  echo -e "${GREEN}\n🎉 本部署助手面板已彻底卸载并清理完毕！${NC}\n"
+  exit 0
+}
+
+diagnose_domain_access() {
+  load_runtime_config
+  echo -e "${CYAN}============================================================${NC}"
+  echo -e "${BOLD}         🔍 域名访问失败一键诊断与问题排除工具          ${NC}"
+  echo -e "${CYAN}============================================================${NC}"
+
+  get_public_ip
+  echo -e "📍 当前 VPS 本机公网 IP: ${GREEN}${SERVER_IP}${NC}\n"
+
+  read -p "请输入您无法访问的域名 (例: node.yourdomain.com): " DOMAIN_NAME
+  if [ -z "$DOMAIN_NAME" ]; then
+    echo -e "${RED}[ERROR] 域名不能为空！${NC}"
+    pause_if_tty
+    return 1
+  fi
+
+  echo -e "\n${BLUE}[1/4] 正在查询域名 DNS 解析记录 (A记录)...${NC}"
+  
+  # 优先使用 ping/nslookup/dig 或 python/curl 提取 DNS 解析 IP
+  RESOLVED_IP=""
+  if command -v getent &>/dev/null; then
+    RESOLVED_IP=$(getent ahosts "$DOMAIN_NAME" 2>/dev/null | awk '{print $1}' | head -n1)
+  fi
+  if [ -z "$RESOLVED_IP" ] && command -v ping &>/dev/null; then
+    RESOLVED_IP=$(ping -c 1 "$DOMAIN_NAME" 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+  fi
+  if [ -z "$RESOLVED_IP" ]; then
+    RESOLVED_IP=$(curl -s --connect-timeout 5 "https://1.1.1.1/dns-query?name=${DOMAIN_NAME}&type=A" -H "accept: application/dns-json" 2>/dev/null | grep -oE '"data":"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f4 | head -n1 || echo "")
+  fi
+
+  if [ -z "$RESOLVED_IP" ]; then
+    echo -e "${RED}❌ [诊断结果] 域名 DNS 查询失败！未能获取 ${DOMAIN_NAME} 的 IP 解析记录。${NC}"
+    echo -e "${YELLOW}👉 解决办法:${NC}"
+    echo -e "   1. 请登录您的域名提供商 (Cloudflare / 阿里云 / 腾讯云 / Namecheap)。"
+    echo -e "   2. 添加一条 ${BOLD}A 记录${NC}: 主机记录填写子域或@，记录值填您的 VPS IP: ${GREEN}${SERVER_IP}${NC}。"
+    echo -e "   3. DNS 解析生效可能需要 1~5 分钟，请稍后再试。"
+    pause_if_tty
+    return 1
+  fi
+
+  echo -e "   - 域名 ${DOMAIN_NAME} 解析到的 IP 为: ${CYAN}${RESOLVED_IP}${NC}"
+
+  if [ "$RESOLVED_IP" != "$SERVER_IP" ]; then
+    echo -e "${RED}\n❌ [诊断结果] 域名解析 IP 与当前 VPS 本机 IP 不匹配！${NC}"
+    echo -e "${RED}   解析出的 IP: ${RESOLVED_IP}${NC}"
+    echo -e "${GREEN}   本机真实 IP: ${SERVER_IP}${NC}"
+    echo -e "${YELLOW}👉 常见原因与解决办法:${NC}"
+    echo -e "   原因 A: 您的 A 记录填错成了其他 IP。请修改 A 记录指向 ${GREEN}${SERVER_IP}${NC}。"
+    echo -e "   原因 B: 您在 Cloudflare 开启了【小黄云 CDN 代理】！"
+    echo -e "          ⚠️  Cloudflare 默认不代理 ${APP_PORT} 等多数非标准端口的 HTTP/HTTPS 流量！"
+    echo -e "          👉 请登录 Cloudflare，将 DNS 记录的【Proxy status (代理状态)】改为【DNS only (仅 DNS/灰色云朵)】！"
+  else
+    echo -e "${GREEN}✅ [诊断通过] 域名 DNS 已正确指向当前 VPS 本机 IP (${SERVER_IP})！${NC}"
+  fi
+
+  echo -e "\n${BLUE}[2/4] 检查面板 SSL 证书配置状态...${NC}"
+  SSL_CONFIGURED=false
+  if [ -f "$SSL_DIR/cert.pem" ] && [ -f "$SSL_DIR/key.pem" ]; then
+    SSL_CONFIGURED=true
+    echo -e "${GREEN}✅ 已开启 SSL 安全加密证书 (HTTPS 模式)${NC}"
+  else
+    echo -e "${YELLOW}⚠️  未配置 SSL 证书 (HTTP 模式)${NC}"
+  fi
+
+  echo -e "\n${BLUE}[3/4] 诊断正确的浏览器访问链接格式...${NC}"
+  echo -e "${YELLOW}⚠️ 【极度重要】域名访问时必须加上端口号 :${APP_PORT} 格式！${NC}"
+  
+  if [ "$SSL_CONFIGURED" = true ]; then
+    echo -e "📌 您应该在浏览器输入的完整正确链接为:"
+    echo -e "   👉 ${GREEN}${BOLD}https://${DOMAIN_NAME}:${APP_PORT}${NC}"
+    echo -e "\n🚫 常见错误输错方式:"
+    echo -e "   ❌ http://${DOMAIN_NAME}:${APP_PORT} (错在使用了 http 而非 https)"
+    echo -e "   ❌ https://${DOMAIN_NAME} (错在漏掉了端口号 :${APP_PORT})"
+  else
+    echo -e "📌 您应该在浏览器输入的完整正确链接为:"
+    echo -e "   👉 ${GREEN}${BOLD}http://${DOMAIN_NAME}:${APP_PORT}${NC}"
+    echo -e "\n🚫 常见错误输错方式:"
+    echo -e "   ❌ https://${DOMAIN_NAME}:${APP_PORT} (错在使用了 https 协议但系统未配置 SSL)"
+    echo -e "   ❌ http://${DOMAIN_NAME} (错在漏掉了端口号 :${APP_PORT})"
+  fi
+
+  echo -e "\n${BLUE}[4/4] 检查云服务器安全组/防火墙 ${APP_PORT} 端口...${NC}"
+  echo -e "如果按照上述【正确链接】依然无法打开，通常是云厂商控制台安全组未放行 ${APP_PORT} 端口。"
+  echo -e "👉 请登录阿里云/腾讯云/AWS/甲骨文云控制台，在【安全组入站规则】添加 TCP: ${APP_PORT} 放行规则！"
+
+  echo -e "\n${CYAN}============================================================${NC}"
+  pause_if_tty
+}
+
+show_menu() {
+  while true; do
+    clear
+    echo -e "${CYAN}"
+    echo "============================================================"
+    echo "   🚀 3x-ui 部署助手面板 (Deploy Assistant) 一键管理工具    "
+    echo "============================================================"
+    echo -e "${NC}"
+    echo -e " ${BOLD}[1]${NC} 安装 / 更新 部署助手面板 (Node.js/PM2)"
+    echo -e " ${BOLD}[2]${NC} 申请 SSL 域名证书并配置为面板 HTTPS (借用80端口，用完恢复)"
+    echo -e " ${BOLD}[3]${NC} 查看当前面板配置与运行状态信息"
+    echo -e " ${BOLD}[4]${NC} 检测 VPS 系统与网络运行环境"
+    echo -e " ${BOLD}[5]${NC} 🔍 一键诊断与解决【域名无法访问】问题"
+    echo -e " ${BOLD}[6]${NC} 卸载与清除部署助手面板项目"
+    echo -e " ${BOLD}[0]${NC} 退出脚本"
+    echo "============================================================"
+    
+    read -p "请输入菜单功能编号 [0-6]: " CHOICE
+    case "$CHOICE" in
+      1) install_assistant ;;
+      2) issue_ssl_cert ;;
+      3) view_panel_info ;;
+      4) check_environment ;;
+      5) diagnose_domain_access ;;
+      6) uninstall_all ;;
+      0) echo -e "${GREEN}感谢使用！退出管理脚本。${NC}"; exit 0 ;;
+      *) echo -e "${RED}输入无效，请输入 0-6 之间的编号！${NC}"; sleep 1.5 ;;
+    esac
+  done
+}
+
+# 脚本入口点逻辑
+check_root
+detect_pkg_manager
+
+# 如果在 TTY 交互终端中运行且无命令行参数，直接打开交互菜单
+if [ -t 0 ] && [ -z "$1" ]; then
+  show_menu
+else
+  PARAM="${1:-install}"
+  case "$PARAM" in
+    install|deploy)
+      install_assistant
+      ;;
+    cert|ssl)
+      issue_ssl_cert
+      ;;
+    status|info)
+      view_panel_info
+      ;;
+    env|check)
+      check_environment
+      ;;
+    uninstall|clean)
+      uninstall_all
+      ;;
+    *)
+      install_assistant
+      ;;
+  esac
+fi

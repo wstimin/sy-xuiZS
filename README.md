@@ -1,0 +1,157 @@
+# xui-zhushou
+
+`xui-zhushou` 是一个通过 SSH 和 3x-ui API 工作的 Web 部署助手。它可以连接 Linux VPS 安装 3x-ui、登录已有面板创建节点，并按需向面板的全局 Xray 模板写入 SOCKS5 出站和路由。
+
+正式仓库：<https://github.com/wstimin/xui-zhushou>
+
+## 主要能力
+
+- 使用 SSH 密码或私钥连接 VPS，检测系统、架构、systemd、内存和权限。
+- 安装 3x-ui，并实时显示远程执行日志。
+- 自动生成面板端口、Web 路径和初始管理员凭据。
+- 使用面板账号密码登录并自动创建 API Token，或使用已有 Token 调用 API。
+- 创建 VLESS、VMess、Trojan、Shadowsocks 入站和分享链接。
+- Reality 密钥对由目标 3x-ui 面板实时生成。
+- TLS 节点通过面板 API 自动获取 Web 证书路径，页面不要求手工填写证书路径。
+- 可向当前 Xray 模板注入 SOCKS5 出站、入站路由和多代理随机负载均衡。
+- 浏览器历史只保存非敏感元数据，不保存密码、Token、分享链接或 SOCKS 凭据。
+
+## 一键安装助手
+
+支持 Ubuntu 20.04+、Debian 11+、CentOS 8+、Rocky Linux 和 AlmaLinux。请在 Linux VPS 上执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh | sudo bash
+```
+
+脚本会安装 Node.js 20、项目依赖和 PM2，执行测试、类型检查与生产构建，然后启动服务。默认访问地址为：
+
+```text
+http://服务器IP:1888
+```
+
+云厂商安全组需要放行助手端口，默认为 `1888/tcp`。申请助手自身的域名证书时还需要临时放行 `80/tcp`。
+
+安装完成后可以运行 `sy` 打开管理菜单：
+
+```text
+[1] 安装或更新助手
+[2] 为助手申请域名 SSL 证书
+[3] 查看服务与证书状态
+[4] 检查服务器环境
+[5] 诊断域名访问
+[6] 卸载助手
+```
+
+常用维护命令：
+
+```bash
+sy
+pm2 status
+pm2 logs 3xui-deploy-assistant
+cd /opt/3xui-deploy-assistant && sudo bash install.sh install
+```
+
+一键脚本默认克隆本仓库到 `/opt/3xui-deploy-assistant`。也可以在完整源码目录内执行 `sudo bash install.sh install`，此时会直接构建并运行当前目录中的代码。
+
+## 3x-ui 安装脚本
+
+这里有两个不同用途的 `install.sh`，不要混淆：
+
+- `xui-zhushou/install.sh`：安装和管理本 Web 助手。
+- `mogai-3xui/install.sh`：本助手默认用于远程安装 3x-ui 面板。
+
+助手默认并推荐使用基于官方 2.9.4 修改 UI、客户端兼容范围更广的脚本：
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh)
+```
+
+界面中仍可单独选择 3x-ui 官方脚本：
+
+```text
+https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
+```
+
+两套脚本使用独立的安装逻辑。官方脚本使用其无人值守环境变量；推荐脚本按实际交互顺序自动回答端口和 TLS 选项，安装后通过 `x-ui setting` 写入助手生成的用户名、密码、端口和 Web 路径。推荐脚本默认启用 TLS：有域名时申请域名证书，无域名时申请 IP 证书。后端读取面板的实际证书状态决定访问协议，并尝试创建 API Token。
+
+自定义 3x-ui 安装脚本只接受 HTTPS URL。非 root SSH 用户必须具备 `sudo -n` 免密 sudo 权限。
+
+## 节点与鉴权
+
+支持的主要组合：
+
+- `VLESS + TCP + Reality`
+- VLESS、VMess、Trojan 配合 TCP、WebSocket、gRPC、mKCP，并按协议规则选择 None 或 TLS
+- `Shadowsocks + TCP + None`
+
+当前 Reality 稳定实现限定为 `VLESS + TCP`。
+
+部分 3x-ui 版本要求使用 API Token 才能创建入站，因此 Token 功能会保留。可以手工粘贴已有 Token，也可以使用面板账号密码自动创建；提供 Token 后，面板 API 请求优先使用 `Authorization: Bearer <token>`。本项目不使用 2FA 输入。
+
+## TLS 自动获取
+
+TLS 节点要求目标 3x-ui 面板已经配置可用的 Web TLS 证书。选择 TLS 后，助手会调用：
+
+```text
+GET /panel/api/server/getWebCertFiles
+```
+
+接口返回的 `webCertFile` 和 `webKeyFile` 是目标服务器上的真实路径，助手会把它们写入新入站的 `tlsSettings.certificates`。创建节点前可以点击“从面板获取 TLS”预检，正式创建时后端还会再次获取。
+
+页面不会提供服务器证书路径输入框。默认 SNI 使用面板连接域名；如果面板通过 IP 访问但证书签发给域名，可以只填写证书域名作为 SNI，证书路径仍由面板自动返回。
+
+## 环境配置
+
+本地开发需要 Node.js 20 或更高版本：
+
+```bash
+npm ci
+npm run dev
+```
+
+生产检查与构建：
+
+```bash
+npm run test
+npm run lint
+npm run build
+npm start
+```
+
+复制 `.env.example` 为 `.env` 后可设置：
+
+```env
+PORT=1888
+APP_AUTH_TOKEN=
+SSL_CERT=
+SSL_KEY=
+```
+
+- `PORT`：助手监听端口，安装脚本会同步用于防火墙和访问提示。
+- `APP_AUTH_TOKEN`：可选的助手 API 保护。设置后，请由受信任的反向代理添加 `Authorization: Bearer <token>` 或 `X-App-Token` 请求头。
+- `SSL_CERT` / `SSL_KEY`：助手自身 HTTPS 证书路径。两者留空时，服务端也会自动检查 `/etc/3xui-assistant/ssl/cert.pem` 和 `/etc/3xui-assistant/ssl/key.pem`。
+
+## SOCKS 路由
+
+SOCKS 功能修改的是 3x-ui 全局 Xray 模板，不只是单个入站。助手会保留原模板并使用唯一 tag 添加出站和路由；后续步骤失败时会尝试恢复原模板并删除刚创建的入站。修改前仍建议在 3x-ui 中备份配置。
+
+支持以下输入格式：
+
+```text
+socks5://user:password@127.0.0.1:1080
+127.0.0.1:1080:user:password
+127.0.0.1:1080
+```
+
+## 安全说明
+
+SSH 密码、私钥、面板密码和 API Token 都会经过助手后端。不要在不可信网络中通过明文 HTTP 使用公开部署的助手。公网部署建议启用助手自身 HTTPS，并限制来源 IP，或放在带认证的 HTTPS 反向代理之后。
+
+助手会尝试放行 VPS 本机防火墙，但无法可靠修改云厂商安全组。助手端口、3x-ui 面板端口以及创建的节点入站端口仍需在云控制台手工放行。
+
+## 验证范围
+
+仓库包含后端单元测试，覆盖 URL 与端口验证、Shell 转义、推荐与官方安装命令、Reality/TLS 入站、订阅 URL 和 SOCKS 模板注入。发布检查还包括 TypeScript 类型检查、Vite/服务端生产构建和 `install.sh` Bash 语法检查。
+
+自动验证不会连接真实 VPS，也不会向真实 3x-ui 面板写入配置。
