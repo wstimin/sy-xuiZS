@@ -10,7 +10,6 @@ import { SetupGuideModal } from './components/SetupGuideModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { Toast } from './components/Toast';
 import { AccountData, api, CurrentUser, Plan } from './commercial';
-import { AuthView } from './components/AuthView';
 import { PricingView } from './components/PricingView';
 import { AccountView } from './components/AccountView';
 
@@ -22,7 +21,6 @@ export default function App() {
   const [setupGuideOpen, setSetupGuideOpen] = useState<boolean>(false);
   const [historyOpen, setHistoryOpen] = useState<boolean>(false);
   const [authLoading, setAuthLoading] = useState(true);
-  const [bootstrapRequired, setBootstrapRequired] = useState(false);
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [account, setAccount] = useState<AccountData | null>(null);
@@ -97,11 +95,9 @@ export default function App() {
   useEffect(() => {
     Promise.all([
       api<{ user: CurrentUser | null }>('/api/auth/me'),
-      api<{ required: boolean }>('/api/auth/bootstrap-status'),
       api<{ plans: Plan[] }>('/api/plans'),
-    ]).then(([me, bootstrap, planResult]) => {
+    ]).then(([me, planResult]) => {
       setUser(me.user);
-      setBootstrapRequired(bootstrap.required);
       setPlans(planResult.plans);
     }).catch(() => setUser(null)).finally(() => setAuthLoading(false));
   }, []);
@@ -204,12 +200,16 @@ export default function App() {
   };
 
   if (authLoading) return <div className="min-h-screen bg-[#0a0a0c] text-zinc-400 flex items-center justify-center">正在加载账户...</div>;
-  if (!user) return <AuthView portal="user" bootstrapRequired={bootstrapRequired} onAuthenticated={setUser} />;
+  if (!user) {
+    window.location.replace('/login');
+    return <div className="min-h-screen bg-[#0a0a0c] text-zinc-400 flex items-center justify-center">正在前往登录页...</div>;
+  }
 
   const logout = async () => {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
     setUser(null);
     setCurrentView('home');
+    window.location.assign('/');
   };
 
   return (
@@ -261,7 +261,7 @@ export default function App() {
         )}
 
         {currentView === 'pricing' && <PricingView plans={plans} onOrderCreated={refreshAccount} showToast={showToast} />}
-        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={() => void refreshAccount()} onLoggedOut={() => setUser(null)} showToast={showToast} />}
+        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={() => void refreshAccount()} onLoggedOut={() => { setUser(null); window.location.assign('/'); }} showToast={showToast} />}
       </main>
 
       {/* Footer */}
