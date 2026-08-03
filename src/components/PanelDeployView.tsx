@@ -35,8 +35,8 @@ interface SshTestDetails {
 }
 
 const DEPLOY_STEPS_INFO = [
-  { step: 1, title: 'SSH 会话确认', desc: '优先复用快速检测通过的 SSH 会话' },
-  { step: 2, title: '服务器环境检测', desc: '读取系统、架构、内存、systemd 与权限信息' },
+  { step: 1, title: 'SSH 正式连接', desc: '为本次安装建立独立的 SSH 部署连接' },
+  { step: 2, title: '服务器环境确认', desc: '复用快速检测结果，必要时重新读取系统环境' },
   { step: 3, title: '生成安装参数', desc: '生成端口、Web 路径、管理员凭据与 SSL 模式' },
   { step: 4, title: '执行安装脚本', desc: '通过 SSH 执行所选安装脚本并安全收集输出' },
   { step: 5, title: '安装程序处理中', desc: '由官方安装器安装程序并写入面板配置' },
@@ -253,13 +253,17 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     setDeployError(null);
     setSshTestError(null);
 
+    const controller = new AbortController();
+    const firstResponseTimeout = window.setTimeout(() => controller.abort(), 35_000);
     try {
       const sshSessionId = sshSessionIdRef.current || form.sshSessionId || '';
       const res = await fetch('/api/deploy-panel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, ipOrDomain: cleanIp, sshSessionId })
+        body: JSON.stringify({ ...form, ipOrDomain: cleanIp, sshSessionId }),
+        signal: controller.signal
       });
+      window.clearTimeout(firstResponseTimeout);
 
       if (sshSessionId) {
         sshSessionIdRef.current = '';
@@ -284,6 +288,23 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       let backendResult: PanelResult | null = null;
       let streamError = '';
 
+      const readNextChunk = async () => {
+        let inactivityTimer = 0;
+        try {
+          return await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+              inactivityTimer = window.setTimeout(() => {
+                controller.abort();
+                reject(new Error('长时间没有收到后端部署进度，请检查助手服务状态后重试'));
+              }, 45_000);
+            })
+          ]);
+        } finally {
+          window.clearTimeout(inactivityTimer);
+        }
+      };
+
       const consumeLine = (line: string) => {
         if (!line.trim()) return;
         let event: any;
@@ -306,7 +327,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       };
 
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await readNextChunk();
         buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || '';
@@ -322,10 +343,13 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       setResultModal(backendResult);
       showToast('搭建成功！', '3x-ui 已安装并通过服务状态验证', 'success');
     } catch (err: any) {
-      const message = err?.message || '请检查后端通信与网络连接';
+      const message = err?.name === 'AbortError'
+        ? '部署连接未在规定时间内返回，请检查助手服务或服务器 SSH 状态后重试'
+        : err?.message || '请检查后端通信与网络连接';
       setDeployError(message);
       showToast('面板部署异常', message, 'error');
     } finally {
+      window.clearTimeout(firstResponseTimeout);
       setIsDeploying(false);
     }
   };

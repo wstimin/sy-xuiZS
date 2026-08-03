@@ -14,57 +14,62 @@ import { findInboundRecord, isRetryablePanelConnectionError, parseApiTokenFromOu
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
 
 type ServerInspection = Awaited<ReturnType<typeof inspectServer>>;
-type ReusableSshSession = {
-  session: Awaited<ReturnType<typeof connectSsh>>;
+type CachedSshInspection = {
   details: ServerInspection;
+  host: string;
+  port: number;
+  user: string;
   expiresAt: number;
   timer: NodeJS.Timeout;
 };
 
-const reusableSshSessions = new Map<string, ReusableSshSession>();
+const cachedSshInspections = new Map<string, CachedSshInspection>();
 const SSH_SESSION_TTL_MS = 5 * 60_000;
 
-function cacheSshSession(session: ReusableSshSession["session"], details: ServerInspection): string {
+function cacheSshInspection(
+  session: Awaited<ReturnType<typeof connectSsh>>,
+  details: ServerInspection,
+): string {
   const id = randomUUID();
   const timer = setTimeout(() => {
-    const cached = reusableSshSessions.get(id);
+    const cached = cachedSshInspections.get(id);
     if (!cached) return;
-    reusableSshSessions.delete(id);
-    cached.session.client.end();
+    cachedSshInspections.delete(id);
   }, SSH_SESSION_TTL_MS);
   timer.unref();
-  reusableSshSessions.set(id, { session, details, expiresAt: Date.now() + SSH_SESSION_TTL_MS, timer });
+  cachedSshInspections.set(id, {
+    details,
+    host: session.host,
+    port: session.port,
+    user: session.user,
+    expiresAt: Date.now() + SSH_SESSION_TTL_MS,
+    timer,
+  });
   return id;
 }
 
-function removeSshSession(id: unknown) {
+function removeSshInspection(id: unknown) {
   const sessionId = optionalString(id);
   if (!sessionId) return;
-  const cached = reusableSshSessions.get(sessionId);
+  const cached = cachedSshInspections.get(sessionId);
   if (!cached) return;
-  reusableSshSessions.delete(sessionId);
+  cachedSshInspections.delete(sessionId);
   clearTimeout(cached.timer);
-  cached.session.client.end();
 }
 
-function takeSshSession(id: unknown, input: SshInput): ReusableSshSession | undefined {
+function takeSshInspection(id: unknown, input: SshInput): ServerInspection | undefined {
   const sessionId = optionalString(id);
   if (!sessionId) return undefined;
-  const cached = reusableSshSessions.get(sessionId);
+  const cached = cachedSshInspections.get(sessionId);
   if (!cached) return undefined;
-  reusableSshSessions.delete(sessionId);
+  cachedSshInspections.delete(sessionId);
   clearTimeout(cached.timer);
 
   const sameTarget = cached.expiresAt > Date.now()
-    && cached.session.alive
-    && cached.session.host === cleanHostInput(input.ipOrDomain)
-    && cached.session.port === validPort(input.sshPort, 22)
-    && cached.session.user === optionalString(input.sshUser || "root");
-  if (!sameTarget) {
-    cached.session.client.end();
-    return undefined;
-  }
-  return cached;
+    && cached.host === cleanHostInput(input.ipOrDomain)
+    && cached.port === validPort(input.sshPort, 22)
+    && cached.user === optionalString(input.sshUser || "root");
+  return sameTarget ? cached.details : undefined;
 }
 
 const RECOMMENDED_INSTALLER = "https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh";
@@ -156,16 +161,15 @@ async function startServer() {
     res.on("close", handleDisconnect);
     try {
       const input = req.body as SshInput;
-      const reused = takeSshSession(req.body?.sshSessionId, input);
-      session = reused?.session || await connectSsh(input, { timeoutMs: 18_000 });
+      removeSshInspection(req.body?.sshSessionId);
+      session = await connectSsh(input, { timeoutMs: 18_000 });
       let details: ServerInspection;
       try {
         details = await inspectServer(session, { timeoutMs: 10_000 });
       } catch (error) {
         throw new Error(formatServerInspectionError(error));
       }
-      const sshSessionId = cacheSshSession(session, details);
-      session = undefined;
+      const sshSessionId = cacheSshInspection(session, details);
       completed = true;
       res.json({ success: true, message: "SSH 连接及必要环境检测成功", details, sshSessionId });
     } catch (error) {
@@ -188,6 +192,8 @@ async function startServer() {
       res.write(`${JSON.stringify(event)}\n`);
       (res as Response & { flush?: () => void }).flush?.();
     };
+    const heartbeat = setInterval(() => write({ type: "heartbeat", timestamp: Date.now() }), 10_000);
+    heartbeat.unref();
     let session;
     let panelClient: XuiClient | undefined;
     let completed = false;
@@ -214,27 +220,18 @@ async function startServer() {
       const username = panelUsername(body.panelUsername, `admin_${randomToken(3)}`);
       const password = panelPassword(body.panelPassword, `Xui_${randomBytes(12).toString("base64url")}`);
 
-      const reused = takeSshSession(body.sshSessionId, body);
+      const cachedInspection = takeSshInspection(body.sshSessionId, body);
       let systemInfo: ServerInspection;
-      if (reused) {
-        session = reused.session;
-        systemInfo = reused.details;
-        try {
-          await execSsh(session.client, "true", { timeoutMs: 5_000 });
-        } catch {
-          throw new Error("刚才检测通过的 SSH 会话已失效，请重新执行快速检测后再搭建");
-        }
-        write({ type: "log", step: 1, message: "[SSH] 已复用刚才通过检测的 SSH 会话" });
+      write({ type: "log", step: 1, message: `[SSH] 正在建立正式部署连接 ${host}:${body.sshPort || 22}` });
+      session = await connectSsh(body, { timeoutMs: 25_000 });
+      write({ type: "log", step: 1, message: `[SSH] 正式部署连接成功，主机密钥指纹 ${session.fingerprint}` });
+      if (cachedInspection) {
+        systemInfo = cachedInspection;
+        write({ type: "log", step: 2, message: `[OS] 已复用快速检测结果：${systemInfo.osName} / ${systemInfo.arch}` });
       } else {
-        if (optionalString(body.sshSessionId)) {
-          throw new Error("SSH 检测会话已失效，请重新执行快速检测后再搭建");
-        }
-        write({ type: "log", step: 1, message: `[SSH] 正在连接 ${host}:${body.sshPort || 22}` });
-        session = await connectSsh(body, { timeoutMs: 25_000 });
-        write({ type: "log", step: 1, message: `[SSH] 连接成功，主机密钥指纹 ${session.fingerprint}` });
         systemInfo = await inspectServer(session);
+        write({ type: "log", step: 2, message: `[OS] ${systemInfo.osName} / ${systemInfo.arch}` });
       }
-      write({ type: "log", step: 2, message: `[OS] ${systemInfo.osName} / ${systemInfo.arch}` });
       if (systemInfo.status === "incompatible") throw new Error("服务器没有可用的 systemd，无法安装 3x-ui 服务");
       if (!systemInfo.isRoot) {
         const sudo = await execSsh(session.client, "sudo -n true", { timeoutMs: 10_000 });
@@ -365,6 +362,7 @@ async function startServer() {
       write({ type: "error", error: errorMessage(error) });
       completed = true;
     } finally {
+      clearInterval(heartbeat);
       res.off("close", handleDisconnect);
       session?.client.end();
       await panelClient?.close().catch(() => undefined);
