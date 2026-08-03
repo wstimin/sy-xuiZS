@@ -490,6 +490,7 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
     assert.equal(call.headers.get("Authorization"), null);
     assert.equal(call.headers.get("Cookie"), "3x-ui=logged-in");
     assert.equal(call.headers.get("X-CSRF-Token"), "authenticated-csrf");
+    assert.equal(call.headers.get("X-Requested-With"), "XMLHttpRequest");
   }
 
   assert.match(calls[6].headers.get("Content-Type") || "", /^application\/x-www-form-urlencoded/);
@@ -499,6 +500,116 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
     routing: { rules: [] },
   });
   assert.equal(updateBody.get("outboundTestUrl"), "https://example.net/generate_204");
+});
+
+test("XuiClient re-authenticates once when the official panel session expires", async () => {
+  const calls: Array<{ url: URL; headers: Headers }> = [];
+  let loginCount = 0;
+  let xrayCount = 0;
+  const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    const headers = new Headers(init?.headers);
+    calls.push({ url, headers });
+
+    if (url.pathname === "/base/csrf-token") {
+      return new Response(JSON.stringify({ success: true, obj: `public-csrf-${loginCount + 1}` }), {
+        headers: { "Content-Type": "application/json", "Set-Cookie": `3x-ui=anonymous-${loginCount + 1}; Path=/base/; HttpOnly` },
+      });
+    }
+    if (url.pathname === "/base/login") {
+      loginCount += 1;
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json", "Set-Cookie": `3x-ui=session-${loginCount}; Path=/base/; HttpOnly` },
+      });
+    }
+    if (url.pathname === "/base/panel/csrf-token") {
+      return Response.json({ success: true, obj: `session-csrf-${loginCount}` });
+    }
+    if (url.pathname === "/base/panel/xray/") {
+      xrayCount += 1;
+      if (xrayCount === 1) {
+        return Response.json({ success: false, msg: "Please log in again" }, { status: 401 });
+      }
+      return Response.json({
+        success: true,
+        obj: JSON.stringify({
+          xraySetting: { outbounds: [], routing: { rules: [] } },
+          outboundTestUrl: "https://www.google.com/generate_204",
+        }),
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelPath: "/base/",
+    panelUser: "admin",
+    panelPass: "password",
+  }, mockFetch);
+
+  assert.deepEqual(await client.getXrayTemplate(), {
+    xraySetting: { outbounds: [], routing: { rules: [] } },
+    outboundTestUrl: "https://www.google.com/generate_204",
+  });
+  assert.equal(loginCount, 2);
+  assert.equal(xrayCount, 2);
+
+  const xrayCalls = calls.filter(call => call.url.pathname === "/base/panel/xray/");
+  assert.equal(xrayCalls[0].headers.get("Cookie"), "3x-ui=session-1");
+  assert.equal(xrayCalls[1].headers.get("Cookie"), "3x-ui=session-2");
+  assert.equal(xrayCalls[0].headers.get("X-Requested-With"), "XMLHttpRequest");
+  assert.equal(xrayCalls[1].headers.get("X-Requested-With"), "XMLHttpRequest");
+});
+
+test("XuiClient re-authenticates when a panel redirects an expired session to HTML login", async () => {
+  let loginCount = 0;
+  let xrayCount = 0;
+  const mockFetch = (async (input: URL | RequestInfo) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+
+    if (url.pathname === "/base/csrf-token") {
+      return Response.json({ success: true, obj: `public-csrf-${loginCount + 1}` });
+    }
+    if (url.pathname === "/base/login") {
+      loginCount += 1;
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json", "Set-Cookie": `3x-ui=session-${loginCount}; Path=/base/; HttpOnly` },
+      });
+    }
+    if (url.pathname === "/base/panel/csrf-token") {
+      return Response.json({ success: true, obj: `session-csrf-${loginCount}` });
+    }
+    if (url.pathname === "/base/panel/xray/") {
+      xrayCount += 1;
+      if (xrayCount === 1) {
+        const response = new Response("<!doctype html><title>Login</title>", {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+        Object.defineProperty(response, "redirected", { value: true });
+        return response;
+      }
+      return Response.json({
+        success: true,
+        obj: JSON.stringify({
+          xraySetting: { outbounds: [], routing: { rules: [] } },
+          outboundTestUrl: "https://www.google.com/generate_204",
+        }),
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelPath: "/base/",
+    panelUser: "admin",
+    panelPass: "password",
+  }, mockFetch);
+
+  await client.getXrayTemplate();
+  assert.equal(loginCount, 2);
+  assert.equal(xrayCount, 2);
 });
 
 test("XuiClient reports the Xray reload stage when restart times out", async () => {

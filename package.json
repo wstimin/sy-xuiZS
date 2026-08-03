@@ -1,7 +1,7 @@
 {
   "name": "xui-zhushou",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "通过 SSH 和 3x-ui API 部署面板、创建节点并配置 SOCKS 路由的 Web 助手",
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "package:release": "node scripts/create-release-package.mjs",
     "lint": "tsc --noEmit",
     "test": "tsx --test server/inbound-builder.test.ts server/ssh.test.ts server/validation.test.ts server/xray-template.test.ts server/xui-client.test.ts"
   },

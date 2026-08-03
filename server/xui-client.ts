@@ -31,6 +31,7 @@ interface BufferedResponse {
   ok: boolean;
   headers: Headers;
   text: string;
+  redirected: boolean;
 }
 
 export class PanelRequestTimeoutError extends Error {
@@ -408,6 +409,10 @@ export class XuiClient {
   ): Promise<T> {
     await this.authenticateSession();
     let response = await this.rawRequest(apiPath, init, true, true, timeoutMs, timeoutMessage);
+    if (this.isSessionAuthenticationFailure(response)) {
+      await this.reauthenticateSession();
+      response = await this.rawRequest(apiPath, init, true, true, timeoutMs, timeoutMessage);
+    }
     if (response.status === 403 && !this.isSafeMethod(init.method)) {
       await this.refreshCsrfToken(true);
       response = await this.rawRequest(apiPath, init, true, true, timeoutMs, timeoutMessage);
@@ -427,6 +432,7 @@ export class XuiClient {
   ): Promise<BufferedResponse> {
     const headers = new Headers(init.headers);
     const token = this.apiToken;
+    if (forceSession) headers.set("X-Requested-With", "XMLHttpRequest");
     if (authenticated && token && !forceSession) {
       headers.set("Authorization", `Bearer ${token}`);
     } else if (this.cookie) {
@@ -454,6 +460,7 @@ export class XuiClient {
         ok: response.ok,
         headers: response.headers,
         text,
+        redirected: response.redirected,
       };
     } catch (error: any) {
       if (error?.name === "AbortError") {
@@ -505,6 +512,21 @@ export class XuiClient {
 
   private hasSessionCredentials(): boolean {
     return Boolean(optionalString(this.options.panelUser) && optionalString(this.options.panelPass));
+  }
+
+  private isSessionAuthenticationFailure(response: BufferedResponse): boolean {
+    if (response.status === 401) return true;
+    const contentType = response.headers.get("content-type") || "";
+    return response.redirected
+      && /text\/html/i.test(contentType)
+      && /^\s*</.test(response.text);
+  }
+
+  private async reauthenticateSession(): Promise<void> {
+    this.cookie = "";
+    this.csrfToken = "";
+    this.sessionAuthenticated = false;
+    await this.authenticateSession();
   }
 
   private async parseResponse<T>(response: BufferedResponse, operation: string): Promise<XuiResponse<T>> {

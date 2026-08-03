@@ -16,7 +16,8 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-REPO_URL="${REPO_URL:-https://github.com/wstimin/xui-zhushou.git}"
+RELEASE_URL="${RELEASE_URL:-https://github.com/wstimin/xui-zhushou/releases/latest/download/xui-zhushou-linux.tar.gz}"
+RELEASE_CHECKSUM_URL="${RELEASE_CHECKSUM_URL:-https://github.com/wstimin/xui-zhushou/releases/latest/download/SHA256SUMS}"
 TARGET_DIR="/opt/3xui-deploy-assistant"
 APP_NAME="3xui-deploy-assistant"
 SSL_DIR="/etc/3xui-assistant/ssl"
@@ -42,30 +43,95 @@ load_runtime_config() {
   APP_PORT="${PORT:-$DEFAULT_PORT}"
 }
 
-sync_managed_repository() {
-  if [ ! -d .git ]; then
-    echo -e "${RED}[ERROR] $TARGET_DIR 已存在但不是 Git 仓库，请先移走该目录后重试。${NC}"
-    return 1
-  fi
-
-  local before_commit after_commit
-  before_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  echo -e "${YELLOW}[INFO] 正在从远端 main 分支获取最新代码（当前版本: ${before_commit}）...${NC}"
-  git fetch origin main:refs/remotes/origin/main || {
-    echo -e "${RED}[ERROR] 无法获取远端代码，请检查服务器网络和 GitHub 连接。${NC}"
-    return 1
-  }
-  git merge --ff-only origin/main || {
-    echo -e "${RED}[ERROR] 无法快进更新。请检查 $TARGET_DIR 中是否存在本地提交或冲突修改。${NC}"
-    return 1
-  }
-
-  after_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  if [ "$before_commit" = "$after_commit" ]; then
-    echo -e "${GREEN}[OK] 已是远端 main 最新版本: ${after_commit}${NC}"
+read_installed_version() {
+  if [ -f "$TARGET_DIR/VERSION" ]; then
+    tr -d '[:space:]' < "$TARGET_DIR/VERSION"
   else
-    echo -e "${GREEN}[OK] 代码已从 ${before_commit} 更新到 ${after_commit}${NC}"
+    echo "unknown"
   fi
+}
+
+download_release_package() {
+  local work_dir archive_file checksum_file package_dir expected_checksum actual_checksum
+  work_dir=$(mktemp -d)
+  archive_file="$work_dir/xui-zhushou-linux.tar.gz"
+  checksum_file="$work_dir/SHA256SUMS"
+  package_dir="$work_dir/package"
+  mkdir -p "$package_dir"
+
+  echo -e "${YELLOW}[INFO] 正在下载远端最新构建包...${NC}"
+  if ! curl -fL --retry 3 --connect-timeout 15 "$RELEASE_URL" -o "$archive_file"; then
+    rm -rf "$work_dir"
+    echo -e "${RED}[ERROR] 构建包下载失败，请检查 GitHub 连接或 RELEASE_URL。${NC}"
+    return 1
+  fi
+
+  if ! curl -fL --retry 3 --connect-timeout 15 "$RELEASE_CHECKSUM_URL" -o "$checksum_file"; then
+    rm -rf "$work_dir"
+    echo -e "${RED}[ERROR] 构建包校验文件下载失败，已停止安装。${NC}"
+    return 1
+  fi
+
+  expected_checksum=$(awk '$2 == "xui-zhushou-linux.tar.gz" { print $1; exit }' "$checksum_file")
+  actual_checksum=$(sha256sum "$archive_file" | awk '{ print $1 }')
+  if [ -z "$expected_checksum" ] || [ "$expected_checksum" != "$actual_checksum" ]; then
+    rm -rf "$work_dir"
+    echo -e "${RED}[ERROR] 构建包 SHA-256 校验失败，已停止安装。${NC}"
+    return 1
+  fi
+  echo -e "${GREEN}[OK] 构建包完整性校验通过。${NC}"
+
+  if ! tar -xzf "$archive_file" -C "$package_dir"; then
+    rm -rf "$work_dir"
+    echo -e "${RED}[ERROR] 构建包无法解压，文件可能不完整。${NC}"
+    return 1
+  fi
+
+  if [ ! -f "$package_dir/VERSION" ] || [ ! -f "$package_dir/dist/server.cjs" ] || [ ! -f "$package_dir/package.json" ]; then
+    rm -rf "$work_dir"
+    echo -e "${RED}[ERROR] 构建包结构无效，已停止安装。${NC}"
+    return 1
+  fi
+
+  DOWNLOADED_WORK_DIR="$work_dir"
+  DOWNLOADED_PACKAGE_DIR="$package_dir"
+}
+
+restore_previous_release() {
+  echo -e "${YELLOW}[ROLLBACK] 正在恢复安装前版本...${NC}"
+  pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
+  rm -rf "$TARGET_DIR"
+  if [ -d "$BACKUP_DIR" ]; then
+    mv "$BACKUP_DIR" "$TARGET_DIR"
+    cd "$TARGET_DIR"
+    APP_VERSION=$(read_installed_version)
+    export APP_VERSION
+    pm2 start ecosystem.config.cjs --update-env >/dev/null 2>&1 || true
+    pm2 save >/dev/null 2>&1 || true
+    echo -e "${GREEN}[ROLLBACK] 已恢复上一版本。${NC}"
+  else
+    echo -e "${YELLOW}[ROLLBACK] 首次安装前没有可恢复版本，已移除失败构建包。${NC}"
+  fi
+}
+
+verify_running_release() {
+  local protocol cert_path key_path health_url health_output attempt
+  protocol="http"
+  cert_path="${SSL_CERT:-$SSL_DIR/cert.pem}"
+  key_path="${SSL_KEY:-$SSL_DIR/key.pem}"
+  if [ -f "$cert_path" ] && [ -f "$key_path" ]; then
+    protocol="https"
+  fi
+  health_url="${protocol}://127.0.0.1:${APP_PORT}/api/health"
+
+  for attempt in $(seq 1 15); do
+    health_output=$(curl -skf --max-time 5 "$health_url" 2>/dev/null || true)
+    if printf '%s' "$health_output" | grep -Fq "\"version\":\"${APP_VERSION}\""; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 check_root() {
@@ -95,13 +161,13 @@ pause_if_tty() {
 }
 
 install_base_deps() {
-  echo -e "${BLUE}[INFO] 正在检查并补全系统必要基础依赖...${NC}"
+  echo -e "${BLUE}[INFO] 正在检查并补全运行构建包所需的基础依赖...${NC}"
   if [ "$PKG_MANAGER" = "apt" ]; then
     apt-get update -y > /dev/null 2>&1 || true
-    apt-get install -y curl wget git build-essential ca-certificates lsof net-tools socat openssl > /dev/null 2>&1
+    apt-get install -y curl ca-certificates lsof net-tools socat openssl tar > /dev/null 2>&1
   else
     $PKG_MANAGER update -y > /dev/null 2>&1 || true
-    $PKG_MANAGER install -y curl wget git make gcc-c++ ca-certificates lsof net-tools socat openssl > /dev/null 2>&1
+    $PKG_MANAGER install -y curl ca-certificates lsof net-tools socat openssl tar > /dev/null 2>&1
   fi
 }
 
@@ -232,41 +298,19 @@ install_assistant() {
   echo -e "${BLUE}[1/5] 检查并补全系统必要依赖...${NC}"
   install_base_deps
 
-  echo -e "${BLUE}[2/5] 拉取或同步本系统项目代码...${NC}"
-  if [ -f "$SCRIPT_DIR/package.json" ]; then
-    ACTIVE_PROJECT_DIR="$SCRIPT_DIR"
-    cd "$ACTIVE_PROJECT_DIR"
-    if [ "$ACTIVE_PROJECT_DIR" = "$TARGET_DIR" ]; then
-      sync_managed_repository || return 1
-    else
-      echo -e "${GREEN}[OK] 使用当前安装脚本所在的本地项目目录: $ACTIVE_PROJECT_DIR${NC}"
-    fi
-  else
-    if [ -d "$TARGET_DIR" ]; then
-      echo -e "${YELLOW}检测到已有项目目录 $TARGET_DIR，正在同步最新源码...${NC}"
-      cd "$TARGET_DIR"
-      sync_managed_repository || return 1
-    else
-      echo -e "${GREEN}正在克隆项目仓库到 $TARGET_DIR ...${NC}"
-      git clone "$REPO_URL" "$TARGET_DIR" || {
-        echo -e "${RED}[ERROR] 项目克隆失败，请检查网络或配置正确的 REPO_URL！${NC}"
-        pause_if_tty
-        return 1
-      }
-      cd "$TARGET_DIR"
-    fi
+  echo -e "${BLUE}[2/5] 下载 GitHub Actions 生成的最新生产构建包...${NC}"
+  download_release_package || {
+    pause_if_tty
+    return 1
+  }
+  APP_VERSION=$(tr -d '[:space:]' < "$DOWNLOADED_PACKAGE_DIR/VERSION")
+  if [ -z "$APP_VERSION" ]; then
+    rm -rf "$DOWNLOADED_WORK_DIR"
+    echo -e "${RED}[ERROR] 构建包没有有效版本号，已停止安装。${NC}"
+    pause_if_tty
+    return 1
   fi
-  ACTIVE_PROJECT_DIR="$(pwd)"
-  APP_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo "local")
-  export APP_VERSION
-  echo -e "${GREEN}[VERSION] 本次将部署版本: ${APP_VERSION}${NC}"
-
-  if [ ! -f .env ]; then
-    cp .env.example .env
-    chmod 600 .env
-    echo -e "${GREEN}[OK] 已创建 .env 配置文件；可稍后编辑 $ACTIVE_PROJECT_DIR/.env。${NC}"
-  fi
-  load_runtime_config
+  echo -e "${GREEN}[VERSION] 本次将部署构建包版本: v${APP_VERSION}${NC}"
 
   echo -e "${BLUE}[3/5] 检查并补全 Node.js 运行环境...${NC}"
   NEED_NODE_INSTALL=false
@@ -295,30 +339,72 @@ install_assistant() {
     echo -e "${GREEN}[OK] Node.js 已成功更新安装: $(node -v)${NC}"
   fi
 
-  echo -e "${BLUE}[4/5] 编译构建项目并配置 PM2 进程守护...${NC}"
-  npm ci
-  npm run test
-  npm run lint
-  npm run build
+  echo -e "${BLUE}[4/5] 安装生产运行依赖并切换到新构建包...${NC}"
+  cd "$DOWNLOADED_PACKAGE_DIR"
+  npm ci --omit=dev
 
   if ! command -v pm2 &> /dev/null; then
     echo -e "${YELLOW}正在全局安装 PM2 进程管理器...${NC}"
     npm install -g pm2 > /dev/null 2>&1
   fi
 
-  # 启动或重启 PM2 进程；服务端会从项目目录的 .env 加载端口和认证配置。
+  if [ -f "$TARGET_DIR/.env" ]; then
+    cp -p "$TARGET_DIR/.env" "$DOWNLOADED_PACKAGE_DIR/.env"
+    echo -e "${GREEN}[OK] 已保留现有 .env 配置。${NC}"
+  else
+    cp "$DOWNLOADED_PACKAGE_DIR/.env.example" "$DOWNLOADED_PACKAGE_DIR/.env"
+    chmod 600 "$DOWNLOADED_PACKAGE_DIR/.env"
+    echo -e "${GREEN}[OK] 已创建 .env 配置文件。${NC}"
+  fi
+
+  BACKUP_DIR="${TARGET_DIR}.previous"
+  rm -rf "$BACKUP_DIR"
+  if [ -d "$TARGET_DIR" ]; then
+    mv "$TARGET_DIR" "$BACKUP_DIR"
+  fi
+  mkdir -p "$(dirname "$TARGET_DIR")"
+  mv "$DOWNLOADED_PACKAGE_DIR" "$TARGET_DIR"
+  rm -rf "$DOWNLOADED_WORK_DIR"
+
+  ACTIVE_PROJECT_DIR="$TARGET_DIR"
+  cd "$ACTIVE_PROJECT_DIR"
+  load_runtime_config
+  APP_VERSION=$(read_installed_version)
+  export APP_VERSION
+
+  # 更新只替换应用构建包；.env 与 /etc 下的 SSL 证书保持不变。
   if pm2 list 2>/dev/null | grep -q "$APP_NAME"; then
     echo -e "${YELLOW}检测到部署助手面板正在运行，正在重启服务...${NC}"
-    pm2 startOrReload ecosystem.config.cjs --update-env
+    if ! pm2 startOrReload ecosystem.config.cjs --update-env; then
+      echo -e "${RED}[ERROR] 新构建包启动失败。${NC}"
+      restore_previous_release
+      pause_if_tty
+      return 1
+    fi
   else
     echo -e "${GREEN}正在启动 PM2 服务进程 (端口: ${APP_PORT})...${NC}"
-    pm2 start ecosystem.config.cjs
+    if ! pm2 start ecosystem.config.cjs; then
+      echo -e "${RED}[ERROR] 新构建包启动失败。${NC}"
+      restore_previous_release
+      pause_if_tty
+      return 1
+    fi
   fi
+
+  echo -e "${BLUE}[INFO] 正在验证新构建包健康状态和运行版本...${NC}"
+  if ! verify_running_release; then
+    echo -e "${RED}[ERROR] 新构建包未能通过健康检查或运行版本不一致。${NC}"
+    restore_previous_release
+    pause_if_tty
+    return 1
+  fi
+  echo -e "${GREEN}[OK] 运行健康检查通过，当前版本为 v${APP_VERSION}。${NC}"
 
   if command -v systemctl &>/dev/null; then
     pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
   fi
   pm2 save > /dev/null 2>&1 || true
+  rm -rf "$BACKUP_DIR"
 
   echo -e "${BLUE}[5/5] 配置系统防火墙放行与快捷调出命令...${NC}"
   configure_firewall
@@ -332,7 +418,7 @@ install_assistant() {
   echo -e "${NC}"
 
   echo -e "⚡ ${BOLD}快捷调出菜单命令:${NC} 输入 ${GREEN}${BOLD}sy${NC} 即可随时打开控制菜单"
-  echo -e "📦 ${BOLD}当前部署版本:${NC} ${GREEN}${APP_VERSION}${NC}"
+  echo -e "📦 ${BOLD}当前部署版本:${NC} ${GREEN}v${APP_VERSION}${NC}"
 
   if [ -f "$SSL_DIR/cert.pem" ] && [ -f "$SSL_DIR/key.pem" ]; then
     echo -e "🔒 访问协议: ${GREEN}HTTPS (已应用 SSL 安全加密防护)${NC}"
@@ -483,12 +569,8 @@ view_panel_info() {
 
   get_public_ip
   echo -e "🌐 ${BOLD}服务器公网 IP:${NC} ${GREEN}${SERVER_IP}${NC}"
-  if [ -d "$ACTIVE_PROJECT_DIR/.git" ]; then
-    APP_VERSION=$(git -C "$ACTIVE_PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  else
-    APP_VERSION="unknown"
-  fi
-  echo -e "📦 ${BOLD}当前代码版本:${NC} ${GREEN}${APP_VERSION}${NC}"
+  APP_VERSION=$(read_installed_version)
+  echo -e "📦 ${BOLD}当前构建包版本:${NC} ${GREEN}v${APP_VERSION}${NC}"
 
   # 1. PM2 进程状态
   echo -e "\n${BOLD}1️⃣  部署助手面板 PM2 服务状态:${NC}"
@@ -657,8 +739,8 @@ show_menu() {
     echo "   🚀 3x-ui 部署助手面板 (Deploy Assistant) 一键管理工具    "
     echo "============================================================"
     echo -e "${NC}"
-    echo -e " ${BOLD}[1]${NC} 安装 / 更新 部署助手面板 (Node.js/PM2)"
-    echo -e " ${BOLD}[2]${NC} 申请 SSL 域名证书并配置为面板 HTTPS (借用80端口，用完恢复)"
+    echo -e " ${BOLD}[1]${NC} 安装 / 更新 部署助手面板 (下载远端生产构建包)"
+    echo -e " ${BOLD}[2]${NC} 仅申请域名 SSL 证书并推送到面板 (不安装或更新应用)"
     echo -e " ${BOLD}[3]${NC} 查看当前面板配置与运行状态信息"
     echo -e " ${BOLD}[4]${NC} 检测 VPS 系统与网络运行环境"
     echo -e " ${BOLD}[5]${NC} 🔍 一键诊断与解决【域名无法访问】问题"

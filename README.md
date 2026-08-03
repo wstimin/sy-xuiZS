@@ -24,7 +24,7 @@
 bash <(curl -Ls https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh)
 ```
 
-脚本会安装 Node.js 20、项目依赖和 PM2，执行测试、类型检查与生产构建，然后启动服务。默认访问地址为：
+GitHub Actions 会在远端执行测试、类型检查和生产构建，并生成 Linux 生产构建包。一键脚本只下载构建包、安装生产运行依赖并通过 PM2 启动服务，不会在 VPS 上下载源码或执行源码构建。默认访问地址为：
 
 ```text
 http://服务器IP:1888
@@ -35,8 +35,8 @@ http://服务器IP:1888
 安装完成后可以运行 `sy` 打开管理菜单：
 
 ```text
-[1] 安装或更新助手
-[2] 为助手申请域名 SSL 证书
+[1] 安装或更新助手（下载远端生产构建包）
+[2] 仅为助手申请域名 SSL 证书并推送到面板
 [3] 查看服务与证书状态
 [4] 检查服务器环境
 [5] 诊断域名访问
@@ -52,17 +52,28 @@ pm2 logs 3xui-deploy-assistant
 cd /opt/3xui-deploy-assistant && sudo bash install.sh install
 ```
 
-一键脚本默认克隆本仓库到 `/opt/3xui-deploy-assistant`。在该托管目录内通过 `sy` 或 `sudo bash install.sh install` 更新时，脚本会执行 `git fetch origin main` 和 `git merge --ff-only origin/main`，确认同步远端 `main` 后再测试、构建并重启服务。也可以在其他完整源码目录内执行 `sudo bash install.sh install`，此时会直接构建并运行当前目录中的本地代码。
+一键脚本默认从 GitHub Releases 下载 `xui-zhushou-linux.tar.gz`，通过 `SHA256SUMS` 校验完整性后部署到 `/opt/3xui-deploy-assistant`。通过 `sy` 或 `sudo bash install.sh install` 更新时，会保留现有 `.env` 配置和 `/etc/3xui-assistant/ssl` 证书目录，仅替换应用构建包并重启 PM2；不会重新申请、安装或覆盖 SSL 证书。新构建包启动失败或运行版本校验不一致时会自动恢复上一版本。
 
 检查服务器当前代码和运行版本：
 
 ```bash
-cd /opt/3xui-deploy-assistant
-git rev-parse --short HEAD
+cat /opt/3xui-deploy-assistant/VERSION
 curl -s http://127.0.0.1:1888/api/health
 ```
 
-`git rev-parse` 与健康检查返回的 `version` 应一致。
+`VERSION` 与健康检查返回的 `version` 应一致。当前整体版本为 `2.0.0`。
+
+## 远端构建与发布
+
+推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v2.0.0`）时，会自动创建 GitHub Release，发布以下文件：
+
+```text
+xui-zhushou-linux-v2.0.0.tar.gz
+xui-zhushou-linux.tar.gz
+SHA256SUMS
+```
+
+一键安装脚本固定下载 `releases/latest/download/xui-zhushou-linux.tar.gz`，因此新标签发布完成后，所有服务器通过菜单 `[1]` 更新时都会拉取同一份已经验证的生产构建包。
 
 ## 3x-ui 安装脚本
 
