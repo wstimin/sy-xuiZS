@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PanelDeployForm, PanelResult, ScriptType } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
+import { ensureAssistantConnection } from '../utils/apiConnection';
 import {
   Terminal, Key, Server, Lock, Globe, Shield, Sparkles, Copy, Check, ExternalLink, Play, ArrowRight, X, Code2, CheckCircle2,
   AlertTriangle, ShieldAlert, Cpu, HardDrive, Activity, Clock, AlertCircle, ChevronDown, ChevronUp, Zap
@@ -171,9 +172,11 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     sshSessionIdRef.current = '';
     setForm(prev => ({ ...prev, sshSessionId: '' }));
 
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 35_000);
+    let timeout: number | undefined;
     try {
+      await ensureAssistantConnection();
+      const controller = new AbortController();
+      timeout = window.setTimeout(() => controller.abort(), 35_000);
       const res = await fetch('/api/test-ssh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -198,7 +201,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       setSshTestError(errMsg);
       showToast('SSH 连接测试失败', errMsg, 'error');
     } finally {
-      window.clearTimeout(timeout);
+      if (timeout !== undefined) window.clearTimeout(timeout);
       setIsTestingSSH(false);
     }
   };
@@ -254,8 +257,10 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     setSshTestError(null);
 
     const controller = new AbortController();
-    const firstResponseTimeout = window.setTimeout(() => controller.abort(), 35_000);
+    let firstResponseTimeout: number | undefined;
     try {
+      await ensureAssistantConnection(controller.signal);
+      firstResponseTimeout = window.setTimeout(() => controller.abort(), 35_000);
       const sshSessionId = sshSessionIdRef.current || form.sshSessionId || '';
       const res = await fetch('/api/deploy-panel', {
         method: 'POST',
@@ -264,6 +269,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
         signal: controller.signal
       });
       window.clearTimeout(firstResponseTimeout);
+      firstResponseTimeout = undefined;
 
       if (sshSessionId) {
         sshSessionIdRef.current = '';
@@ -349,7 +355,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       setDeployError(message);
       showToast('面板部署异常', message, 'error');
     } finally {
-      window.clearTimeout(firstResponseTimeout);
+      if (firstResponseTimeout !== undefined) window.clearTimeout(firstResponseTimeout);
       setIsDeploying(false);
     }
   };

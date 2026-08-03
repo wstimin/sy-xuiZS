@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { NodeDeployForm, NodeResult, ProtocolType, TransportType, SecurityType, PanelFlavor } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
+import { ensureAssistantConnection } from '../utils/apiConnection';
 import { parseSocksInput } from '../utils/socksParser';
 import {
   checkTransportAllowed,
@@ -126,6 +127,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     setIsFetchingTls(true);
     setTlsStatus(null);
     try {
+      await ensureAssistantConnection();
       const res = await fetch('/api/get-panel-tls', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -301,6 +303,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     setElapsedTime(0);
 
     try {
+      await ensureAssistantConnection(controller.signal);
       const res = await fetch('/api/deploy-node', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -652,10 +652,14 @@ async function startServer() {
   const certPath = process.env.SSL_CERT || "/etc/3xui-assistant/ssl/cert.pem";
   const keyPath = process.env.SSL_KEY || "/etc/3xui-assistant/ssl/key.pem";
   if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-    https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, app)
-      .listen(port, "0.0.0.0", () => console.log(`[HTTPS] 3x-ui 部署助手: https://0.0.0.0:${port}`));
+    const server = https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, app);
+    server.keepAliveTimeout = 120_000;
+    server.headersTimeout = 125_000;
+    server.listen(port, "0.0.0.0", () => console.log(`[HTTPS] 3x-ui 部署助手: https://0.0.0.0:${port}`));
   } else {
-    app.listen(port, "0.0.0.0", () => console.log(`[HTTP] 3x-ui 部署助手: http://0.0.0.0:${port}`));
+    const server = app.listen(port, "0.0.0.0", () => console.log(`[HTTP] 3x-ui 部署助手: http://0.0.0.0:${port}`));
+    server.keepAliveTimeout = 120_000;
+    server.headersTimeout = 125_000;
   }
 }
 
