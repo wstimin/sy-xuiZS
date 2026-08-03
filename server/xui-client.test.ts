@@ -400,7 +400,7 @@ test("XuiClient timeout covers a response body that never completes", async () =
   );
 });
 
-test("XuiClient uses Bearer for inbound list/delete and Session for Xray settings", async () => {
+test("XuiClient uses the Bearer API for 3x-ui 3.6.0 Xray settings", async () => {
   const calls: Array<{ url: URL; method: string; headers: Headers; body: string }> = [];
   const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
     const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
@@ -411,27 +411,13 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
       body: String(init?.body || ""),
     });
 
-    if (url.pathname === "/base/csrf-token") {
-      return new Response(JSON.stringify({ success: true, obj: "csrf-value" }), {
-        headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=anonymous; Path=/base/; HttpOnly" },
-      });
-    }
-    if (url.pathname === "/base/login") {
-      if (!new Headers(init?.headers).get("X-CSRF-Token")) return new Response(null, { status: 403 });
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=logged-in; Path=/base/; HttpOnly" },
-      });
-    }
-    if (url.pathname === "/base/panel/csrf-token") {
-      return Response.json({ success: true, obj: "authenticated-csrf" });
-    }
     if (url.pathname === "/base/panel/api/inbounds/list") {
       return Response.json({ success: true, obj: [{ id: 31, tag: "inbound-31" }] });
     }
     if (url.pathname === "/base/panel/api/inbounds/del/31") {
       return Response.json({ success: true });
     }
-    if (url.pathname === "/base/panel/xray/") {
+    if (url.pathname === "/base/panel/api/xray/") {
       return Response.json({
         success: true,
         obj: JSON.stringify({
@@ -440,10 +426,7 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
         }),
       });
     }
-    if (url.pathname === "/base/panel/xray/update") {
-      return Response.json({ success: true });
-    }
-    if (url.pathname === "/base/panel/api/server/restartXrayService") {
+    if (url.pathname === "/base/panel/api/xray/update") {
       return Response.json({ success: true });
     }
     throw new Error(`Unexpected request: ${url.pathname}`);
@@ -457,7 +440,6 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
     panelToken: "bearer-token",
   }, mockFetch);
 
-  await client.authenticate();
   assert.deepEqual(await client.request("panel/api/inbounds/list"), [{ id: 31, tag: "inbound-31" }]);
   await client.deleteInbound(31);
   assert.deepEqual(await client.getXrayTemplate(), {
@@ -471,35 +453,91 @@ test("XuiClient uses Bearer for inbound list/delete and Session for Xray setting
   await client.restartXray();
 
   assert.deepEqual(calls.map((call) => [call.method, call.url.pathname]), [
-    ["GET", "/base/csrf-token"],
-    ["POST", "/base/login"],
-    ["GET", "/base/panel/csrf-token"],
     ["GET", "/base/panel/api/inbounds/list"],
     ["POST", "/base/panel/api/inbounds/del/31"],
-    ["POST", "/base/panel/xray/"],
-    ["POST", "/base/panel/xray/update"],
-    ["POST", "/base/panel/api/server/restartXrayService"],
+    ["POST", "/base/panel/api/xray/"],
+    ["POST", "/base/panel/api/xray/update"],
   ]);
 
-  for (const call of calls.slice(3, 5)) {
+  for (const call of calls) {
     assert.equal(call.headers.get("Authorization"), "Bearer bearer-token");
     assert.equal(call.headers.get("Cookie"), null);
     assert.equal(call.headers.get("X-CSRF-Token"), null);
   }
-  for (const call of calls.slice(5)) {
-    assert.equal(call.headers.get("Authorization"), null);
-    assert.equal(call.headers.get("Cookie"), "3x-ui=logged-in");
-    assert.equal(call.headers.get("X-CSRF-Token"), "authenticated-csrf");
-    assert.equal(call.headers.get("X-Requested-With"), "XMLHttpRequest");
-  }
 
-  assert.match(calls[6].headers.get("Content-Type") || "", /^application\/x-www-form-urlencoded/);
-  const updateBody = new URLSearchParams(calls[6].body);
+  assert.match(calls[3].headers.get("Content-Type") || "", /^application\/x-www-form-urlencoded/);
+  const updateBody = new URLSearchParams(calls[3].body);
   assert.deepEqual(JSON.parse(updateBody.get("xraySetting") || ""), {
     outbounds: [{ tag: "proxy", protocol: "socks" }],
     routing: { rules: [] },
   });
   assert.equal(updateBody.get("outboundTestUrl"), "https://example.net/generate_204");
+});
+
+test("XuiClient falls back once to legacy Session Xray routes", async () => {
+  const calls: Array<{ url: URL; method: string; headers: Headers }> = [];
+  const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    const headers = new Headers(init?.headers);
+    calls.push({ url, method: init?.method || "GET", headers });
+
+    if (url.pathname === "/base/panel/api/xray/") {
+      return new Response(null, { status: 404 });
+    }
+    if (url.pathname === "/base/csrf-token") {
+      return Response.json({ success: true, obj: "public-csrf" });
+    }
+    if (url.pathname === "/base/login") {
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=legacy-session; Path=/base/; HttpOnly" },
+      });
+    }
+    if (url.pathname === "/base/panel/csrf-token") {
+      return Response.json({ success: true, obj: "session-csrf" });
+    }
+    if (url.pathname === "/base/panel/xray/") {
+      return Response.json({
+        success: true,
+        obj: JSON.stringify({
+          xraySetting: { outbounds: [], routing: { rules: [] } },
+          outboundTestUrl: "https://example.com/generate_204",
+        }),
+      });
+    }
+    if (url.pathname === "/base/panel/xray/update") {
+      return Response.json({ success: true });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelPath: "/base/",
+    panelUser: "admin",
+    panelPass: "password",
+    panelToken: "bearer-token",
+  }, mockFetch);
+
+  assert.deepEqual(await client.getXrayTemplate(), {
+    xraySetting: { outbounds: [], routing: { rules: [] } },
+    outboundTestUrl: "https://example.com/generate_204",
+  });
+  await client.updateXrayTemplate({ outbounds: [], routing: { rules: [] } });
+
+  assert.deepEqual(calls.map(call => [call.method, call.url.pathname]), [
+    ["POST", "/base/panel/api/xray/"],
+    ["GET", "/base/csrf-token"],
+    ["POST", "/base/login"],
+    ["GET", "/base/panel/csrf-token"],
+    ["POST", "/base/panel/xray/"],
+    ["POST", "/base/panel/xray/update"],
+  ]);
+  assert.equal(calls[0].headers.get("Authorization"), "Bearer bearer-token");
+  for (const call of calls.slice(4)) {
+    assert.equal(call.headers.get("Authorization"), null);
+    assert.equal(call.headers.get("Cookie"), "3x-ui=legacy-session");
+    assert.equal(call.headers.get("X-Requested-With"), "XMLHttpRequest");
+  }
 });
 
 test("XuiClient re-authenticates once when the official panel session expires", async () => {

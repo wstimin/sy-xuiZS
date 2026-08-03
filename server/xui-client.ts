@@ -25,6 +25,7 @@ export interface XrayTemplateResponse {
 }
 
 type FetchImplementation = typeof fetch;
+type XrayApiStyle = "modern" | "legacy";
 
 interface BufferedResponse {
   status: number;
@@ -222,6 +223,7 @@ export class XuiClient {
   private cookie = "";
   private csrfToken = "";
   private apiToken = "";
+  private xrayApiStyle?: XrayApiStyle;
   private sessionAuthenticated = false;
   private readonly dispatcher?: Agent;
   private readonly fetchImpl: FetchImplementation;
@@ -378,7 +380,11 @@ export class XuiClient {
   }
 
   async getXrayTemplate(): Promise<XrayTemplateResponse> {
-    const raw = await this.sessionRequest<string>("panel/xray/", { method: "POST" });
+    const raw = await this.xrayRequest<string>(
+      "panel/api/xray/",
+      "panel/xray/",
+      { method: "POST" },
+    );
     return parseXrayTemplateResponse(raw);
   }
 
@@ -389,10 +395,11 @@ export class XuiClient {
       headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
       body,
     };
-    await this.sessionRequest("panel/xray/update", init);
+    await this.xrayRequest("panel/api/xray/update", "panel/xray/update", init);
   }
 
   async restartXray(timeoutMs = 20_000): Promise<void> {
+    if (this.xrayApiStyle === "modern") return;
     await this.sessionRequest(
       "panel/api/server/restartXrayService",
       { method: "POST" },
@@ -419,6 +426,33 @@ export class XuiClient {
     }
     const data = await this.parseResponse<T>(response, apiPath);
     if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${apiPath}`);
+    return data.obj as T;
+  }
+
+  private async xrayRequest<T>(
+    modernPath: string,
+    legacyPath: string,
+    init: RequestInit,
+  ): Promise<T> {
+    if (this.xrayApiStyle === "modern") return this.request<T>(modernPath, init);
+    if (this.xrayApiStyle === "legacy") return this.sessionRequest<T>(legacyPath, init);
+
+    // 3x-ui 3.6.0 moved Xray settings under the Bearer-authenticated API.
+    // Panels without an API token can only use the legacy session routes.
+    if (!this.apiToken) {
+      this.xrayApiStyle = "legacy";
+      return this.sessionRequest<T>(legacyPath, init);
+    }
+
+    const response = await this.rawRequest(modernPath, init, true);
+    if (response.status === 404 || response.status === 405) {
+      this.xrayApiStyle = "legacy";
+      return this.sessionRequest<T>(legacyPath, init);
+    }
+
+    const data = await this.parseResponse<T>(response, modernPath);
+    if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${modernPath}`);
+    this.xrayApiStyle = "modern";
     return data.obj as T;
   }
 
@@ -536,7 +570,8 @@ export class XuiClient {
       data = JSON.parse(text);
     } catch {
       const htmlHint = /^\s*</.test(text) ? "（收到 HTML，通常是面板路径填写错误）" : "";
-      throw new Error(`${operation} 返回了非 JSON 响应${htmlHint}`);
+      const contentType = response.headers.get("content-type")?.split(";", 1)[0] || "未知";
+      throw new Error(`${operation} 返回了非 JSON 响应（HTTP ${response.status}，Content-Type ${contentType}）${htmlHint}`);
     }
     if (!response.ok) throw new Error(data.msg || `${operation} 请求失败，HTTP ${response.status}`);
     return data;

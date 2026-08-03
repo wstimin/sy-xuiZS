@@ -525,7 +525,6 @@ async function startServer() {
         if (!optionalString(body.panelUser) || !optionalString(body.panelPass)) {
           throw new Error("SOCKS 链式路由需要面板用户名和密码");
         }
-        await client.authenticate();
         const current = await client.getXrayTemplate();
         const config = current.xraySetting;
         originalXrayTemplate = { config, outboundTestUrl: current.outboundTestUrl || "" };
