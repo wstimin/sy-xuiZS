@@ -381,6 +381,25 @@ test("XuiClient reports the inbound creation stage when add times out", async ()
   );
 });
 
+test("XuiClient timeout covers a response body that never completes", async () => {
+  const mockFetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+    const signal = init?.signal;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"success":true,"obj":'));
+        signal?.addEventListener("abort", () => controller.error(new DOMException("Aborted", "AbortError")), { once: true });
+      },
+    });
+    return new Response(body, { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const client = new XuiClient({ panelAddress: "panel.example", panelToken: "bearer-token" }, mockFetch);
+  await assert.rejects(
+    client.addInbound({ port: 8388 }, "Shadowsocks", 10),
+    /3x-ui 创建 Shadowsocks 入站超时/,
+  );
+});
+
 test("XuiClient uses Bearer for inbound list/delete and Session for Xray settings", async () => {
   const calls: Array<{ url: URL; method: string; headers: Headers; body: string }> = [];
   const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {

@@ -320,6 +320,23 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       let result: NodeResult | null = null;
       let streamError = '';
 
+      const readNextChunk = async () => {
+        let inactivityTimer = 0;
+        try {
+          return await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+              inactivityTimer = window.setTimeout(() => {
+                reject(new Error('长时间没有收到后端进度，已停止等待。面板可能仍在处理，请先检查入站列表后再重试'));
+                controller.abort();
+              }, 45_000);
+            })
+          ]);
+        } finally {
+          window.clearTimeout(inactivityTimer);
+        }
+      };
+
       const consumeLine = (line: string) => {
         if (!line.trim()) return;
         const event = JSON.parse(line);
@@ -334,7 +351,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       };
 
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await readNextChunk();
         buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || '';

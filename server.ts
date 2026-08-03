@@ -10,7 +10,7 @@ import { createServer as createViteServer } from "vite";
 import { buildInbound, InboundInput } from "./server/inbound-builder.js";
 import { buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, inspectServer, SshInput } from "./server/ssh.js";
 import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
-import { findInboundRecord, parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
+import { findInboundRecord, isRetryablePanelConnectionError, parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
 
 type ServerInspection = Awaited<ReturnType<typeof inspectServer>>;
@@ -155,14 +155,15 @@ async function startServer() {
     };
     res.on("close", handleDisconnect);
     try {
-      session = await connectSsh(req.body as SshInput, { timeoutMs: 18_000 });
+      const input = req.body as SshInput;
+      const reused = takeSshSession(req.body?.sshSessionId, input);
+      session = reused?.session || await connectSsh(input, { timeoutMs: 18_000 });
       let details: ServerInspection;
       try {
         details = await inspectServer(session, { timeoutMs: 10_000 });
       } catch (error) {
         throw new Error(formatServerInspectionError(error));
       }
-      removeSshSession(req.body?.sshSessionId);
       const sshSessionId = cacheSshSession(session, details);
       session = undefined;
       completed = true;
@@ -188,6 +189,7 @@ async function startServer() {
       (res as Response & { flush?: () => void }).flush?.();
     };
     let session;
+    let panelClient: XuiClient | undefined;
     let completed = false;
     const handleDisconnect = () => {
       if (!completed && !res.writableEnded) session?.client.destroy();
@@ -295,7 +297,7 @@ async function startServer() {
       const accessUrl = `${fallbackProtocol}://${domain || host}:${installedPort}${installedPath}`;
 
       write({ type: "log", step: 8, message: "[AUTH] 正在验证面板登录凭证" });
-      const panelClient = new XuiClient({
+      panelClient = new XuiClient({
         panelAddress: domain || host,
         panelPort: installedPort,
         panelPath: installedPath,
@@ -365,17 +367,21 @@ async function startServer() {
     } finally {
       res.off("close", handleDisconnect);
       session?.client.end();
+      await panelClient?.close().catch(() => undefined);
       res.end();
     }
   });
 
   app.post("/api/get-panel-tls", async (req, res) => {
+    let client: XuiClient | undefined;
     try {
-      const client = new XuiClient(xuiOptions(req.body));
+      client = new XuiClient(xuiOptions(req.body));
       const files = await client.getWebCertFiles();
       res.json({ success: true, files, sni: cleanHostInput(req.body.panelAddress) });
     } catch (error) {
       sendError(res, error);
+    } finally {
+      await client?.close().catch(() => undefined);
     }
   });
 
@@ -391,6 +397,8 @@ async function startServer() {
       (res as Response & { flush?: () => void }).flush?.();
     };
     const progress = (step: number, message: string) => write({ type: "progress", step, total: 5, message });
+    const heartbeat = setInterval(() => write({ type: "heartbeat", timestamp: Date.now() }), 10_000);
+    heartbeat.unref();
     const cancellation = new AbortController();
     const handleDisconnect = () => {
       if (!res.writableEnded) cancellation.abort();
@@ -398,6 +406,12 @@ async function startServer() {
     res.on("close", handleDisconnect);
 
     const body = req.body as Record<string, any> & InboundInput;
+    const panelClients = new Set<XuiClient>();
+    const createPanelClient = (signal?: AbortSignal) => {
+      const next = new XuiClient(xuiOptions(body, signal));
+      panelClients.add(next);
+      return next;
+    };
     let client: XuiClient | undefined;
     let built: ReturnType<typeof buildInbound> | undefined;
     let inboundId = 0;
@@ -405,6 +419,7 @@ async function startServer() {
     let originalXrayTemplate: { config: unknown; outboundTestUrl: string } | undefined;
     let xrayTemplateUpdated = false;
     let xrayRestartAttempted = false;
+    let creationOutcomeUncertain = false;
     try {
       const panelToken = optionalString(body.panelToken);
       if (!panelToken) throw new Error("缺少 3x-ui API Token，请从面板搭建结果进入节点页面或手动填写 Token");
@@ -413,12 +428,20 @@ async function startServer() {
         ? body.panelFlavor
         : "compatible";
 
-      client = new XuiClient(xuiOptions(body, cancellation.signal));
+      client = createPanelClient(cancellation.signal);
       let reality: { privateKey: string; publicKey: string } | undefined;
       if (body.security === "Reality") {
         progress(1, "正在向 3x-ui 获取 Reality 密钥");
         const realityStartedAt = Date.now();
-        reality = await client.getRealityKeyPair();
+        try {
+          reality = await client.getRealityKeyPair();
+        } catch (error) {
+          if (cancellation.signal.aborted || !isRetryablePanelConnectionError(error)) throw error;
+          progress(1, "Reality 密钥请求连接异常，正在使用新连接重试");
+          await client.close().catch(() => undefined);
+          client = createPanelClient(cancellation.signal);
+          reality = await client.getRealityKeyPair();
+        }
         progress(1, `Reality 密钥已获取（${formatElapsed(Date.now() - realityStartedAt)}）`);
       } else {
         progress(1, "正在生成节点安全参数");
@@ -443,7 +466,40 @@ async function startServer() {
       progress(1, "节点参数已生成");
       progress(2, `正在调用 3x-ui 创建 ${body.protocol || "VLESS"} 入站`);
       const inboundStartedAt = Date.now();
-      const created = await client.addInbound(built.payload, body.protocol || "VLESS");
+      let created: any;
+      try {
+        created = await client.addInbound(built.payload, body.protocol || "VLESS", 30_000);
+      } catch (error) {
+        if (cancellation.signal.aborted || !isRetryablePanelConnectionError(error)) throw error;
+        creationOutcomeUncertain = true;
+        progress(2, "面板创建响应异常，正在通过新连接确认实际创建结果");
+        await client.close().catch(() => undefined);
+        client = createPanelClient(cancellation.signal);
+        let confirmationError: unknown;
+        for (let attempt = 1; attempt <= 6 && !created; attempt += 1) {
+          if (attempt > 1) await new Promise(resolve => setTimeout(resolve, 2_000));
+          try {
+            const list = await client.listInbounds(10_000);
+            const matched = findInboundRecord(list, {
+              tag: built.tag,
+              protocol: body.protocol || "VLESS",
+              port: built.port,
+            });
+            if (matched) created = matched;
+            confirmationError = undefined;
+          } catch (confirmError) {
+            confirmationError = confirmError;
+            await client.close().catch(() => undefined);
+            client = createPanelClient(cancellation.signal);
+          }
+        }
+        if (!created) {
+          const suffix = confirmationError ? `：${errorMessage(confirmationError)}` : "";
+          throw new Error(`3x-ui 创建请求已超时，目前无法确认节点是否创建成功${suffix}。助手未重试创建、也未删除节点，请稍后在面板入站列表中确认`);
+        }
+        creationOutcomeUncertain = false;
+        progress(2, "已从面板入站列表确认节点创建成功");
+      }
       progress(2, `3x-ui 入站已创建（${formatElapsed(Date.now() - inboundStartedAt)}）`);
       inboundId = Number(created?.id || 0);
       inboundTag = optionalString(created?.tag) || built.tag;
@@ -534,7 +590,7 @@ async function startServer() {
       let rollbackClient = client;
       if (cancellation.signal.aborted) {
         try {
-          rollbackClient = new XuiClient(xuiOptions(body));
+          rollbackClient = createPanelClient();
         } catch {
           rollbackClient = undefined;
         }
@@ -546,7 +602,7 @@ async function startServer() {
           // Preserve the original failure and continue with inbound rollback.
         }
       }
-      if (rollbackClient && !inboundId && built) {
+      if (rollbackClient && !creationOutcomeUncertain && !inboundId && built) {
         try {
           const list = await rollbackClient.listInbounds();
           inboundId = Number(findInboundRecord(list, {
@@ -558,7 +614,7 @@ async function startServer() {
           // The add request may have been cancelled before the panel created anything.
         }
       }
-      if (rollbackClient && inboundId) {
+      if (rollbackClient && !creationOutcomeUncertain && inboundId) {
         try {
           await rollbackClient.deleteInbound(inboundId);
         } catch {
@@ -574,7 +630,9 @@ async function startServer() {
       }
       write({ type: "error", error: errorMessage(error), cancelled: cancellation.signal.aborted });
     } finally {
+      clearInterval(heartbeat);
       res.off("close", handleDisconnect);
+      await Promise.allSettled([...panelClients].map(panelClient => panelClient.close()));
       if (!res.writableEnded) res.end();
     }
   });

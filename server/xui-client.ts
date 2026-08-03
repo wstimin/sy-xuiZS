@@ -26,6 +26,13 @@ export interface XrayTemplateResponse {
 
 type FetchImplementation = typeof fetch;
 
+interface BufferedResponse {
+  status: number;
+  ok: boolean;
+  headers: Headers;
+  text: string;
+}
+
 export class PanelRequestTimeoutError extends Error {
   constructor(message: string) {
     super(message);
@@ -160,6 +167,11 @@ export function serializeInboundPayload(payload: Record<string, unknown>): Recor
   return result;
 }
 
+export function isRetryablePanelConnectionError(error: unknown): boolean {
+  return error instanceof PanelRequestTimeoutError
+    || (error instanceof Error && /^无法连接 3x-ui 面板:/.test(error.message));
+}
+
 export function serializeInboundForm(payload: Record<string, unknown>): URLSearchParams {
   const serialized = serializeInboundPayload(payload);
   const form = new URLSearchParams();
@@ -218,9 +230,24 @@ export class XuiClient {
     this.fetchImpl = fetchImpl;
     this.apiToken = optionalString(options.panelToken);
     this.baseUrl = normalizePanelBaseUrl(options);
-    if (this.baseUrl.startsWith("https://") && options.allowInsecureTls) {
-      this.dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+    if (fetchImpl === fetch) {
+      this.dispatcher = new Agent({
+        connections: 1,
+        pipelining: 1,
+        connect: this.baseUrl.startsWith("https://") && options.allowInsecureTls
+          ? { rejectUnauthorized: false, timeout: 10_000 }
+          : { timeout: 10_000 },
+        headersTimeout: 60_000,
+        bodyTimeout: 60_000,
+        keepAliveTimeout: 1_000,
+        keepAliveMaxTimeout: 5_000,
+      });
     }
+  }
+
+  async close(): Promise<void> {
+    if (!this.dispatcher || this.dispatcher.closed || this.dispatcher.destroyed) return;
+    await this.dispatcher.close();
   }
 
   async authenticate(): Promise<void> {
@@ -397,7 +424,7 @@ export class XuiClient {
     forceSession = false,
     timeoutMs = 15_000,
     timeoutMessage?: string,
-  ): Promise<Response> {
+  ): Promise<BufferedResponse> {
     const headers = new Headers(init.headers);
     const token = this.apiToken;
     if (authenticated && token && !forceSession) {
@@ -421,7 +448,13 @@ export class XuiClient {
         ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
       } as RequestInit);
       this.captureCookies(response);
-      return response;
+      const text = await response.text();
+      return {
+        status: response.status,
+        ok: response.ok,
+        headers: response.headers,
+        text,
+      };
     } catch (error: any) {
       if (error?.name === "AbortError") {
         if (this.options.signal?.aborted) throw new Error("节点创建已终止");
@@ -459,7 +492,7 @@ export class XuiClient {
     this.csrfToken = data.obj;
   }
 
-  private captureCookies(response: Response): void {
+  private captureCookies(response: Pick<Response, "headers">): void {
     const setCookies = typeof response.headers.getSetCookie === "function"
       ? response.headers.getSetCookie()
       : [response.headers.get("set-cookie") || ""];
@@ -474,8 +507,8 @@ export class XuiClient {
     return Boolean(optionalString(this.options.panelUser) && optionalString(this.options.panelPass));
   }
 
-  private async parseResponse<T>(response: Response, operation: string): Promise<XuiResponse<T>> {
-    const text = await response.text();
+  private async parseResponse<T>(response: BufferedResponse, operation: string): Promise<XuiResponse<T>> {
+    const text = response.text;
     let data: XuiResponse<T>;
     try {
       data = JSON.parse(text);
