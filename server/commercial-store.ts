@@ -338,6 +338,14 @@ export class CommercialStore {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM users").get() as any).count) > 0;
   }
 
+  bootstrapAdmin(username: string, password: string) {
+    const createInitialAdmin = this.db.transaction(() => {
+      if (this.hasUsers()) return null;
+      return this.createUser(username, password, "admin");
+    });
+    return createInitialAdmin.immediate();
+  }
+
   getSetting(key: string, fallback = "") {
     return (this.db.prepare("SELECT value FROM system_settings WHERE key = ?").get(key) as any)?.value ?? fallback;
   }

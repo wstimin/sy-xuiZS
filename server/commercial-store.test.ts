@@ -2,6 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CommercialStore } from "./commercial-store.js";
 
+test("only one initial administrator can be bootstrapped", () => {
+  const store = new CommercialStore(":memory:");
+  try {
+    const admin = store.bootstrapAdmin("first-admin", "strong-password");
+    const duplicate = store.bootstrapAdmin("second-admin", "strong-password");
+
+    assert.equal(admin?.role, "admin");
+    assert.equal(duplicate, null);
+    assert.equal(store.listUsers().length, 1);
+  } finally {
+    store.close();
+  }
+});
+
 function createStore() {
   return new CommercialStore(":memory:");
 }

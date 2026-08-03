@@ -1,8 +1,8 @@
-# xui-zhushou
+# sy-xuiZS
 
-`xui-zhushou` 是一个通过 SSH 和 3x-ui API 工作的 Web 部署助手。它可以连接 Linux VPS 安装 3x-ui、登录已有面板创建节点，并按需向面板的全局 Xray 模板写入 SOCKS5 出站和路由。
+`sy-xuiZS` 是一个带用户端和管理端的 3x-ui 商业部署助手。它保留原有 SSH、3x-ui API、节点创建和 SOCKS5 路由逻辑，并在执行入口增加订单、权益和搭建次数控制。
 
-正式仓库：<https://github.com/wstimin/xui-zhushou>
+正式仓库：<https://github.com/wstimin/sy-xuiZS>
 
 ## 主要能力
 
@@ -15,19 +15,23 @@
 - TLS 节点复用面板安装阶段读取的 Web 证书路径，页面不要求手工填写证书路径。
 - 可向当前 Xray 模板注入 SOCKS5 出站、入站路由和多代理随机负载均衡。
 - 浏览器历史只保存非敏感元数据，不保存密码、Token、分享链接或 SOCKS 凭据。
+- 用户可注册、登录、创建订单，并在权益有效期内直接执行面板或节点搭建。
+- 管理员可配置套餐价格、期限、面板次数、节点次数、每日限制和并发限制。
+- 当前收款流程为管理员人工确认；确认后系统按订单快照自动发放权益。
+- 搭建成功扣除次数，明确失败退还次数，结果不确定时保留占用并交由管理员处理。
 
 ## 一键安装助手
 
 支持 Ubuntu 20.04+、Debian 11+、CentOS 8+、Rocky Linux 和 AlmaLinux。请先切换到 `root` 用户，然后执行以下命令打开原有交互菜单：
 
 ```bash
-bash <(curl -fsSL --retry 3 https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh)
+bash <(curl -fsSL --retry 3 https://raw.githubusercontent.com/wstimin/sy-xuiZS/main/install.sh)
 ```
 
 需要跳过菜单、直接执行安装或更新时使用：
 
 ```bash
-bash <(curl -fsSL --retry 3 https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh) install
+bash <(curl -fsSL --retry 3 https://raw.githubusercontent.com/wstimin/sy-xuiZS/main/install.sh) install
 ```
 
 上述 `raw.githubusercontent.com` 地址只用于获取管理脚本。GitHub Actions 会在远端执行测试、类型检查和生产构建，并生成 Linux 生产构建包；管理脚本随后从 GitHub Latest Release 下载 `xui-zhushou-linux.tar.gz` 和 `SHA256SUMS`。VPS 不会下载应用源码，也不会执行 Vite、TypeScript 或其他源码构建。默认访问地址为：
@@ -58,7 +62,7 @@ pm2 logs 3xui-deploy-assistant
 sudo bash /opt/3xui-deploy-assistant/install.sh install
 ```
 
-一键脚本默认从 GitHub Releases 下载 `xui-zhushou-linux.tar.gz`，通过 `SHA256SUMS` 校验完整性后部署到 `/opt/3xui-deploy-assistant`。通过 `sy` 或 `sudo bash install.sh install` 更新时，会保留现有 `.env` 配置和 `/etc/3xui-assistant/ssl` 证书目录，仅替换应用构建包并重启 PM2；不会重新申请、安装或覆盖 SSL 证书。新构建包启动失败或运行版本校验不一致时会自动恢复上一版本。
+一键脚本默认从 GitHub Releases 下载 `xui-zhushou-linux.tar.gz`，通过 `SHA256SUMS` 校验完整性后部署到 `/opt/3xui-deploy-assistant`。通过 `sy` 或 `sudo bash install.sh install` 更新时，会保留现有 `.env`、`/var/lib/xui-assistant/app.db` 数据库和 `/etc/3xui-assistant/ssl` 证书目录，仅替换应用构建包并重启 PM2。升级前会将数据库备份到 `/var/backups/xui-assistant`，新构建包启动失败或运行版本校验不一致时会自动恢复上一版本。
 
 检查服务器当前代码和运行版本：
 
@@ -67,14 +71,14 @@ cat /opt/3xui-deploy-assistant/VERSION
 curl -s http://127.0.0.1:1888/api/health
 ```
 
-`VERSION` 与健康检查返回的 `version` 应一致。当前整体版本为 `2.0.0`。
+`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.0`。
 
 ## 远端构建与发布
 
-推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v2.0.0`）时，会自动创建 GitHub Release，发布以下文件：
+推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.0`）时，会自动创建 GitHub Release，发布以下文件：
 
 ```text
-xui-zhushou-linux-v2.0.0.tar.gz
+xui-zhushou-linux-v3.0.0.tar.gz
 xui-zhushou-linux.tar.gz
 SHA256SUMS
 ```
@@ -85,7 +89,7 @@ SHA256SUMS
 
 这里有两个不同用途的 `install.sh`，不要混淆：
 
-- `xui-zhushou/install.sh`：安装和管理本 Web 助手。
+- `sy-xuiZS/install.sh`：安装和管理本 Web 助手。
 - `mogai-3xui/install.sh`：本助手默认用于远程安装 3x-ui 面板。
 
 助手默认并推荐使用基于官方 2.9.4 修改 UI、客户端兼容范围更广的脚本：
@@ -130,7 +134,7 @@ POST /panel/setting/defaultSettings
 
 ## 环境配置
 
-本地开发需要 Node.js 20 或更高版本：
+本地开发和生产部署支持 Node.js 20 或 22：
 
 ```bash
 npm ci
@@ -151,12 +155,16 @@ npm start
 ```env
 PORT=1888
 APP_AUTH_TOKEN=
+DATABASE_PATH=/var/lib/xui-assistant/app.db
+SESSION_COOKIE_SECURE=
 SSL_CERT=
 SSL_KEY=
 ```
 
 - `PORT`：助手监听端口，安装脚本会同步用于防火墙和访问提示。
 - `APP_AUTH_TOKEN`：可选的助手 API 保护。设置后，请由受信任的反向代理添加 `Authorization: Bearer <token>` 或 `X-App-Token` 请求头。
+- `DATABASE_PATH`：用户、订单、权益和任务数据库路径。正式安装默认放在应用目录之外，升级不会覆盖。
+- `SESSION_COOKIE_SECURE`：使用 HTTPS 时建议设为 `true`；留空时按当前请求协议自动判断。
 - `SSL_CERT` / `SSL_KEY`：助手自身 HTTPS 证书路径。两者留空时，服务端也会自动检查 `/etc/3xui-assistant/ssl/cert.pem` 和 `/etc/3xui-assistant/ssl/key.pem`。
 
 ## SOCKS 路由
@@ -179,6 +187,6 @@ SSH 密码、私钥、面板密码和 API Token 都会经过助手后端。不�
 
 ## 验证范围
 
-仓库包含后端单元测试，覆盖 URL 与端口验证、Shell 转义、推荐与官方安装命令、Reality/TLS 入站、订阅 URL 和 SOCKS 模板注入。发布检查还包括 TypeScript 类型检查、Vite/服务端生产构建和 `install.sh` Bash 语法检查。
+仓库包含后端单元测试，覆盖商业账户与订单流程、权益发放、面板与节点独立配额、并发保护、不确定任务处理，以及原有 URL 与端口验证、Shell 转义、安装命令、Reality/TLS 入站、订阅 URL 和 SOCKS 模板注入。发布检查还包括 TypeScript 类型检查、Vite/服务端生产构建、纯生产包启动测试和 `install.sh` Bash 语法检查。
 
 自动验证不会连接真实 VPS，也不会向真实 3x-ui 面板写入配置。

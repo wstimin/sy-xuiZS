@@ -135,8 +135,8 @@ export function createCommercialRouter(store: CommercialStore) {
   });
 
   router.post("/auth/bootstrap", route((req, res) => {
-    if (store.hasUsers()) return res.status(409).json({ success: false, error: "系统已经完成初始化" });
-    const user = store.createUser(String(req.body?.username || ""), String(req.body?.password || ""), "admin");
+    const user = store.bootstrapAdmin(String(req.body?.username || ""), String(req.body?.password || ""));
+    if (!user) return res.status(409).json({ success: false, error: "系统已经完成初始化" });
     const token = store.createSession(user.id);
     setSessionCookie(req, res, token);
     res.json({ success: true, user });

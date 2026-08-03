@@ -61,6 +61,31 @@ jobs:
           test ! -e release/package/server.ts
           test ! -e release/package/src
 
+      - name: Smoke test production package
+        shell: bash
+        run: |
+          cd release/package
+          npm ci --omit=dev
+          export PORT=1891
+          export DATABASE_PATH="$RUNNER_TEMP/xui-commercial-release.db"
+          export APP_VERSION="$(cat VERSION)"
+          node dist/server.cjs > "$RUNNER_TEMP/xui-commercial-release.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/health" > "$RUNNER_TEMP/health.json"; then
+              break
+            fi
+            sleep 1
+          done
+          grep -Fq "\"version\":\"${APP_VERSION}\"" "$RUNNER_TEMP/health.json"
+          curl -fsS "http://127.0.0.1:${PORT}/api/auth/bootstrap-status" \
+            | grep -Fq '"required":true'
+          kill "$server_pid"
+          wait "$server_pid" 2>/dev/null || true
+          trap - EXIT
+          rm -rf node_modules
+
       - name: Verify tag version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash

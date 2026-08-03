@@ -16,8 +16,8 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-RELEASE_URL="${RELEASE_URL:-https://github.com/wstimin/xui-zhushou/releases/latest/download/xui-zhushou-linux.tar.gz}"
-RELEASE_CHECKSUM_URL="${RELEASE_CHECKSUM_URL:-https://github.com/wstimin/xui-zhushou/releases/latest/download/SHA256SUMS}"
+RELEASE_URL="${RELEASE_URL:-https://github.com/wstimin/sy-xuiZS/releases/latest/download/xui-zhushou-linux.tar.gz}"
+RELEASE_CHECKSUM_URL="${RELEASE_CHECKSUM_URL:-https://github.com/wstimin/sy-xuiZS/releases/latest/download/SHA256SUMS}"
 TARGET_DIR="/opt/3xui-deploy-assistant"
 APP_NAME="3xui-deploy-assistant"
 SSL_DIR="/etc/3xui-assistant/ssl"
@@ -184,10 +184,10 @@ install_base_deps() {
   echo -e "${BLUE}[INFO] 正在检查并补全运行构建包所需的基础依赖...${NC}"
   if [ "$PKG_MANAGER" = "apt" ]; then
     apt-get update -y > /dev/null 2>&1 || true
-    apt-get install -y curl ca-certificates lsof net-tools socat openssl tar > /dev/null 2>&1
+    apt-get install -y curl ca-certificates lsof net-tools socat openssl tar build-essential python3 > /dev/null 2>&1
   else
     $PKG_MANAGER update -y > /dev/null 2>&1 || true
-    $PKG_MANAGER install -y curl ca-certificates lsof net-tools socat openssl tar > /dev/null 2>&1
+    $PKG_MANAGER install -y curl ca-certificates lsof net-tools socat openssl tar gcc gcc-c++ make python3 > /dev/null 2>&1
   fi
 }
 
@@ -339,9 +339,9 @@ install_assistant() {
     echo -e "${YELLOW}[INFO] 未检测到 Node.js 环境，准备自动安装 Node.js LTS (v20)...${NC}"
   else
     NODE_MAJOR_VER=$(node -v | cut -d'.' -f1 | sed 's/v//')
-    if [ "$NODE_MAJOR_VER" -lt 20 ]; then
+    if [ "$NODE_MAJOR_VER" -lt 20 ] || [ "$NODE_MAJOR_VER" -gt 22 ]; then
       NEED_NODE_INSTALL=true
-      echo -e "${YELLOW}[WARN] 当前 Node.js 版本 (v${NODE_MAJOR_VER}) 过低，准备自动升级至 Node.js LTS (v20)...${NC}"
+      echo -e "${YELLOW}[WARN] 当前 Node.js 版本 (v${NODE_MAJOR_VER}) 不在支持范围 20-22，准备安装 Node.js LTS (v20)...${NC}"
     else
       echo -e "${GREEN}[OK] Node.js 环境正常: $(node -v)${NC}"
     fi
@@ -351,12 +351,19 @@ install_assistant() {
     echo -e "${BLUE}[INFO] 正在配置 NodeSource 源并安装 Node.js v20 LTS...${NC}"
     if [ "$PKG_MANAGER" = "apt" ]; then
       curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-      apt-get install -y nodejs > /dev/null 2>&1
+      apt-get install -y --allow-downgrades nodejs > /dev/null 2>&1
     else
       curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-      $PKG_MANAGER install -y nodejs > /dev/null 2>&1
+      $PKG_MANAGER install -y nodejs --allowerasing > /dev/null 2>&1
     fi
-    echo -e "${GREEN}[OK] Node.js 已成功更新安装: $(node -v)${NC}"
+    NODE_MAJOR_VER=$(node -v | cut -d'.' -f1 | sed 's/v//')
+    if [ "$NODE_MAJOR_VER" -lt 20 ] || [ "$NODE_MAJOR_VER" -gt 22 ]; then
+      rm -rf "$DOWNLOADED_WORK_DIR"
+      echo -e "${RED}[ERROR] Node.js 安装后版本仍为 $(node -v)，商业版要求 Node.js 20 或 22。${NC}"
+      pause_if_tty
+      return 1
+    fi
+    echo -e "${GREEN}[OK] Node.js 已成功安装: $(node -v)${NC}"
   fi
 
   echo -e "${BLUE}[4/5] 安装生产运行依赖并切换到新构建包...${NC}"
