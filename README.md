@@ -18,13 +18,19 @@
 
 ## 一键安装助手
 
-支持 Ubuntu 20.04+、Debian 11+、CentOS 8+、Rocky Linux 和 AlmaLinux。请在 Linux VPS 上执行：
+支持 Ubuntu 20.04+、Debian 11+、CentOS 8+、Rocky Linux 和 AlmaLinux。请先切换到 `root` 用户，然后执行以下命令打开原有交互菜单：
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh)
+bash <(curl -fsSL --retry 3 https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh)
 ```
 
-GitHub Actions 会在远端执行测试、类型检查和生产构建，并生成 Linux 生产构建包。一键脚本只下载构建包、安装生产运行依赖并通过 PM2 启动服务，不会在 VPS 上下载源码或执行源码构建。默认访问地址为：
+需要跳过菜单、直接执行安装或更新时使用：
+
+```bash
+bash <(curl -fsSL --retry 3 https://raw.githubusercontent.com/wstimin/xui-zhushou/main/install.sh) install
+```
+
+上述 `raw.githubusercontent.com` 地址只用于获取管理脚本。GitHub Actions 会在远端执行测试、类型检查和生产构建，并生成 Linux 生产构建包；管理脚本随后从 GitHub Latest Release 下载 `xui-zhushou-linux.tar.gz` 和 `SHA256SUMS`。VPS 不会下载应用源码，也不会执行 Vite、TypeScript 或其他源码构建。默认访问地址为：
 
 ```text
 http://服务器IP:1888
@@ -49,7 +55,7 @@ http://服务器IP:1888
 sy
 pm2 status
 pm2 logs 3xui-deploy-assistant
-cd /opt/3xui-deploy-assistant && sudo bash install.sh install
+sudo bash /opt/3xui-deploy-assistant/install.sh install
 ```
 
 一键脚本默认从 GitHub Releases 下载 `xui-zhushou-linux.tar.gz`，通过 `SHA256SUMS` 校验完整性后部署到 `/opt/3xui-deploy-assistant`。通过 `sy` 或 `sudo bash install.sh install` 更新时，会保留现有 `.env` 配置和 `/etc/3xui-assistant/ssl` 证书目录，仅替换应用构建包并重启 PM2；不会重新申请、安装或覆盖 SSL 证书。新构建包启动失败或运行版本校验不一致时会自动恢复上一版本。
