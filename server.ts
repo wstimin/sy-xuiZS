@@ -111,6 +111,7 @@ function xuiOptions(body: Record<string, any>, signal?: AbortSignal): XuiClientO
     panelUser: body.panelUser,
     panelPass: body.panelPass,
     panelToken: body.panelToken,
+    panelFlavor: body.panelFlavor,
     allowInsecureTls: body.allowInsecureTls === true,
     signal,
   };

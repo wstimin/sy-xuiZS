@@ -15,6 +15,7 @@ export interface XuiClientOptions {
   panelUser?: string;
   panelPass?: string;
   panelToken?: string;
+  panelFlavor?: "mogai" | "official" | "compatible";
   allowInsecureTls?: boolean;
   signal?: AbortSignal;
 }
@@ -347,6 +348,17 @@ export class XuiClient {
   }
 
   async getWebCertFiles(): Promise<{ webCertFile: string; webKeyFile: string }> {
+    if (this.options.panelFlavor === "official") {
+      const files = await this.officialSettingRequest<Record<string, unknown>>(
+        "panel/api/setting/defaultSettings",
+        "panel/setting/defaultSettings",
+        { method: "POST" },
+        8_000,
+        "读取官方 3x-ui 面板 TLS 证书路径超时",
+      );
+      return parseWebCertFiles(files);
+    }
+
     await this.authenticateSession();
     let allSettingsError: unknown;
     try {
@@ -426,6 +438,37 @@ export class XuiClient {
     }
     const data = await this.parseResponse<T>(response, apiPath);
     if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${apiPath}`);
+    return data.obj as T;
+  }
+
+  private async officialSettingRequest<T>(
+    modernPath: string,
+    legacyPath: string,
+    init: RequestInit,
+    timeoutMs: number,
+    timeoutMessage: string,
+  ): Promise<T> {
+    let response: BufferedResponse;
+    if (this.apiToken) {
+      response = await this.rawRequest(modernPath, init, true, false, timeoutMs, timeoutMessage);
+    } else {
+      await this.authenticateSession();
+      response = await this.rawRequest(modernPath, init, true, true, timeoutMs, timeoutMessage);
+      if (this.isSessionAuthenticationFailure(response)) {
+        await this.reauthenticateSession();
+        response = await this.rawRequest(modernPath, init, true, true, timeoutMs, timeoutMessage);
+      }
+      if (response.status === 403 && !this.isSafeMethod(init.method)) {
+        await this.refreshCsrfToken(true);
+        response = await this.rawRequest(modernPath, init, true, true, timeoutMs, timeoutMessage);
+      }
+    }
+
+    if (response.status === 404 || response.status === 405) {
+      return this.sessionRequest<T>(legacyPath, init, timeoutMs, timeoutMessage);
+    }
+    const data = await this.parseResponse<T>(response, modernPath);
+    if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${modernPath}`);
     return data.obj as T;
   }
 

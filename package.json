@@ -1,7 +1,7 @@
 {
   "name": "xui-zhushou",
   "private": true,
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "通过 SSH 和 3x-ui API 部署面板、创建节点并配置 SOCKS 路由的 Web 助手",
   "type": "module",
   "scripts": {

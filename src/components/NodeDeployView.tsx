@@ -114,13 +114,20 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     return val.trim().replace(/^(https?:\/\/)+/i, '').replace(/\/.*$/, '').replace(/:[0-9]+$/, '').trim();
   };
 
+  const panelFlavorLabel: Record<PanelFlavor, string> = {
+    compatible: '自动兼容',
+    mogai: '推荐版',
+    official: '官方 3x-ui'
+  };
+
   const handleFetchTls = async () => {
     const cleanAddress = cleanHostStr(form.panelAddress);
     if (!cleanAddress) {
       showToast('请输入 3x-ui 面板地址', '需要先连接目标面板才能读取 TLS 证书配置', 'warning');
       return;
     }
-    if (!form.panelUser.trim() || !form.panelPass.trim()) {
+    const canUseOfficialApi = form.panelFlavor === 'official' && Boolean(form.panelToken?.trim());
+    if (!canUseOfficialApi && (!form.panelUser.trim() || !form.panelPass.trim())) {
       showToast('TLS 需要面板账号密码', '证书配置接口只支持登录 Session，不能只使用 API Token', 'warning');
       return;
     }
@@ -488,7 +495,39 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
             </label>
           )}
 
-          <div className="grid sm:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-4 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-zinc-300">面板版本</label>
+              {initialPanelData ? (
+                <input
+                  type="text"
+                  readOnly
+                  value={panelFlavorLabel[form.panelFlavor]}
+                  title="已使用面板安装结果中的版本类型"
+                  className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 text-white text-sm outline-none cursor-default"
+                />
+              ) : (
+                <select
+                  value={form.panelFlavor}
+                  onChange={e => {
+                    const panelFlavor = e.target.value as PanelFlavor;
+                    setForm(prev => ({
+                      ...prev,
+                      panelFlavor,
+                      tlsCertFile: '',
+                      tlsKeyFile: ''
+                    }));
+                    setTlsStatus(null);
+                  }}
+                  className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all"
+                >
+                  <option value="compatible">自动兼容</option>
+                  <option value="mogai">推荐版</option>
+                  <option value="official">官方 3x-ui</option>
+                </select>
+              )}
+            </div>
+
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-zinc-300">路径 Path</label>
               <input

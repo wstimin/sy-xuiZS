@@ -265,6 +265,84 @@ test("XuiClient reads TLS settings directly from legacy panels with saved creden
   assert.equal(calls[4].headers.get("Cookie"), "3x-ui=legacy-session");
 });
 
+test("XuiClient reads official 3x-ui 3.6 TLS settings through the Bearer API", async () => {
+  const calls: Array<{ url: URL; method: string; headers: Headers }> = [];
+  const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    const headers = new Headers(init?.headers);
+    calls.push({ url, method: init?.method || "GET", headers });
+
+    if (url.pathname === "/base/panel/api/setting/defaultSettings") {
+      return Response.json({
+        success: true,
+        obj: { defaultCert: "/official/fullchain.pem", defaultKey: "/official/privkey.pem" },
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelPath: "/base/",
+    panelToken: "bearer-token",
+    panelFlavor: "official",
+  }, mockFetch);
+
+  assert.deepEqual(await client.getWebCertFiles(), {
+    webCertFile: "/official/fullchain.pem",
+    webKeyFile: "/official/privkey.pem",
+  });
+  assert.deepEqual(calls.map(call => [call.method, call.url.pathname]), [
+    ["POST", "/base/panel/api/setting/defaultSettings"],
+  ]);
+  assert.equal(calls[0].headers.get("Authorization"), "Bearer bearer-token");
+  assert.equal(calls[0].headers.get("Cookie"), null);
+});
+
+test("XuiClient keeps recommended panel TLS requests on the existing Session routes", async () => {
+  const calls: URL[] = [];
+  const mockFetch = (async (input: URL | RequestInfo) => {
+    const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
+    calls.push(url);
+
+    if (url.pathname === "/base/csrf-token" || url.pathname === "/base/panel/csrf-token") {
+      return new Response(null, { status: 404 });
+    }
+    if (url.pathname === "/base/login") {
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json", "Set-Cookie": "3x-ui=recommended-session; Path=/base/; HttpOnly" },
+      });
+    }
+    if (url.pathname === "/base/panel/setting/all") {
+      return Response.json({
+        success: true,
+        obj: { webCertFile: "/recommended/fullchain.pem", webKeyFile: "/recommended/privkey.pem" },
+      });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const client = new XuiClient({
+    panelAddress: "panel.example",
+    panelPath: "/base/",
+    panelUser: "admin",
+    panelPass: "password",
+    panelToken: "bearer-token",
+    panelFlavor: "mogai",
+  }, mockFetch);
+
+  assert.deepEqual(await client.getWebCertFiles(), {
+    webCertFile: "/recommended/fullchain.pem",
+    webKeyFile: "/recommended/privkey.pem",
+  });
+  assert.deepEqual(calls.map(call => call.pathname), [
+    "/base/csrf-token",
+    "/base/login",
+    "/base/panel/csrf-token",
+    "/base/panel/setting/all",
+  ]);
+});
+
 test("XuiClient explains the generic 3x-ui login error without requiring 2FA", async () => {
   const mockFetch = (async (input: URL | RequestInfo) => {
     const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
