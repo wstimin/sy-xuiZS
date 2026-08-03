@@ -71,14 +71,14 @@ cat /opt/3xui-deploy-assistant/VERSION
 curl -s http://127.0.0.1:1888/api/health
 ```
 
-`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.0`。
+`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.1`。
 
 ## 远端构建与发布
 
-推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.0`）时，会自动创建 GitHub Release，发布以下文件：
+推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.1`）时，会自动创建 GitHub Release，发布以下文件：
 
 ```text
-xui-zhushou-linux-v3.0.0.tar.gz
+xui-zhushou-linux-v3.0.1.tar.gz
 xui-zhushou-linux.tar.gz
 SHA256SUMS
 ```
