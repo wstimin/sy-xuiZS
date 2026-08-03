@@ -431,6 +431,14 @@ export class CommercialStore {
     this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
   }
 
+  resetPassword(userId: string, nextPassword: string) {
+    if (nextPassword.length < 8 || nextPassword.length > 128) throw new Error("新密码长度必须为 8 到 128 位");
+    const result = this.db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+      .run(hashPassword(nextPassword), nowIso(), userId);
+    if (!result.changes) throw new Error("用户不存在");
+    this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+  }
+
   listPlans(includeDisabled = false) {
     const rows = this.db.prepare(`SELECT * FROM plans ${includeDisabled ? "" : "WHERE enabled = 1"} ORDER BY sort_order, created_at`).all();
     return rows.map(publicPlan);
@@ -540,6 +548,36 @@ export class CommercialStore {
     })();
   }
 
+  cancelOrder(orderId: string, userId?: string) {
+    const order = this.getOrder(orderId);
+    if (!order || (userId && order.userId !== userId)) throw new Error("订单不存在");
+    if (order.status !== "pending") throw new Error("只有待支付订单可以取消");
+    this.db.prepare("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE id = ?")
+      .run(nowIso(), orderId);
+    return this.getOrder(orderId);
+  }
+
+  refundOrder(orderId: string) {
+    return this.db.transaction(() => {
+      const order = this.getOrder(orderId);
+      if (!order) throw new Error("订单不存在");
+      if (order.status === "refunded") return order;
+      if (order.status !== "paid") throw new Error("只有已付款订单可以退款");
+      const activeDeployment = this.db.prepare(`
+        SELECT d.id FROM deployments d
+        JOIN entitlements e ON e.id = d.entitlement_id
+        WHERE e.source_order_id = ? AND d.status IN ('reserved', 'running', 'uncertain')
+        LIMIT 1
+      `).get(orderId);
+      if (activeDeployment) throw new Error("该订单仍有执行中或待确认任务，请处理完成后再退款");
+      this.db.prepare("UPDATE orders SET status = 'refunded', updated_at = ? WHERE id = ?")
+        .run(nowIso(), orderId);
+      this.db.prepare("UPDATE entitlements SET status = 'revoked' WHERE source_order_id = ?")
+        .run(orderId);
+      return this.getOrder(orderId);
+    })();
+  }
+
   private grantOrderEntitlement(order: any) {
     const plan = JSON.parse(order.plan_snapshot);
     const startedAt = new Date();
@@ -618,7 +656,48 @@ export class CommercialStore {
   }
 
   updateEntitlementStatus(id: string, status: "active" | "revoked") {
-    this.db.prepare("UPDATE entitlements SET status = ? WHERE id = ?").run(status, id);
+    const result = this.db.prepare("UPDATE entitlements SET status = ? WHERE id = ?").run(status, id);
+    if (!result.changes) throw new Error("权益不存在");
+  }
+
+  adjustEntitlement(id: string, input: {
+    panelRemaining?: number;
+    nodeRemaining?: number;
+    dailyPanelLimit?: number;
+    dailyNodeLimit?: number;
+    concurrencyLimit?: number;
+  }) {
+    const entitlement = this.db.prepare("SELECT * FROM entitlements WHERE id = ?").get(id) as any;
+    if (!entitlement) throw new Error("权益不存在");
+    const values = {
+      panelRemaining: input.panelRemaining ?? entitlement.panel_remaining,
+      nodeRemaining: input.nodeRemaining ?? entitlement.node_remaining,
+      dailyPanelLimit: input.dailyPanelLimit ?? entitlement.daily_panel_limit,
+      dailyNodeLimit: input.dailyNodeLimit ?? entitlement.daily_node_limit,
+      concurrencyLimit: input.concurrencyLimit ?? entitlement.concurrency_limit,
+    };
+    for (const [label, value] of [
+      ["面板剩余次数", values.panelRemaining], ["节点剩余次数", values.nodeRemaining],
+      ["每日面板上限", values.dailyPanelLimit], ["每日节点上限", values.dailyNodeLimit],
+    ] as const) {
+      if (!Number.isInteger(value) || value < 0) throw new Error(`${label}必须为非负整数`);
+    }
+    if (!Number.isInteger(values.concurrencyLimit) || values.concurrencyLimit < 1) throw new Error("并发上限至少为 1");
+    if (entitlement.panel_mode !== "limited" && input.panelRemaining !== undefined) throw new Error("只有限次面板权益可以调整剩余次数");
+    if (entitlement.node_mode !== "limited" && input.nodeRemaining !== undefined) throw new Error("只有限次节点权益可以调整剩余次数");
+
+    this.db.prepare(`
+      UPDATE entitlements SET
+        panel_remaining = ?, panel_total = CASE WHEN panel_mode = 'limited' THEN panel_used + panel_reserved + ? ELSE panel_total END,
+        node_remaining = ?, node_total = CASE WHEN node_mode = 'limited' THEN node_used + node_reserved + ? ELSE node_total END,
+        daily_panel_limit = ?, daily_node_limit = ?, concurrency_limit = ?
+      WHERE id = ?
+    `).run(
+      values.panelRemaining, values.panelRemaining,
+      values.nodeRemaining, values.nodeRemaining,
+      values.dailyPanelLimit, values.dailyNodeLimit, values.concurrencyLimit, id,
+    );
+    return (this.listAllEntitlements() as any[]).find(item => item.id === id);
   }
 
   hasCapability(userId: string, capability: Capability) {

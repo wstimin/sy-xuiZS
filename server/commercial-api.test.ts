@@ -25,6 +25,13 @@ test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", as
     const bootstrapStatus = await fetch(`${base}/auth/bootstrap-status`).then(response => response.json()) as any;
     assert.equal(bootstrapStatus.required, true);
 
+    const prematureRegistration = await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "too-early", password: "buyer-password" }),
+    });
+    assert.equal(prematureRegistration.status, 503);
+
     const adminResponse = await fetch(`${base}/auth/bootstrap`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -32,6 +39,7 @@ test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", as
     });
     assert.equal(adminResponse.status, 200);
     const adminCookie = sessionCookie(adminResponse);
+    assert.match(adminCookie, /^xui_admin_session=/);
 
     const userResponse = await fetch(`${base}/auth/register`, {
       method: "POST",
@@ -40,6 +48,13 @@ test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", as
     });
     assert.equal(userResponse.status, 200);
     const userCookie = sessionCookie(userResponse);
+    assert.match(userCookie, /^xui_user_session=/);
+
+    const combinedCookie = `${userCookie}; ${adminCookie}`;
+    const userMe = await fetch(`${base}/auth/me`, { headers: { cookie: combinedCookie } }).then(response => response.json()) as any;
+    const adminMe = await fetch(`${base}/admin/auth/me`, { headers: { cookie: combinedCookie } }).then(response => response.json()) as any;
+    assert.equal(userMe.user.username, "buyer");
+    assert.equal(adminMe.user.username, "admin");
 
     const plans = await fetch(`${base}/plans`).then(response => response.json()) as any;
     const singleUse = plans.plans.find((plan: any) => plan.name === "单次搭建");
@@ -54,16 +69,16 @@ test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", as
     const order = (await orderResponse.json() as any).order;
 
     const forbidden = await fetch(`${base}/admin/orders`, { headers: { cookie: userCookie } });
-    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.status, 401);
 
     const paidResponse = await fetch(`${base}/admin/orders/${order.id}/mark-paid`, {
       method: "POST",
-      headers: { "content-type": "application/json", cookie: adminCookie },
+      headers: { "content-type": "application/json", cookie: combinedCookie },
       body: JSON.stringify({ tradeNo: "manual-test-1" }),
     });
     assert.equal(paidResponse.status, 200);
 
-    const accountResponse = await fetch(`${base}/account`, { headers: { cookie: userCookie } });
+    const accountResponse = await fetch(`${base}/account`, { headers: { cookie: combinedCookie } });
     assert.equal(accountResponse.status, 200);
     const account = await accountResponse.json() as any;
     assert.equal(account.orders[0].status, "paid");

@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, CreditCard, Gauge, PackagePlus, RefreshCw, Save, Settings, Shield, Users } from 'lucide-react';
+import { AlertTriangle, CreditCard, KeyRound, PackagePlus, RefreshCw, Save, Settings, Shield } from 'lucide-react';
 import { api, DeploymentRecord, Entitlement, formatDate, formatMoney, Order, Plan, quotaText } from '../commercial';
+import { ChangePasswordForm } from './ChangePasswordForm';
 
-type AdminTab = 'overview' | 'plans' | 'orders' | 'users' | 'entitlements' | 'deployments' | 'settings';
+type AdminTab = 'overview' | 'plans' | 'orders' | 'users' | 'entitlements' | 'deployments' | 'settings' | 'security';
 type AdminUser = { id: string; username: string; role: 'user' | 'admin'; status: 'active' | 'disabled'; createdAt: string; lastLoginAt?: string };
 type Stats = { users: number; paidOrders: number; revenueCents: number; deployments: number; succeeded: number; uncertain: number };
 type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string };
@@ -18,10 +19,10 @@ const selectClass = `${inputClass} appearance-none`;
 
 interface AdminViewProps {
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
-  onChanged: () => void;
+  onSessionEnded: () => void;
 }
 
-export const AdminView: React.FC<AdminViewProps> = ({ showToast, onChanged }) => {
+export const AdminView: React.FC<AdminViewProps> = ({ showToast, onSessionEnded }) => {
   const [tab, setTab] = useState<AdminTab>('overview');
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -32,6 +33,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ showToast, onChanged }) =>
   const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
   const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '' });
   const [editingPlan, setEditingPlan] = useState<(Omit<Plan, 'id'> & { id?: string }) | null>(null);
+  const [editingEntitlement, setEditingEntitlement] = useState<Entitlement | null>(null);
   const [grant, setGrant] = useState({ userId: '', name: '管理员发放权益', durationUnit: 'months', durationValue: 1, panelMode: 'limited', panelLimit: 1, nodeMode: 'limited', nodeLimit: 5, dailyPanelLimit: 1, dailyNodeLimit: 5, concurrencyLimit: 1 });
 
   const load = async () => {
@@ -60,7 +62,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ showToast, onChanged }) =>
     try {
       await api(url, options);
       await load();
-      await onChanged();
       showToast(title, '操作已生效', 'success');
     } catch (error) { showToast('操作失败', error instanceof Error ? error.message : '请稍后重试', 'error'); }
   };
@@ -74,7 +75,28 @@ export const AdminView: React.FC<AdminViewProps> = ({ showToast, onChanged }) =>
 
   const saveSettings = () => request('系统设置已保存', '/api/admin/settings', { method: 'PUT', body: JSON.stringify(settingsData) });
   const pendingOrders = useMemo(() => orders.filter(order => order.status === 'pending'), [orders]);
-  const tabs: Array<[AdminTab, string]> = [['overview', '概览'], ['plans', '套餐'], ['orders', '订单'], ['users', '用户'], ['entitlements', '权益'], ['deployments', '搭建任务'], ['settings', '设置']];
+  const tabs: Array<[AdminTab, string]> = [['overview', '概览'], ['plans', '套餐'], ['orders', '订单'], ['users', '用户'], ['entitlements', '权益'], ['deployments', '搭建任务'], ['settings', '设置'], ['security', '安全']];
+
+  const resetPassword = async (user: AdminUser) => {
+    const nextPassword = window.prompt(`为 ${user.username} 设置新密码（至少 8 位）`);
+    if (!nextPassword) return;
+    await request('用户密码已重置', `/api/admin/users/${user.id}/reset-password`, { method: 'POST', body: JSON.stringify({ nextPassword }) });
+  };
+
+  const updateEntitlementQuota = async () => {
+    if (!editingEntitlement) return;
+    await request('权益额度已调整', `/api/admin/entitlements/${editingEntitlement.id}/quota`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        panelRemaining: editingEntitlement.panelMode === 'limited' ? editingEntitlement.panelRemaining : undefined,
+        nodeRemaining: editingEntitlement.nodeMode === 'limited' ? editingEntitlement.nodeRemaining : undefined,
+        dailyPanelLimit: editingEntitlement.dailyPanelLimit,
+        dailyNodeLimit: editingEntitlement.dailyNodeLimit,
+        concurrencyLimit: editingEntitlement.concurrencyLimit,
+      }),
+    });
+    setEditingEntitlement(null);
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-5">
@@ -117,9 +139,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ showToast, onChanged }) =>
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">{plans.map(plan => <div key={plan.id} className="border border-white/10 rounded-lg p-4"><div className="flex justify-between"><div><h3 className="font-semibold">{plan.name}</h3><div className="text-2xl font-bold mt-2">{formatMoney(plan.priceCents)}</div></div><span className={`text-xs h-fit px-2 py-1 rounded ${plan.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-500/15 text-zinc-400'}`}>{plan.enabled ? '已上架' : '已下架'}</span></div><div className="text-sm text-zinc-400 mt-4 space-y-1"><div>面板：{quotaText(plan.panelMode, plan.panelLimit)}</div><div>节点：{quotaText(plan.nodeMode, plan.nodeLimit)}</div><div>每日限制：面板 {plan.dailyPanelLimit || '不限'} / 节点 {plan.dailyNodeLimit || '不限'}</div></div><button onClick={() => setEditingPlan({ ...plan })} className="mt-4 text-sm text-indigo-300">编辑套餐</button></div>)}</div>
       </div>}
 
-      {tab === 'orders' && <DataTable headers={['订单号', '用户', '金额', '状态', '创建时间', '操作']} rows={orders.map(order => [order.orderNo, order.username || '-', formatMoney(order.amountCents), order.status === 'pending' ? '待确认' : order.status === 'paid' ? '已付款' : order.status, formatDate(order.createdAt), order.status === 'pending' ? <button onClick={() => void request('订单已确认收款', `/api/admin/orders/${order.id}/mark-paid`, { method: 'POST', body: JSON.stringify({}) })} className="h-8 px-3 bg-emerald-600 rounded text-xs">确认收款</button> : '-'])} />}
+      {tab === 'orders' && <DataTable headers={['订单号', '用户', '金额', '状态', '创建时间', '操作']} rows={orders.map(order => [order.orderNo, order.username || '-', formatMoney(order.amountCents), order.status === 'pending' ? '待确认' : order.status === 'paid' ? '已付款' : order.status === 'refunded' ? '已退款' : order.status === 'cancelled' ? '已取消' : order.status, formatDate(order.createdAt), order.status === 'pending' ? <div className="flex gap-2"><button onClick={() => void request('订单已确认收款', `/api/admin/orders/${order.id}/mark-paid`, { method: 'POST', body: JSON.stringify({}) })} className="h-8 px-3 bg-emerald-600 rounded text-xs">确认收款</button><button onClick={() => void request('订单已取消', `/api/admin/orders/${order.id}/cancel`, { method: 'POST' })} className="h-8 px-3 border border-rose-500/30 text-rose-300 rounded text-xs">取消</button></div> : order.status === 'paid' ? <button onClick={() => { if (window.confirm('退款会立即停用该订单发放的权益，确定继续吗？')) void request('订单已退款并撤销权益', `/api/admin/orders/${order.id}/refund`, { method: 'POST' }); }} className="h-8 px-3 border border-amber-500/30 text-amber-300 rounded text-xs">退款撤权</button> : '-'])} />}
 
-      {tab === 'users' && <DataTable headers={['用户名', '角色', '状态', '注册时间', '操作']} rows={users.map(user => [user.username, user.role === 'admin' ? '管理员' : '用户', user.status === 'active' ? '正常' : '禁用', formatDate(user.createdAt), <button onClick={() => void request(user.status === 'active' ? '用户已禁用' : '用户已启用', `/api/admin/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ status: user.status === 'active' ? 'disabled' : 'active' }) })} className="h-8 px-3 border border-white/10 rounded text-xs">{user.status === 'active' ? '禁用' : '启用'}</button>])} />}
+      {tab === 'users' && <DataTable headers={['用户名', '角色', '状态', '注册时间', '最后登录', '操作']} rows={users.map(user => [user.username, <select value={user.role} onChange={event => void request('用户角色已更新', `/api/admin/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ role: event.target.value }) })} className="h-8 rounded bg-black/35 border border-white/10 px-2 text-xs"><option value="user">用户</option><option value="admin">管理员</option></select>, user.status === 'active' ? '正常' : '禁用', formatDate(user.createdAt), user.lastLoginAt ? formatDate(user.lastLoginAt) : '-', <div className="flex gap-2"><button onClick={() => void request(user.status === 'active' ? '用户已禁用' : '用户已启用', `/api/admin/users/${user.id}`, { method: 'PATCH', body: JSON.stringify({ status: user.status === 'active' ? 'disabled' : 'active' }) })} className="h-8 px-3 border border-white/10 rounded text-xs">{user.status === 'active' ? '禁用' : '启用'}</button><button onClick={() => void resetPassword(user)} title="重置密码" className="w-8 h-8 border border-white/10 rounded flex items-center justify-center"><KeyRound className="w-3.5 h-3.5" /></button></div>])} />}
 
       {tab === 'entitlements' && <div className="space-y-5">
         <div className="border border-white/10 rounded-lg p-4 space-y-3"><h2 className="font-semibold">手工发放权益</h2><div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -135,7 +157,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ showToast, onChanged }) =>
           <label className="text-xs text-zinc-400">每日节点上限<input type="number" className={`${inputClass} mt-1`} value={grant.dailyNodeLimit} onChange={e => setGrant({ ...grant, dailyNodeLimit: Number(e.target.value) })} /></label>
           <label className="text-xs text-zinc-400">并发上限<input type="number" className={`${inputClass} mt-1`} value={grant.concurrencyLimit} onChange={e => setGrant({ ...grant, concurrencyLimit: Number(e.target.value) })} /></label>
         </div><button onClick={() => void request('权益已发放', '/api/admin/entitlements', { method: 'POST', body: JSON.stringify(grant) })} className="h-9 px-3 bg-indigo-600 rounded-md text-sm">发放权益</button></div>
-        <DataTable headers={['用户', '权益', '面板剩余', '节点剩余', '到期时间', '状态', '操作']} rows={entitlements.map(item => [item.username || '-', item.planName, quotaText(item.panelMode, item.panelRemaining), quotaText(item.nodeMode, item.nodeRemaining), formatDate(item.expiresAt), item.status, <button onClick={() => void request('权益状态已更新', `/api/admin/entitlements/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: item.status === 'active' ? 'revoked' : 'active' }) })} className="h-8 px-3 border border-white/10 rounded text-xs">{item.status === 'active' ? '停用' : '启用'}</button>])} />
+        {editingEntitlement && <div className="border border-indigo-500/30 bg-indigo-500/5 rounded-lg p-4 space-y-4"><div className="font-semibold">调整 {editingEntitlement.username} 的 {editingEntitlement.planName}</div><div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3"><label className="text-xs text-zinc-400">面板剩余<input type="number" disabled={editingEntitlement.panelMode !== 'limited'} className={`${inputClass} mt-1`} value={editingEntitlement.panelRemaining} onChange={event => setEditingEntitlement({ ...editingEntitlement, panelRemaining: Number(event.target.value) })} /></label><label className="text-xs text-zinc-400">节点剩余<input type="number" disabled={editingEntitlement.nodeMode !== 'limited'} className={`${inputClass} mt-1`} value={editingEntitlement.nodeRemaining} onChange={event => setEditingEntitlement({ ...editingEntitlement, nodeRemaining: Number(event.target.value) })} /></label><label className="text-xs text-zinc-400">每日面板<input type="number" className={`${inputClass} mt-1`} value={editingEntitlement.dailyPanelLimit} onChange={event => setEditingEntitlement({ ...editingEntitlement, dailyPanelLimit: Number(event.target.value) })} /></label><label className="text-xs text-zinc-400">每日节点<input type="number" className={`${inputClass} mt-1`} value={editingEntitlement.dailyNodeLimit} onChange={event => setEditingEntitlement({ ...editingEntitlement, dailyNodeLimit: Number(event.target.value) })} /></label><label className="text-xs text-zinc-400">并发上限<input type="number" className={`${inputClass} mt-1`} value={editingEntitlement.concurrencyLimit} onChange={event => setEditingEntitlement({ ...editingEntitlement, concurrencyLimit: Number(event.target.value) })} /></label></div><div className="flex gap-2 justify-end"><button onClick={() => setEditingEntitlement(null)} className="h-9 px-3 border border-white/10 rounded-md text-sm">取消</button><button onClick={() => void updateEntitlementQuota()} className="h-9 px-3 bg-indigo-600 rounded-md text-sm">保存额度</button></div></div>}
+        <DataTable headers={['用户', '权益', '面板剩余', '节点剩余', '到期时间', '状态', '操作']} rows={entitlements.map(item => [item.username || '-', item.planName, quotaText(item.panelMode, item.panelRemaining), quotaText(item.nodeMode, item.nodeRemaining), formatDate(item.expiresAt), item.status, <div className="flex gap-2"><button onClick={() => setEditingEntitlement({ ...item })} className="h-8 px-3 border border-indigo-500/30 text-indigo-300 rounded text-xs">调额度</button><button onClick={() => void request('权益状态已更新', `/api/admin/entitlements/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: item.status === 'active' ? 'revoked' : 'active' }) })} className="h-8 px-3 border border-white/10 rounded text-xs">{item.status === 'active' ? '停用' : '启用'}</button></div>])} />
       </div>}
 
       {tab === 'deployments' && <DataTable headers={['用户', '类型', '目标', '状态', '时间', '说明', '操作']} rows={deployments.map(item => [item.username || '-', item.capability === 'panel' ? '面板' : '节点', item.targetHostMasked || '-', item.status, formatDate(item.createdAt), item.resultSummary || item.errorMessage || '-', item.status === 'uncertain' ? <div className="flex gap-2"><button onClick={() => void request('任务已按成功核销', `/api/admin/deployments/${item.id}/resolve`, { method: 'POST', body: JSON.stringify({ resolution: 'succeeded' }) })} className="h-8 px-2 bg-emerald-600 rounded text-xs">确认成功</button><button onClick={() => void request('任务已按失败返还', `/api/admin/deployments/${item.id}/resolve`, { method: 'POST', body: JSON.stringify({ resolution: 'failed' }) })} className="h-8 px-2 bg-rose-600 rounded text-xs">确认失败</button></div> : '-'])} />}
@@ -143,6 +166,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ showToast, onChanged }) =>
       {tab === 'settings' && <div className="max-w-2xl border border-white/10 rounded-lg p-5 space-y-5"><h2 className="font-semibold flex items-center gap-2"><Settings className="w-4 h-4" />系统开关</h2>{[
         ['registrationEnabled', '允许新用户注册'], ['panelDeployEnabled', '允许执行面板搭建'], ['nodeDeployEnabled', '允许执行节点搭建'],
       ].map(([key, label]) => <label key={key} className="flex items-center justify-between border-b border-white/5 pb-3 text-sm"><span>{label}</span><input type="checkbox" checked={Boolean(settingsData[key as keyof SystemSettings])} onChange={e => setSettingsData({ ...settingsData, [key]: e.target.checked })} /></label>)}<label className="block text-sm">付款说明<textarea className="mt-2 w-full min-h-28 rounded-md bg-black/35 border border-white/10 p-3 outline-none focus:border-indigo-500" value={settingsData.paymentInstructions} onChange={e => setSettingsData({ ...settingsData, paymentInstructions: e.target.value })} /></label><button onClick={() => void saveSettings()} className="h-9 px-4 bg-indigo-600 rounded-md text-sm flex items-center gap-2"><Save className="w-4 h-4" />保存设置</button></div>}
+
+      {tab === 'security' && <ChangePasswordForm endpoint="/api/admin/auth/change-password" onChanged={onSessionEnded} showToast={showToast} />}
     </div>
   );
 };

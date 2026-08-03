@@ -48,6 +48,55 @@ test("paid order grants the exact plan snapshot", () => {
   store.close();
 });
 
+test("refunding an order revokes the entitlement granted by that order", () => {
+  const store = createStore();
+  const user = store.createUser("refund-buyer", "strong-password");
+  const plan = store.listPlans()[0];
+  const order = store.createOrder(user.id, plan.id);
+  store.markOrderPaid(order.id, "test", "refund-trade-1");
+
+  store.refundOrder(order.id);
+
+  const refunded: any = store.getOrder(order.id);
+  const [entitlement]: any[] = store.listEntitlements(user.id);
+  assert.equal(refunded.status, "refunded");
+  assert.equal(entitlement.status, "revoked");
+  assert.throws(() => store.reserveDeployment(user.id, "panel", "after-refund"), /没有可用的面板安装权益/);
+  store.close();
+});
+
+test("administrators can adjust limited entitlement quotas and limits", () => {
+  const store = createStore();
+  const user = store.createUser("adjust-user", "strong-password");
+  const entitlementId = store.grantEntitlement(user.id, {
+    name: "可调整权益",
+    durationUnit: "months",
+    durationValue: 1,
+    panelMode: "limited",
+    panelLimit: 1,
+    nodeMode: "limited",
+    nodeLimit: 2,
+  });
+
+  store.adjustEntitlement(entitlementId, {
+    panelRemaining: 5,
+    nodeRemaining: 12,
+    dailyPanelLimit: 2,
+    dailyNodeLimit: 6,
+    concurrencyLimit: 2,
+  });
+
+  const [entitlement]: any[] = store.listEntitlements(user.id);
+  assert.equal(entitlement.panelRemaining, 5);
+  assert.equal(entitlement.panelTotal, 5);
+  assert.equal(entitlement.nodeRemaining, 12);
+  assert.equal(entitlement.nodeTotal, 12);
+  assert.equal(entitlement.dailyPanelLimit, 2);
+  assert.equal(entitlement.dailyNodeLimit, 6);
+  assert.equal(entitlement.concurrencyLimit, 2);
+  store.close();
+});
+
 test("panel and node quotas are reserved, consumed and released independently", () => {
   const store = createStore();
   const user = store.createUser("quota-user", "strong-password");

@@ -13,7 +13,6 @@ import { AccountData, api, CurrentUser, Plan } from './commercial';
 import { AuthView } from './components/AuthView';
 import { PricingView } from './components/PricingView';
 import { AccountView } from './components/AccountView';
-import { AdminView } from './components/AdminView';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('home');
@@ -205,7 +204,7 @@ export default function App() {
   };
 
   if (authLoading) return <div className="min-h-screen bg-[#0a0a0c] text-zinc-400 flex items-center justify-center">正在加载账户...</div>;
-  if (!user) return <AuthView bootstrapRequired={bootstrapRequired} onAuthenticated={authenticated => { setUser(authenticated); setBootstrapRequired(false); }} />;
+  if (!user) return <AuthView portal="user" bootstrapRequired={bootstrapRequired} onAuthenticated={setUser} />;
 
   const logout = async () => {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
@@ -262,8 +261,7 @@ export default function App() {
         )}
 
         {currentView === 'pricing' && <PricingView plans={plans} onOrderCreated={refreshAccount} showToast={showToast} />}
-        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={() => void refreshAccount()} />}
-        {currentView === 'admin' && user.role === 'admin' && <AdminView showToast={showToast} onChanged={async () => { await Promise.all([refreshPlans(), refreshAccount()]); }} />}
+        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={() => void refreshAccount()} onLoggedOut={() => setUser(null)} showToast={showToast} />}
       </main>
 
       {/* Footer */}

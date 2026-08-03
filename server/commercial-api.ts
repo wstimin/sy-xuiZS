@@ -1,7 +1,8 @@
 import { NextFunction, Request, Response, Router } from "express";
 import { CommercialStore, DurationUnit, EntitlementGrantInput, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
 
-const COOKIE_NAME = "xui_session";
+const USER_COOKIE_NAME = "xui_user_session";
+const ADMIN_COOKIE_NAME = "xui_admin_session";
 
 function cookieValue(req: Request, name: string) {
   const source = req.header("cookie") || "";
@@ -19,8 +20,8 @@ function secureCookie(req: Request) {
   return req.secure || req.header("x-forwarded-proto") === "https";
 }
 
-function setSessionCookie(req: Request, res: Response, token: string) {
-  res.cookie(COOKIE_NAME, token, {
+function setSessionCookie(req: Request, res: Response, name: string, token: string) {
+  res.cookie(name, token, {
     httpOnly: true,
     secure: secureCookie(req),
     sameSite: "lax",
@@ -29,8 +30,8 @@ function setSessionCookie(req: Request, res: Response, token: string) {
   });
 }
 
-function clearSessionCookie(req: Request, res: Response) {
-  res.clearCookie(COOKIE_NAME, {
+function clearSessionCookie(req: Request, res: Response, name: string) {
+  res.clearCookie(name, {
     httpOnly: true,
     secure: secureCookie(req),
     sameSite: "lax",
@@ -91,10 +92,14 @@ function grantInput(body: Record<string, unknown>): EntitlementGrantInput {
 
 export function attachCommercialUser(store: CommercialStore) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const token = cookieValue(req, COOKIE_NAME);
-    const user = store.getSessionUser(token);
-    res.locals.commercialUser = user;
-    res.locals.commercialSessionToken = token;
+    const userToken = cookieValue(req, USER_COOKIE_NAME);
+    const adminToken = cookieValue(req, ADMIN_COOKIE_NAME);
+    const sessionUser = store.getSessionUser(userToken);
+    const admin = store.getSessionUser(adminToken);
+    res.locals.commercialUser = sessionUser?.role === "user" ? sessionUser : null;
+    res.locals.commercialAdmin = admin?.role === "admin" ? admin : null;
+    res.locals.commercialUserSessionToken = userToken;
+    res.locals.commercialAdminSessionToken = adminToken;
     next();
   };
 }
@@ -111,10 +116,14 @@ export function commercialUser(res: Response) {
 }
 
 function requireAdmin(_req: Request, res: Response, next: NextFunction) {
-  const user = res.locals.commercialUser as SessionUser | null;
-  if (!user) return res.status(401).json({ success: false, error: "请先登录" });
-  if (user.role !== "admin") return res.status(403).json({ success: false, error: "需要管理员权限" });
+  const user = res.locals.commercialAdmin as SessionUser | null;
+  if (!user) return res.status(401).json({ success: false, error: "请先登录管理端" });
+  if (user.status !== "active") return res.status(403).json({ success: false, error: "管理员账号已被禁用" });
   next();
+}
+
+function adminUser(res: Response) {
+  return res.locals.commercialAdmin as SessionUser;
 }
 
 function route(handler: (req: Request, res: Response) => unknown) {
@@ -138,30 +147,48 @@ export function createCommercialRouter(store: CommercialStore) {
     const user = store.bootstrapAdmin(String(req.body?.username || ""), String(req.body?.password || ""));
     if (!user) return res.status(409).json({ success: false, error: "系统已经完成初始化" });
     const token = store.createSession(user.id);
-    setSessionCookie(req, res, token);
+    setSessionCookie(req, res, ADMIN_COOKIE_NAME, token);
     res.json({ success: true, user });
   }));
 
   router.post("/auth/register", route((req, res) => {
+    if (!store.hasUsers()) {
+      return res.status(503).json({ success: false, error: "系统尚未初始化，请管理员先访问 /admin 创建管理账号" });
+    }
     if (store.getSetting("registration_enabled", "true") !== "true") {
       return res.status(403).json({ success: false, error: "管理员已关闭新用户注册" });
     }
     const user = store.createUser(String(req.body?.username || ""), String(req.body?.password || ""), "user");
     const token = store.createSession(user.id);
-    setSessionCookie(req, res, token);
+    setSessionCookie(req, res, USER_COOKIE_NAME, token);
     res.json({ success: true, user });
   }));
 
   router.post("/auth/login", route((req, res) => {
     const user = store.authenticate(String(req.body?.username || ""), String(req.body?.password || ""));
+    if (user.role !== "user") return res.status(403).json({ success: false, error: "管理员请从 /admin 登录管理端" });
     const token = store.createSession(user.id);
-    setSessionCookie(req, res, token);
+    setSessionCookie(req, res, USER_COOKIE_NAME, token);
+    res.json({ success: true, user });
+  }));
+
+  router.post("/admin/auth/login", route((req, res) => {
+    const user = store.authenticate(String(req.body?.username || ""), String(req.body?.password || ""));
+    if (user.role !== "admin") return res.status(403).json({ success: false, error: "该账号不是管理员" });
+    const token = store.createSession(user.id);
+    setSessionCookie(req, res, ADMIN_COOKIE_NAME, token);
     res.json({ success: true, user });
   }));
 
   router.post("/auth/logout", route((req, res) => {
-    store.deleteSession(cookieValue(req, COOKIE_NAME));
-    clearSessionCookie(req, res);
+    store.deleteSession(cookieValue(req, USER_COOKIE_NAME));
+    clearSessionCookie(req, res, USER_COOKIE_NAME);
+    res.json({ success: true });
+  }));
+
+  router.post("/admin/auth/logout", route((req, res) => {
+    store.deleteSession(cookieValue(req, ADMIN_COOKIE_NAME));
+    clearSessionCookie(req, res, ADMIN_COOKIE_NAME);
     res.json({ success: true });
   }));
 
@@ -169,10 +196,21 @@ export function createCommercialRouter(store: CommercialStore) {
     res.json({ user: (res.locals.commercialUser as SessionUser | null) || null });
   });
 
+  router.get("/admin/auth/me", (_req, res) => {
+    res.json({ user: (res.locals.commercialAdmin as SessionUser | null) || null });
+  });
+
   router.post("/auth/change-password", requireCommercialUser, route((req, res) => {
     const user = commercialUser(res);
     store.changePassword(user.id, String(req.body?.currentPassword || ""), String(req.body?.nextPassword || ""));
-    clearSessionCookie(req, res);
+    clearSessionCookie(req, res, USER_COOKIE_NAME);
+    res.json({ success: true });
+  }));
+
+  router.post("/admin/auth/change-password", requireAdmin, route((req, res) => {
+    const user = adminUser(res);
+    store.changePassword(user.id, String(req.body?.currentPassword || ""), String(req.body?.nextPassword || ""));
+    clearSessionCookie(req, res, ADMIN_COOKIE_NAME);
     res.json({ success: true });
   }));
 
@@ -192,6 +230,10 @@ export function createCommercialRouter(store: CommercialStore) {
   router.post("/orders", requireCommercialUser, route((req, res) => {
     const order = store.createOrder(commercialUser(res).id, String(req.body?.planId || ""));
     res.status(201).json({ success: true, order });
+  }));
+
+  router.post("/orders/:id/cancel", requireCommercialUser, route((req, res) => {
+    res.json({ success: true, order: store.cancelOrder(req.params.id, commercialUser(res).id) });
   }));
 
   router.get("/admin/stats", requireAdmin, (_req, res) => res.json({ stats: store.getDashboardStats() }));
@@ -218,7 +260,7 @@ export function createCommercialRouter(store: CommercialStore) {
     res.json({ success: true, plan });
   }));
   router.patch("/admin/users/:id", requireAdmin, route((req, res) => {
-    const acting = commercialUser(res);
+    const acting = adminUser(res);
     const status = req.body?.status;
     const roleValue = req.body?.role as UserRole | undefined;
     if (status === "active" || status === "disabled") {
@@ -231,9 +273,20 @@ export function createCommercialRouter(store: CommercialStore) {
     }
     res.json({ success: true });
   }));
+  router.post("/admin/users/:id/reset-password", requireAdmin, route((req, res) => {
+    if (adminUser(res).id === req.params.id) throw new Error("当前管理员请使用修改密码功能");
+    store.resetPassword(req.params.id, String(req.body?.nextPassword || ""));
+    res.json({ success: true });
+  }));
   router.post("/admin/orders/:id/mark-paid", requireAdmin, route((req, res) => {
     const tradeNo = String(req.body?.tradeNo || `manual-${Date.now()}`);
     res.json({ success: true, order: store.markOrderPaid(req.params.id, "manual", tradeNo) });
+  }));
+  router.post("/admin/orders/:id/cancel", requireAdmin, route((req, res) => {
+    res.json({ success: true, order: store.cancelOrder(req.params.id) });
+  }));
+  router.post("/admin/orders/:id/refund", requireAdmin, route((req, res) => {
+    res.json({ success: true, order: store.refundOrder(req.params.id) });
   }));
   router.post("/admin/entitlements", requireAdmin, route((req, res) => {
     const userId = String(req.body?.userId || "");
@@ -246,6 +299,15 @@ export function createCommercialRouter(store: CommercialStore) {
     if (status !== "active" && status !== "revoked") throw new Error("权益状态无效");
     store.updateEntitlementStatus(req.params.id, status);
     res.json({ success: true });
+  }));
+  router.patch("/admin/entitlements/:id/quota", requireAdmin, route((req, res) => {
+    res.json({ success: true, entitlement: store.adjustEntitlement(req.params.id, {
+      panelRemaining: req.body?.panelRemaining === undefined ? undefined : intValue(req.body.panelRemaining, -1),
+      nodeRemaining: req.body?.nodeRemaining === undefined ? undefined : intValue(req.body.nodeRemaining, -1),
+      dailyPanelLimit: req.body?.dailyPanelLimit === undefined ? undefined : intValue(req.body.dailyPanelLimit, -1),
+      dailyNodeLimit: req.body?.dailyNodeLimit === undefined ? undefined : intValue(req.body.dailyNodeLimit, -1),
+      concurrencyLimit: req.body?.concurrencyLimit === undefined ? undefined : intValue(req.body.concurrencyLimit, -1),
+    }) });
   }));
   router.post("/admin/deployments/:id/resolve", requireAdmin, route((req, res) => {
     const resolution = req.body?.resolution;

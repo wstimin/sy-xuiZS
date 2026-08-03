@@ -1,6 +1,6 @@
 import React from 'react';
 import { ViewMode } from '../types';
-import { Terminal, Cpu, Network, History, HelpCircle, ShieldCheck, BookOpen, CreditCard, UserCircle, LogOut, Settings } from 'lucide-react';
+import { Terminal, Cpu, Network, History, HelpCircle, ShieldCheck, BookOpen, CreditCard, UserCircle, LogOut } from 'lucide-react';
 import { CurrentUser } from '../commercial';
 
 interface HeaderProps {
@@ -102,13 +102,6 @@ export const Header: React.FC<HeaderProps> = ({
             <UserCircle className="w-4 h-4" /><span className="hidden sm:inline">账户</span>
           </button>
 
-          {user.role === 'admin' && <button
-            onClick={() => onSelectView('admin')}
-            title="管理端"
-            className={`flex shrink-0 items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${currentView === 'admin' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}
-          >
-            <Settings className="w-4 h-4" /><span className="hidden xl:inline">管理</span>
-          </button>}
         </nav>
 
         {/* Helper Action Tools */}

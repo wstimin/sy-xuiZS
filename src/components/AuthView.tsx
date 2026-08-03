@@ -4,11 +4,13 @@ import { api, CurrentUser } from '../commercial';
 
 interface AuthViewProps {
   bootstrapRequired: boolean;
+  portal: 'user' | 'admin';
   onAuthenticated: (user: CurrentUser) => void;
 }
 
-export const AuthView: React.FC<AuthViewProps> = ({ bootstrapRequired, onAuthenticated }) => {
-  const [mode, setMode] = useState<'login' | 'register'>(bootstrapRequired ? 'register' : 'login');
+export const AuthView: React.FC<AuthViewProps> = ({ bootstrapRequired, portal, onAuthenticated }) => {
+  const isAdmin = portal === 'admin';
+  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -16,10 +18,13 @@ export const AuthView: React.FC<AuthViewProps> = ({ bootstrapRequired, onAuthent
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!isAdmin && bootstrapRequired) return;
     setBusy(true);
     setError('');
     try {
-      const endpoint = bootstrapRequired ? '/api/auth/bootstrap' : mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const endpoint = isAdmin
+        ? bootstrapRequired ? '/api/auth/bootstrap' : '/api/admin/auth/login'
+        : mode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const result = await api<{ user: CurrentUser }>(endpoint, {
         method: 'POST',
         body: JSON.stringify({ username, password }),
@@ -40,21 +45,25 @@ export const AuthView: React.FC<AuthViewProps> = ({ bootstrapRequired, onAuthent
             <ShieldCheck className="w-6 h-6 text-indigo-300" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">xui 搭建助手</h1>
-            <p className="text-xs text-zinc-500">账号、权益与搭建任务统一管理</p>
+            <h1 className="text-xl font-bold text-white">{isAdmin ? 'xui 管理端' : 'xui 搭建助手'}</h1>
+            <p className="text-xs text-zinc-500">{isAdmin ? '套餐、订单、用户和权益管理' : '购买权益并执行面板与节点搭建'}</p>
           </div>
         </div>
 
-        {bootstrapRequired ? (
+        {bootstrapRequired && isAdmin ? (
           <div className="mb-5 p-3 rounded-md border border-amber-500/25 bg-amber-500/10 text-sm text-amber-200">
             首次运行，请创建管理员账号。该账号可配置套餐并确认用户订单。
           </div>
-        ) : (
+        ) : bootstrapRequired ? (
+          <div className="mb-5 p-3 rounded-md border border-amber-500/25 bg-amber-500/10 text-sm text-amber-200">
+            系统尚未初始化，请管理员先进入管理端创建管理账号。
+          </div>
+        ) : !isAdmin ? (
           <div className="grid grid-cols-2 bg-white/5 p-1 rounded-md mb-6">
             <button type="button" onClick={() => setMode('login')} className={`py-2 text-sm rounded ${mode === 'login' ? 'bg-indigo-600 text-white' : 'text-zinc-400'}`}>登录</button>
             <button type="button" onClick={() => setMode('register')} className={`py-2 text-sm rounded ${mode === 'register' ? 'bg-indigo-600 text-white' : 'text-zinc-400'}`}>注册</button>
           </div>
-        )}
+        ) : null}
 
         <form onSubmit={submit} className="space-y-4">
           <label className="block">
@@ -72,11 +81,14 @@ export const AuthView: React.FC<AuthViewProps> = ({ bootstrapRequired, onAuthent
             </div>
           </label>
           {error && <div className="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 p-3 rounded-md">{error}</div>}
-          <button disabled={busy} className="w-full h-11 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-semibold flex items-center justify-center gap-2">
+          <button disabled={busy || (!isAdmin && bootstrapRequired)} className="w-full h-11 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-semibold flex items-center justify-center gap-2">
             <LogIn className="w-4 h-4" />
-            {busy ? '正在提交...' : bootstrapRequired ? '创建管理员并进入' : mode === 'login' ? '登录' : '注册并登录'}
+            {busy ? '正在提交...' : bootstrapRequired && isAdmin ? '创建管理员并进入' : mode === 'login' ? '登录' : '注册并登录'}
           </button>
         </form>
+        <div className="mt-5 border-t border-white/10 pt-4 text-center text-xs text-zinc-500">
+          {isAdmin ? <a href="/" className="text-indigo-300 hover:text-indigo-200">返回用户端</a> : <a href="/admin" className="text-zinc-400 hover:text-zinc-200">{bootstrapRequired ? '前往初始化管理端' : '管理端登录'}</a>}
+        </div>
       </div>
     </div>
   );
