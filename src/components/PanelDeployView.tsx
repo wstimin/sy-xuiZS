@@ -242,8 +242,8 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       showToast('面板用户名格式不正确', '请输入 3-64 位字母、数字、点、下划线、@ 或短横线', 'warning');
       return;
     }
-    if (customPanelPassword && (customPanelPassword.length < 8 || customPanelPassword.length > 128)) {
-      showToast('面板密码长度不正确', '自定义密码必须为 8-128 位；留空则自动生成安全密码', 'warning');
+    if (customPanelPassword && (customPanelPassword.length < 6 || customPanelPassword.length > 128)) {
+      showToast('面板密码长度不正确', '自定义密码必须为 6-128 位；留空则自动生成安全密码', 'warning');
       return;
     }
 
@@ -689,7 +689,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 <input
                   type="password"
                   autoComplete="new-password"
-                  placeholder="至少 8 位；留空自动生成"
+                  placeholder="至少 6 位；留空自动生成"
                   value={form.panelPassword || ''}
                   onChange={e => setForm({ ...form, panelPassword: e.target.value })}
                   className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm placeholder-zinc-500 outline-none transition-all"

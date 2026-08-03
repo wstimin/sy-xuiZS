@@ -24,10 +24,11 @@ test("panel credentials accept custom values and preserve secure generated fallb
   assert.equal(panelUsername("owner@example.com", "generated-user"), "owner@example.com");
   assert.equal(panelUsername("", "generated-user"), "generated-user");
   assert.equal(panelPassword("strong password", "generated-password"), "strong password");
+  assert.equal(panelPassword("123456", "generated-password"), "123456");
   assert.equal(panelPassword("", "generated-password"), "generated-password");
   assert.throws(() => panelUsername("ab", "generated-user"), /3 到 64 位/);
   assert.throws(() => panelUsername("bad user", "generated-user"), /只能包含/);
-  assert.throws(() => panelPassword("short", "generated-password"), /8 到 128 位/);
+  assert.throws(() => panelPassword("12345", "generated-password"), /6 到 128 位/);
   assert.throws(() => panelPassword("valid-password\nnext", "generated-password"), /控制字符/);
 });
 

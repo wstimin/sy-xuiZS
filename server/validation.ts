@@ -42,8 +42,8 @@ export function panelPassword(value: unknown, fallback: string): string {
     throw new Error("面板密码不能包含换行或其他控制字符");
   }
   const password = value.trim();
-  if (password.length < 8 || password.length > 128) {
-    throw new Error("面板密码长度必须为 8 到 128 位");
+  if (password.length < 6 || password.length > 128) {
+    throw new Error("面板密码长度必须为 6 到 128 位");
   }
   return password;
 }
