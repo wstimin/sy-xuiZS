@@ -9,6 +9,11 @@ import { ProtocolMatrixGuideModal } from './components/ProtocolMatrixGuideModal'
 import { SetupGuideModal } from './components/SetupGuideModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { Toast } from './components/Toast';
+import { AccountData, api, CurrentUser, Plan } from './commercial';
+import { AuthView } from './components/AuthView';
+import { PricingView } from './components/PricingView';
+import { AccountView } from './components/AccountView';
+import { AdminView } from './components/AdminView';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('home');
@@ -17,6 +22,12 @@ export default function App() {
   const [guideOpen, setGuideOpen] = useState<boolean>(false);
   const [setupGuideOpen, setSetupGuideOpen] = useState<boolean>(false);
   const [historyOpen, setHistoryOpen] = useState<boolean>(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [bootstrapRequired, setBootstrapRequired] = useState(false);
+  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [account, setAccount] = useState<AccountData | null>(null);
+  const [accountLoading, setAccountLoading] = useState(false);
 
   // Pre-filled panel login credentials for node deployment
   const [prefilledPanel, setPrefilledPanel] = useState<{
@@ -34,7 +45,13 @@ export default function App() {
 
   const normalizeHistoryItem = (item: HistoryItem): HistoryItem => {
     if (item.type === 'panel' && item.panelData) {
-      return item;
+      return {
+        id: item.id,
+        timestamp: item.timestamp,
+        type: 'panel',
+        title: item.title,
+        summary: item.summary
+      };
     }
     return {
       id: item.id,
@@ -62,11 +79,44 @@ export default function App() {
     }
   }, []);
 
+  const refreshPlans = async () => {
+    const result = await api<{ plans: Plan[] }>('/api/plans');
+    setPlans(result.plans);
+  };
+
+  const refreshAccount = async () => {
+    if (!user) return;
+    setAccountLoading(true);
+    try {
+      const result = await api<AccountData>('/api/account');
+      setAccount(result);
+    } finally {
+      setAccountLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    Promise.all([
+      api<{ user: CurrentUser | null }>('/api/auth/me'),
+      api<{ required: boolean }>('/api/auth/bootstrap-status'),
+      api<{ plans: Plan[] }>('/api/plans'),
+    ]).then(([me, bootstrap, planResult]) => {
+      setUser(me.user);
+      setBootstrapRequired(bootstrap.required);
+      setPlans(planResult.plans);
+    }).catch(() => setUser(null)).finally(() => setAuthLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (user) void refreshAccount();
+    else setAccount(null);
+  }, [user?.id]);
+
   const saveHistory = (newItem: HistoryItem) => {
     setHistoryItems(prev => {
       const updated = [newItem, ...prev].slice(0, 30);
       try {
-        localStorage.setItem('3xui_deploy_history', JSON.stringify(updated));
+        localStorage.setItem('3xui_deploy_history', JSON.stringify(updated.map(normalizeHistoryItem)));
       } catch {
         // ignore
       }
@@ -110,6 +160,7 @@ export default function App() {
       panelData: { ...result }
     };
     saveHistory(historyItem);
+    void refreshAccount();
   };
 
   const handleNodeCreated = (result: NodeResult) => {
@@ -121,6 +172,7 @@ export default function App() {
       summary: `${result.protocol} + ${result.transport} · 入站 #${result.inboundId}`
     };
     saveHistory(historyItem);
+    void refreshAccount();
   };
 
   const handleGoToNodeWithPanel = (result: PanelResult) => {
@@ -152,6 +204,15 @@ export default function App() {
     );
   };
 
+  if (authLoading) return <div className="min-h-screen bg-[#0a0a0c] text-zinc-400 flex items-center justify-center">正在加载账户...</div>;
+  if (!user) return <AuthView bootstrapRequired={bootstrapRequired} onAuthenticated={authenticated => { setUser(authenticated); setBootstrapRequired(false); }} />;
+
+  const logout = async () => {
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    setUser(null);
+    setCurrentView('home');
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-slate-200 flex flex-col font-sans selection:bg-indigo-500 selection:text-white antialiased">
       {/* Background Glow Overlay */}
@@ -168,6 +229,8 @@ export default function App() {
         onOpenSetupGuide={() => setSetupGuideOpen(true)}
         onOpenHistory={() => setHistoryOpen(true)}
         historyCount={historyItems.length}
+        user={user}
+        onLogout={() => void logout()}
       />
 
       {/* Main Body View Switching */}
@@ -185,6 +248,7 @@ export default function App() {
             onPanelCreated={handlePanelCreated}
             onGoToNodeWithPanel={handleGoToNodeWithPanel}
             showToast={showToast}
+            entitlements={account?.entitlements}
           />
         )}
 
@@ -193,8 +257,13 @@ export default function App() {
             initialPanelData={prefilledPanel}
             onNodeCreated={handleNodeCreated}
             showToast={showToast}
+            entitlements={account?.entitlements}
           />
         )}
+
+        {currentView === 'pricing' && <PricingView plans={plans} onOrderCreated={refreshAccount} showToast={showToast} />}
+        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={() => void refreshAccount()} />}
+        {currentView === 'admin' && user.role === 'admin' && <AdminView showToast={showToast} onChanged={async () => { await Promise.all([refreshPlans(), refreshAccount()]); }} />}
       </main>
 
       {/* Footer */}

@@ -1,4 +1,4 @@
-export type ViewMode = 'home' | 'panel' | 'node';
+export type ViewMode = 'home' | 'panel' | 'node' | 'pricing' | 'account' | 'admin';
 
 export type AuthType = 'password' | 'privateKey';
 

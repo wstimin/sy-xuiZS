@@ -21,6 +21,8 @@ RELEASE_CHECKSUM_URL="${RELEASE_CHECKSUM_URL:-https://github.com/wstimin/xui-zhu
 TARGET_DIR="/opt/3xui-deploy-assistant"
 APP_NAME="3xui-deploy-assistant"
 SSL_DIR="/etc/3xui-assistant/ssl"
+DATA_DIR="/var/lib/xui-assistant"
+DATABASE_BACKUP_DIR="/var/backups/xui-assistant"
 DEFAULT_PORT="1888"
 APP_PORT="${PORT:-$DEFAULT_PORT}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,6 +43,24 @@ load_runtime_config() {
     set +a
   fi
   APP_PORT="${PORT:-$DEFAULT_PORT}"
+  DATABASE_PATH="${DATABASE_PATH:-$DATA_DIR/app.db}"
+  export DATABASE_PATH
+}
+
+backup_commercial_database() {
+  if [ ! -f "$DATABASE_PATH" ]; then
+    return 0
+  fi
+  mkdir -p "$DATABASE_BACKUP_DIR"
+  local backup_file="$DATABASE_BACKUP_DIR/app-$(date +%Y%m%d-%H%M%S).db"
+  echo -e "${BLUE}[DATA] 正在备份用户、订单与权益数据库...${NC}"
+  SOURCE_DB="$DATABASE_PATH" BACKUP_DB="$backup_file" node --input-type=module -e '
+    import Database from "better-sqlite3";
+    const database = new Database(process.env.SOURCE_DB, { readonly: true });
+    try { await database.backup(process.env.BACKUP_DB); } finally { database.close(); }
+  '
+  chmod 600 "$backup_file"
+  echo -e "${GREEN}[OK] 数据库备份已保存至 ${backup_file}${NC}"
 }
 
 read_installed_version() {
@@ -356,6 +376,13 @@ install_assistant() {
     chmod 600 "$DOWNLOADED_PACKAGE_DIR/.env"
     echo -e "${GREEN}[OK] 已创建 .env 配置文件。${NC}"
   fi
+  mkdir -p "$DATA_DIR"
+  chmod 700 "$DATA_DIR"
+  if ! grep -q '^DATABASE_PATH=' "$DOWNLOADED_PACKAGE_DIR/.env"; then
+    printf '\nDATABASE_PATH=%s\n' "$DATA_DIR/app.db" >> "$DOWNLOADED_PACKAGE_DIR/.env"
+  fi
+  load_runtime_config
+  backup_commercial_database
 
   BACKUP_DIR="${TARGET_DIR}.previous"
   rm -rf "$BACKUP_DIR"
@@ -372,7 +399,7 @@ install_assistant() {
   APP_VERSION=$(read_installed_version)
   export APP_VERSION
 
-  # 更新只替换应用构建包；.env 与 /etc 下的 SSL 证书保持不变。
+  # 更新只替换应用构建包；.env、数据库与 /etc 下的 SSL 证书保持不变。
   if pm2 list 2>/dev/null | grep -q "$APP_NAME"; then
     echo -e "${YELLOW}检测到部署助手面板正在运行，正在重启服务...${NC}"
     if ! pm2 startOrReload ecosystem.config.cjs --update-env; then
@@ -610,6 +637,7 @@ uninstall_all() {
   echo -e "${RED}============================================================${NC}"
   
   echo -e "${YELLOW}此操作将停止 PM2 守护进程，并删除一键安装在 ${TARGET_DIR} 的项目与快捷命令。${NC}"
+  echo -e "${YELLOW}用户、订单与权益数据库位于 ${DATA_DIR}，默认不会随应用卸载删除。${NC}"
   if [ "$SCRIPT_DIR" != "$TARGET_DIR" ]; then
     echo -e "${YELLOW}当前脚本位于 ${SCRIPT_DIR}，该本地源码目录不会被删除。${NC}"
   fi
@@ -630,6 +658,12 @@ uninstall_all() {
   echo -e "${BLUE}[2/3] 清理本部署助手面板项目目录 (${TARGET_DIR}) 及快捷调出指令...${NC}"
   rm -rf "$TARGET_DIR"
   rm -f /usr/local/bin/sy /usr/bin/sy
+
+  read -p "是否同时删除用户、订单与权益数据库 (${DATA_DIR})？[y/N]: " REMOVE_DATA
+  if [[ "$REMOVE_DATA" == "y" || "$REMOVE_DATA" == "Y" ]]; then
+    rm -rf "$DATA_DIR"
+    echo -e "${GREEN}[OK] 商业数据目录已删除。${NC}"
+  fi
 
   read -p "是否同时删除保存的 SSL 证书文件 (${SSL_DIR})？[y/N]: " REMOVE_SSL
   if [[ "$REMOVE_SSL" == "y" || "$REMOVE_SSL" == "Y" ]]; then

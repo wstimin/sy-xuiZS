@@ -7,6 +7,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
+import { attachCommercialUser, commercialUser, createCommercialRouter, requireCommercialUser } from "./server/commercial-api.js";
+import { CommercialStore, maskHost } from "./server/commercial-store.js";
 import { buildInbound, InboundInput } from "./server/inbound-builder.js";
 import { buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, inspectServer, SshInput } from "./server/ssh.js";
 import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
@@ -132,6 +134,7 @@ function parseInstallerResult(output: string): Record<string, string> {
 async function startServer() {
   const app = express();
   const port = validPort(process.env.PORT, 1888);
+  const commercialStore = new CommercialStore();
 
   app.disable("x-powered-by");
   app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
@@ -148,6 +151,9 @@ async function startServer() {
   });
 
   app.use("/api", requireAppAuth);
+  app.use("/api", attachCommercialUser(commercialStore));
+  app.use("/api", createCommercialRouter(commercialStore));
+  app.use("/api", requireCommercialUser);
 
   app.get("/api/download-zip", (_req, res) => {
     res.status(404).json({ error: "源码导出接口已禁用，避免意外打包凭据、证书或数据库。" });
@@ -183,6 +189,23 @@ async function startServer() {
   });
 
   app.post("/api/deploy-panel", async (req, res) => {
+    if (commercialStore.getSetting("panel_deploy_enabled", "true") !== "true") {
+      return res.status(503).json({ success: false, error: "管理员已暂停面板搭建" });
+    }
+    let reservation;
+    try {
+      const requestId = optionalString(req.header("x-request-id") || req.body?.requestId);
+      reservation = commercialStore.reserveDeployment(
+        commercialUser(res).id,
+        "panel",
+        requestId,
+        maskHost(req.body?.ipOrDomain),
+      );
+      commercialStore.markDeploymentRunning(reservation.deploymentId);
+    } catch (error: any) {
+      const status = error?.code === "PAYMENT_REQUIRED" ? 402 : error?.code === "DUPLICATE_DEPLOYMENT" ? 409 : 400;
+      return res.status(status).json({ success: false, error: errorMessage(error), code: error?.code });
+    }
     res.status(200);
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -198,7 +221,10 @@ async function startServer() {
     let session;
     let panelClient: XuiClient | undefined;
     let completed = false;
+    let disconnected = false;
+    let remoteSucceeded = false;
     const handleDisconnect = () => {
+      disconnected = true;
       if (!completed && !res.writableEnded) session?.client.destroy();
     };
     res.on("close", handleDisconnect);
@@ -357,9 +383,16 @@ async function startServer() {
         systemInfo,
       };
       write({ type: "log", step: 9, message: "[SUCCESS] 3x-ui 服务已启动，安装结果验证通过" });
+      remoteSucceeded = true;
+      commercialStore.succeedDeployment(reservation.deploymentId, `面板 ${maskHost(domain || host)}:${installedPort}`);
       write({ type: "result", result });
       completed = true;
     } catch (error) {
+      if (remoteSucceeded || disconnected) {
+        commercialStore.markDeploymentUncertain(reservation.deploymentId, `面板搭建结果需要确认：${errorMessage(error)}`);
+      } else {
+        commercialStore.failDeployment(reservation.deploymentId, errorMessage(error));
+      }
       write({ type: "error", error: errorMessage(error) });
       completed = true;
     } finally {
@@ -385,6 +418,23 @@ async function startServer() {
   });
 
   app.post("/api/deploy-node", async (req, res) => {
+    if (commercialStore.getSetting("node_deploy_enabled", "true") !== "true") {
+      return res.status(503).json({ success: false, error: "管理员已暂停节点搭建" });
+    }
+    let reservation;
+    try {
+      const requestId = optionalString(req.header("x-request-id") || req.body?.requestId);
+      reservation = commercialStore.reserveDeployment(
+        commercialUser(res).id,
+        "node",
+        requestId,
+        maskHost(req.body?.panelAddress),
+      );
+      commercialStore.markDeploymentRunning(reservation.deploymentId);
+    } catch (error: any) {
+      const status = error?.code === "PAYMENT_REQUIRED" ? 402 : error?.code === "DUPLICATE_DEPLOYMENT" ? 409 : 400;
+      return res.status(status).json({ success: false, error: errorMessage(error), code: error?.code });
+    }
     res.status(200);
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -419,6 +469,7 @@ async function startServer() {
     let xrayTemplateUpdated = false;
     let xrayRestartAttempted = false;
     let creationOutcomeUncertain = false;
+    let remoteSucceeded = false;
     try {
       const panelToken = optionalString(body.panelToken);
       if (!panelToken) throw new Error("缺少 3x-ui API Token，请从面板搭建结果进入节点页面或手动填写 Token");
@@ -583,20 +634,25 @@ async function startServer() {
         } : null,
       };
       progress(5, "节点创建完成");
+      remoteSucceeded = true;
+      commercialStore.succeedDeployment(reservation.deploymentId, `${body.protocol || "VLESS"} 节点 ${maskHost(body.panelAddress)}:${built.port}`);
       write({ type: "result", result });
     } catch (error) {
+      let rollbackFailed = false;
       let rollbackClient = client;
       if (cancellation.signal.aborted) {
         try {
           rollbackClient = createPanelClient();
         } catch {
           rollbackClient = undefined;
+          rollbackFailed = true;
         }
       }
       if (rollbackClient && xrayTemplateUpdated && originalXrayTemplate) {
         try {
           await rollbackClient.updateXrayTemplate(originalXrayTemplate.config, originalXrayTemplate.outboundTestUrl);
         } catch {
+          rollbackFailed = true;
           // Preserve the original failure and continue with inbound rollback.
         }
       }
@@ -609,6 +665,7 @@ async function startServer() {
             port: built.port,
           })?.id || 0);
         } catch {
+          rollbackFailed = true;
           // The add request may have been cancelled before the panel created anything.
         }
       }
@@ -616,6 +673,7 @@ async function startServer() {
         try {
           await rollbackClient.deleteInbound(inboundId);
         } catch {
+          rollbackFailed = true;
           // Preserve the original failure; the progress response already explains the operation failed.
         }
       }
@@ -623,8 +681,14 @@ async function startServer() {
         try {
           await rollbackClient.restartXray();
         } catch {
+          rollbackFailed = true;
           // Preserve the original failure after making a best-effort runtime rollback.
         }
+      }
+      if (remoteSucceeded || creationOutcomeUncertain || rollbackFailed) {
+        commercialStore.markDeploymentUncertain(reservation.deploymentId, `节点搭建结果需要确认：${errorMessage(error)}`);
+      } else {
+        commercialStore.failDeployment(reservation.deploymentId, errorMessage(error));
       }
       write({ type: "error", error: errorMessage(error), cancelled: cancellation.signal.aborted });
     } finally {
@@ -656,10 +720,12 @@ async function startServer() {
     server.keepAliveTimeout = 120_000;
     server.headersTimeout = 125_000;
     server.listen(port, "0.0.0.0", () => console.log(`[HTTPS] 3x-ui 部署助手: https://0.0.0.0:${port}`));
+    server.on("close", () => commercialStore.close());
   } else {
     const server = app.listen(port, "0.0.0.0", () => console.log(`[HTTP] 3x-ui 部署助手: http://0.0.0.0:${port}`));
     server.keepAliveTimeout = 120_000;
     server.headersTimeout = 125_000;
+    server.on("close", () => commercialStore.close());
   }
 }
 

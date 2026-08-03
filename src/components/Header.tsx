@@ -1,6 +1,7 @@
 import React from 'react';
 import { ViewMode } from '../types';
-import { Terminal, Cpu, Network, History, HelpCircle, ShieldCheck, BookOpen } from 'lucide-react';
+import { Terminal, Cpu, Network, History, HelpCircle, ShieldCheck, BookOpen, CreditCard, UserCircle, LogOut, Settings } from 'lucide-react';
+import { CurrentUser } from '../commercial';
 
 interface HeaderProps {
   currentView: ViewMode;
@@ -9,6 +10,8 @@ interface HeaderProps {
   onOpenSetupGuide?: () => void;
   onOpenHistory: () => void;
   historyCount: number;
+  user: CurrentUser;
+  onLogout: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -17,11 +20,13 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenGuide,
   onOpenSetupGuide,
   onOpenHistory,
-  historyCount
+  historyCount,
+  user,
+  onLogout
 }) => {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-white/5 bg-[#0a0a0c]/80 backdrop-blur-xl">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 min-h-16 py-2 flex flex-wrap items-center justify-between gap-2">
         {/* Logo & Branding */}
         <div 
           onClick={() => onSelectView('home')}
@@ -32,7 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
               <Terminal className="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" />
             </div>
           </div>
-          <div>
+          <div className="hidden lg:block">
             <div className="flex items-center gap-2">
               <span className="font-bold text-lg text-white tracking-tight">
                 xui面板 <span className="bg-gradient-to-r from-indigo-400 via-purple-300 to-emerald-400 bg-clip-text text-transparent">一键搭建助手</span>
@@ -46,10 +51,10 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* View Switcher Navigation */}
-        <nav className="flex items-center gap-1 sm:gap-2 bg-white/5 p-1 rounded-xl border border-white/10 shadow-inner">
+        <nav className="order-3 lg:order-none w-full lg:w-auto flex items-center gap-1 bg-white/5 p-1 rounded-lg border border-white/10 overflow-x-auto">
           <button
             onClick={() => onSelectView('home')}
-            className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+            className={`flex shrink-0 items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
               currentView === 'home'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/25 font-semibold'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
@@ -61,7 +66,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => onSelectView('panel')}
-            className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+            className={`flex shrink-0 items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
               currentView === 'panel'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/25 font-semibold'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
@@ -73,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => onSelectView('node')}
-            className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+            className={`flex shrink-0 items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
               currentView === 'node'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/25 font-semibold'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
@@ -82,15 +87,38 @@ export const Header: React.FC<HeaderProps> = ({
             <Network className="w-4 h-4" />
             <span>搭建节点</span>
           </button>
+
+          <button
+            onClick={() => onSelectView('pricing')}
+            className={`flex shrink-0 items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${currentView === 'pricing' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}
+          >
+            <CreditCard className="w-4 h-4" /><span className="hidden sm:inline">购买</span>
+          </button>
+
+          <button
+            onClick={() => onSelectView('account')}
+            className={`flex shrink-0 items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${currentView === 'account' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}
+          >
+            <UserCircle className="w-4 h-4" /><span className="hidden sm:inline">账户</span>
+          </button>
+
+          {user.role === 'admin' && <button
+            onClick={() => onSelectView('admin')}
+            title="管理端"
+            className={`flex shrink-0 items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${currentView === 'admin' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}
+          >
+            <Settings className="w-4 h-4" /><span className="hidden xl:inline">管理</span>
+          </button>}
         </nav>
 
         {/* Helper Action Tools */}
         <div className="flex items-center gap-2">
+          <span className="hidden xl:inline text-xs text-zinc-500 max-w-28 truncate">{user.username}</span>
           {onOpenSetupGuide && (
             <button
               onClick={onOpenSetupGuide}
               title="查看 xui 面板与节点使用搭建指南"
-              className="px-2.5 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:text-white hover:bg-indigo-500/20 transition-all text-xs flex items-center gap-1.5 font-medium cursor-pointer"
+              className="hidden sm:flex px-2.5 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:text-white hover:bg-indigo-500/20 transition-all text-xs items-center gap-1.5 font-medium cursor-pointer"
             >
               <BookOpen className="w-4 h-4 text-indigo-400" />
               <span className="hidden sm:inline">使用说明</span>
@@ -100,7 +128,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenGuide}
             title="协议冲突与速查规则"
-            className="p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:border-indigo-500/40 hover:bg-white/10 transition-all text-xs flex items-center gap-1.5 cursor-pointer"
+            className="hidden md:flex p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:border-indigo-500/40 hover:bg-white/10 transition-all text-xs items-center gap-1.5 cursor-pointer"
           >
             <HelpCircle className="w-4 h-4 text-indigo-400" />
             <span className="hidden lg:inline">协议速查</span>
@@ -109,7 +137,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenHistory}
             title="历史生成记录"
-            className="relative p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:border-indigo-500/40 hover:bg-white/10 transition-all text-xs flex items-center gap-1.5 cursor-pointer"
+            className="relative hidden sm:flex p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-300 hover:text-white hover:border-indigo-500/40 hover:bg-white/10 transition-all text-xs items-center gap-1.5 cursor-pointer"
           >
             <History className="w-4 h-4 text-emerald-400" />
             <span className="hidden lg:inline">历史配置</span>
@@ -118,6 +146,10 @@ export const Header: React.FC<HeaderProps> = ({
                 {historyCount}
               </span>
             )}
+          </button>
+
+          <button onClick={onLogout} title="退出登录" className="p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-300 hover:text-rose-300 hover:border-rose-500/30 transition-all">
+            <LogOut className="w-4 h-4" />
           </button>
         </div>
       </div>

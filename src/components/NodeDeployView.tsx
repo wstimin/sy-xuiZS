@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { NodeDeployForm, NodeResult, ProtocolType, TransportType, SecurityType, PanelFlavor } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { ensureAssistantConnection } from '../utils/apiConnection';
+import { activeCapability, Entitlement, quotaText } from '../commercial';
 import { parseSocksInput } from '../utils/socksParser';
 import {
   checkTransportAllowed,
@@ -52,12 +53,14 @@ interface NodeDeployViewProps {
   } | null;
   onNodeCreated: (result: NodeResult) => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
+  entitlements?: Entitlement[];
 }
 
 export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   initialPanelData,
   onNodeCreated,
-  showToast
+  showToast,
+  entitlements = []
 }) => {
   const [form, setForm] = useState<NodeDeployForm>({
     panelAddress: initialPanelData?.host || '',
@@ -311,18 +314,24 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
     try {
       await ensureAssistantConnection(controller.signal);
+      const requestId = crypto.randomUUID();
       const res = await fetch('/api/deploy-node', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Request-Id': requestId },
         body: JSON.stringify({
           ...form,
+          requestId,
           panelAddress: cleanAddress,
           sni: form.security === 'Reality' ? '' : form.sni,
           shortId: form.security === 'Reality' ? '' : form.shortId
         }),
         signal: controller.signal
       });
-      if (!res.ok || !res.body) throw new Error(`节点创建请求失败，HTTP ${res.status}`);
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        throw new Error(errorBody.error || `节点创建请求失败，HTTP ${res.status}`);
+      }
+      if (!res.body) throw new Error('浏览器未收到节点创建日志流');
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -406,6 +415,9 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+      <div className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+        节点权益：{activeCapability(entitlements, 'node').length ? activeCapability(entitlements, 'node').map(item => `${item.planName} ${quotaText(item.nodeMode, item.nodeRemaining)}`).join('；') : '暂无可用次数，请先购买套餐或联系管理员发放'}
+      </div>
       {/* Page Title */}
       <div className="pb-6 border-b border-white/10">
         <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 mb-1">

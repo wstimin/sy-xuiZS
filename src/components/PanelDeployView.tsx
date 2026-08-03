@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { PanelDeployForm, PanelResult, ScriptType } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { ensureAssistantConnection } from '../utils/apiConnection';
+import { activeCapability, Entitlement, quotaText } from '../commercial';
 import {
   Terminal, Key, Server, Lock, Globe, Shield, Sparkles, Copy, Check, ExternalLink, Play, ArrowRight, X, Code2, CheckCircle2,
   AlertTriangle, ShieldAlert, Cpu, HardDrive, Activity, Clock, AlertCircle, ChevronDown, ChevronUp, Zap
@@ -11,6 +12,7 @@ interface PanelDeployViewProps {
   onPanelCreated: (result: PanelResult) => void;
   onGoToNodeWithPanel: (result: PanelResult) => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
+  entitlements?: Entitlement[];
 }
 
 interface SshTestDetails {
@@ -50,7 +52,8 @@ const DEPLOY_STEPS_INFO = [
 export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
   onPanelCreated,
   onGoToNodeWithPanel,
-  showToast
+  showToast,
+  entitlements = []
 }) => {
   const [form, setForm] = useState<PanelDeployForm>({
     ipOrDomain: '',
@@ -262,10 +265,11 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       await ensureAssistantConnection(controller.signal);
       firstResponseTimeout = window.setTimeout(() => controller.abort(), 35_000);
       const sshSessionId = sshSessionIdRef.current || form.sshSessionId || '';
+      const requestId = crypto.randomUUID();
       const res = await fetch('/api/deploy-panel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, ipOrDomain: cleanIp, sshSessionId }),
+        headers: { 'Content-Type': 'application/json', 'X-Request-Id': requestId },
+        body: JSON.stringify({ ...form, ipOrDomain: cleanIp, sshSessionId, requestId }),
         signal: controller.signal
       });
       window.clearTimeout(firstResponseTimeout);
@@ -362,6 +366,9 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+      <div className="rounded-md border border-indigo-500/25 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
+        面板权益：{activeCapability(entitlements, 'panel').length ? activeCapability(entitlements, 'panel').map(item => `${item.planName} ${quotaText(item.panelMode, item.panelRemaining)}`).join('；') : '暂无可用次数，请先购买套餐或联系管理员发放'}
+      </div>
       {/* Page Title & Intro */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/10">
         <div>
