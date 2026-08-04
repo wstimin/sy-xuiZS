@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { SecretVault } from "./secret-vault.js";
+import type { PaymentProvider } from "./payment-service.js";
 
 export type UserRole = "user" | "admin";
 export type Capability = "panel" | "node";
@@ -21,17 +22,26 @@ export interface SessionUser {
 export interface PaymentMethod {
   id: string;
   name: string;
-  type: "manual" | "alipay" | "wechat" | "epay";
+  type: "manual" | "alipay" | "wechat" | "epay" | "mgate" | "tokenpay" | "epusdt";
   enabled: boolean;
   instructions: string;
   paymentUrl: string;
   sortOrder: number;
-  provider?: "manual" | "epay";
+  provider?: PaymentProvider;
   gatewayUrl?: string;
   merchantId?: string;
   merchantSecret?: string;
   merchantSecretConfigured?: boolean;
-  channel?: "alipay" | "wxpay" | "qqpay";
+  channel?: string;
+  currency?: string;
+  callbackBaseUrl?: string;
+  appId?: string;
+  privateKey?: string;
+  privateKeyConfigured?: boolean;
+  publicKey?: string;
+  certificateSerial?: string;
+  apiV3Key?: string;
+  apiV3KeyConfigured?: boolean;
   sandbox?: boolean;
 }
 
@@ -313,15 +323,23 @@ export class CommercialStore {
       CREATE TABLE IF NOT EXISTS payment_channels (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        provider TEXT NOT NULL CHECK (provider IN ('manual', 'epay')),
+        provider TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         instructions TEXT NOT NULL DEFAULT '',
         payment_url TEXT NOT NULL DEFAULT '',
         gateway_url TEXT NOT NULL DEFAULT '',
         merchant_id TEXT NOT NULL DEFAULT '',
         merchant_secret_encrypted TEXT NOT NULL DEFAULT '',
-        channel TEXT NOT NULL DEFAULT 'alipay' CHECK (channel IN ('alipay', 'wxpay', 'qqpay')),
+        channel TEXT NOT NULL DEFAULT 'alipay',
+        currency TEXT NOT NULL DEFAULT 'CNY',
+        callback_base_url TEXT NOT NULL DEFAULT '',
+        app_id TEXT NOT NULL DEFAULT '',
+        private_key_encrypted TEXT NOT NULL DEFAULT '',
+        public_key TEXT NOT NULL DEFAULT '',
+        certificate_serial TEXT NOT NULL DEFAULT '',
+        api_v3_key_encrypted TEXT NOT NULL DEFAULT '',
         sandbox INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0,
         sort_order INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -343,6 +361,18 @@ export class CommercialStore {
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_payment_attempts_order ON payment_attempts(order_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS payment_notifications (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        order_no TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')),
+        payload TEXT NOT NULL DEFAULT '{}',
+        error_message TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_payment_notifications_created ON payment_notifications(created_at DESC);
 
       CREATE TABLE IF NOT EXISTS email_verification_codes (
         id TEXT PRIMARY KEY,
@@ -381,6 +411,7 @@ export class CommercialStore {
     ] as const) {
       if (!orderColumns.some(column => column.name === name)) this.db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${definition}`);
     }
+    this.migratePaymentChannelSchema();
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
 
     const settings = this.db.prepare("INSERT OR IGNORE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)");
@@ -418,6 +449,50 @@ export class CommercialStore {
 
     const count = Number((this.db.prepare("SELECT COUNT(*) AS count FROM plans").get() as any).count);
     if (count === 0) this.seedPlans();
+  }
+
+  private migratePaymentChannelSchema() {
+    const columns = this.db.prepare("PRAGMA table_info(payment_channels)").all() as Array<{ name: string }>;
+    const requiredColumns = ["currency", "callback_base_url", "app_id", "private_key_encrypted", "public_key", "certificate_serial", "api_v3_key_encrypted", "archived"];
+    const tableSql = String((this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'payment_channels'").get() as any)?.sql || "");
+    const requiresRebuild = requiredColumns.some(name => !columns.some(column => column.name === name)) || /provider\s+IN\s*\(\s*'manual'\s*,\s*'epay'/i.test(tableSql);
+    if (!requiresRebuild) return;
+    this.db.transaction(() => {
+      this.db.exec(`
+        ALTER TABLE payment_channels RENAME TO payment_channels_legacy;
+        CREATE TABLE payment_channels (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          instructions TEXT NOT NULL DEFAULT '',
+          payment_url TEXT NOT NULL DEFAULT '',
+          gateway_url TEXT NOT NULL DEFAULT '',
+          merchant_id TEXT NOT NULL DEFAULT '',
+          merchant_secret_encrypted TEXT NOT NULL DEFAULT '',
+          channel TEXT NOT NULL DEFAULT 'alipay',
+          currency TEXT NOT NULL DEFAULT 'CNY',
+          callback_base_url TEXT NOT NULL DEFAULT '',
+          app_id TEXT NOT NULL DEFAULT '',
+          private_key_encrypted TEXT NOT NULL DEFAULT '',
+          public_key TEXT NOT NULL DEFAULT '',
+          certificate_serial TEXT NOT NULL DEFAULT '',
+          api_v3_key_encrypted TEXT NOT NULL DEFAULT '',
+          sandbox INTEGER NOT NULL DEFAULT 0,
+          archived INTEGER NOT NULL DEFAULT 0,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO payment_channels (
+          id, name, provider, enabled, instructions, payment_url, gateway_url, merchant_id,
+          merchant_secret_encrypted, channel, sandbox, sort_order, created_at, updated_at
+        ) SELECT id, name, provider, enabled, instructions, payment_url, gateway_url, merchant_id,
+          merchant_secret_encrypted, channel, sandbox, sort_order, created_at, updated_at
+        FROM payment_channels_legacy;
+        DROP TABLE payment_channels_legacy;
+      `);
+    })();
   }
 
   private migratePaymentChannels() {
@@ -560,7 +635,7 @@ export class CommercialStore {
     }
     const methods = Array.isArray(value) ? value.map((item: any, index): PaymentMethod | null => {
       if (!item || typeof item !== "object") return null;
-      const type = ["manual", "alipay", "wechat", "epay"].includes(item.type) ? item.type : "manual";
+      const type = ["manual", "alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt"].includes(item.type) ? item.type : "manual";
       return {
         id: String(item.id || "").trim(),
         name: String(item.name || "").trim(),
@@ -574,12 +649,16 @@ export class CommercialStore {
     return methods.filter(item => includeDisabled || item.enabled).sort((a, b) => a.sortOrder - b.sortOrder);
   }
 
-  getPaymentMethods(includeDisabled = false, includeSecrets = false): PaymentMethod[] {
-    const rows = this.db.prepare(`SELECT * FROM payment_channels ${includeDisabled ? "" : "WHERE enabled = 1"} ORDER BY sort_order, created_at`).all() as any[];
+  getPaymentMethods(includeDisabled = false, includeSecrets = false, includeArchived = false): PaymentMethod[] {
+    const filters = [
+      includeDisabled ? "" : "enabled = 1",
+      includeArchived ? "" : "archived = 0",
+    ].filter(Boolean);
+    const rows = this.db.prepare(`SELECT * FROM payment_channels ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""} ORDER BY sort_order, created_at`).all() as any[];
     return rows.map(row => ({
       id: row.id,
       name: row.name,
-      type: row.provider === "epay" ? "epay" : "manual",
+      type: row.provider === "alipay_official" ? "alipay" : row.provider === "wechat_official" ? "wechat" : row.provider,
       provider: row.provider,
       enabled: Boolean(row.enabled),
       instructions: row.instructions || "",
@@ -589,6 +668,15 @@ export class CommercialStore {
       merchantSecret: includeSecrets && row.merchant_secret_encrypted ? this.vault.decrypt(row.merchant_secret_encrypted) : undefined,
       merchantSecretConfigured: includeDisabled || includeSecrets ? Boolean(row.merchant_secret_encrypted) : undefined,
       channel: includeDisabled || includeSecrets ? row.channel : undefined,
+      currency: includeDisabled || includeSecrets ? row.currency || "CNY" : undefined,
+      callbackBaseUrl: includeDisabled || includeSecrets ? row.callback_base_url || "" : undefined,
+      appId: includeDisabled || includeSecrets ? row.app_id || "" : undefined,
+      privateKey: includeSecrets && row.private_key_encrypted ? this.vault.decrypt(row.private_key_encrypted) : undefined,
+      privateKeyConfigured: includeDisabled || includeSecrets ? Boolean(row.private_key_encrypted) : undefined,
+      publicKey: includeDisabled || includeSecrets ? row.public_key || "" : undefined,
+      certificateSerial: includeDisabled || includeSecrets ? row.certificate_serial || "" : undefined,
+      apiV3Key: includeSecrets && row.api_v3_key_encrypted ? this.vault.decrypt(row.api_v3_key_encrypted) : undefined,
+      apiV3KeyConfigured: includeDisabled || includeSecrets ? Boolean(row.api_v3_key_encrypted) : undefined,
       sandbox: includeDisabled || includeSecrets ? Boolean(row.sandbox) : undefined,
       sortOrder: row.sort_order,
     }));
@@ -605,7 +693,7 @@ export class CommercialStore {
       if (!/^[a-z0-9_-]{2,32}$/.test(id)) throw new Error("支付方式标识必须为 2 到 32 位小写字母、数字、下划线或短横线");
       if (ids.has(id)) throw new Error(`支付方式标识 ${id} 重复`);
       if (!name || name.length > 40) throw new Error("支付方式名称必须为 1 到 40 位");
-      if (!["manual", "alipay", "wechat", "epay"].includes(type)) throw new Error("支付方式类型无效");
+      if (!["manual", "alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt"].includes(type)) throw new Error("支付方式类型无效");
       ids.add(id);
       return {
         id,
@@ -619,35 +707,76 @@ export class CommercialStore {
     });
     if (!methods.some(method => method.enabled)) throw new Error("至少需要启用一种支付方式");
     const save = this.db.transaction(() => {
-      const existing = new Map((this.db.prepare("SELECT id, merchant_secret_encrypted FROM payment_channels").all() as any[])
-        .map(row => [row.id, row.merchant_secret_encrypted]));
+      const existing = new Map((this.db.prepare("SELECT id, merchant_secret_encrypted, private_key_encrypted, api_v3_key_encrypted FROM payment_channels").all() as any[])
+        .map(row => [row.id, row]));
       const timestamp = nowIso();
       for (const method of methods) {
         const raw = value.find((item: any) => String(item?.id || "").trim().toLowerCase() === method.id) as any;
-        const provider = raw?.provider === "epay" || method.type === "epay" ? "epay" : "manual";
+        const supportedProviders: PaymentProvider[] = ["manual", "epay", "mgate", "tokenpay", "epusdt", "alipay_official", "wechat_official"];
+        const requestedProvider = String(raw?.provider || "");
+        const provider = supportedProviders.includes(requestedProvider as PaymentProvider)
+          ? requestedProvider as PaymentProvider
+          : method.type === "epay" ? "epay"
+            : method.type === "mgate" || method.type === "tokenpay" || method.type === "epusdt" ? method.type
+              : "manual";
         const gatewayUrl = String(raw?.gatewayUrl || "").trim().slice(0, 1000);
         const merchantId = String(raw?.merchantId || "").trim().slice(0, 100);
-        const channel = ["alipay", "wxpay", "qqpay"].includes(raw?.channel) ? raw.channel : "alipay";
+        const channel = String(raw?.channel || "alipay").trim().slice(0, 50);
+        const currency = String(raw?.currency || "CNY").trim().toUpperCase().slice(0, 20);
+        const callbackBaseUrl = String(raw?.callbackBaseUrl || "").trim().replace(/\/+$/, "").slice(0, 1000);
+        const appId = String(raw?.appId || "").trim().slice(0, 100);
+        const publicKey = String(raw?.publicKey || "").trim().slice(0, 20_000);
+        const certificateSerial = String(raw?.certificateSerial || "").trim().slice(0, 200);
         const suppliedSecret = String(raw?.merchantSecret || "");
-        const encryptedSecret = suppliedSecret ? this.vault.encrypt(suppliedSecret) : existing.get(method.id) || "";
-        if (provider === "epay" && method.enabled && (!gatewayUrl || !merchantId || !encryptedSecret)) {
-          throw new Error(`支付通道 ${method.name} 启用前必须填写网关地址、商户 PID 和商户密钥`);
+        const suppliedPrivateKey = String(raw?.privateKey || "");
+        const suppliedApiV3Key = String(raw?.apiV3Key || "");
+        const retained = existing.get(method.id);
+        const encryptedSecret = suppliedSecret ? this.vault.encrypt(suppliedSecret) : retained?.merchant_secret_encrypted || "";
+        const encryptedPrivateKey = suppliedPrivateKey ? this.vault.encrypt(suppliedPrivateKey) : retained?.private_key_encrypted || "";
+        const encryptedApiV3Key = suppliedApiV3Key ? this.vault.encrypt(suppliedApiV3Key) : retained?.api_v3_key_encrypted || "";
+        if (callbackBaseUrl) {
+          const callback = new URL(callbackBaseUrl);
+          if (!['http:', 'https:'].includes(callback.protocol)) throw new Error(`支付通道 ${method.name} 的回调域名必须是 HTTP 或 HTTPS 地址`);
+        }
+        if (provider !== "manual" && method.enabled && !gatewayUrl && !["alipay_official", "wechat_official"].includes(provider)) {
+          throw new Error(`支付通道 ${method.name} 启用前必须填写网关或 API 地址`);
+        }
+        if (["epay", "mgate", "tokenpay"].includes(provider) && method.enabled && (!merchantId || !encryptedSecret)) {
+          throw new Error(`支付通道 ${method.name} 启用前必须填写商户标识和商户密钥`);
+        }
+        if (provider === "epusdt" && method.enabled && !encryptedSecret) throw new Error(`支付通道 ${method.name} 启用前必须填写签名 Token`);
+        if (provider === "alipay_official" && method.enabled && (!merchantId || !encryptedPrivateKey || !publicKey)) {
+          throw new Error(`支付通道 ${method.name} 启用前必须填写 APPID、应用私钥和支付宝公钥`);
+        }
+        if (provider === "wechat_official" && method.enabled && (!merchantId || !appId || !encryptedPrivateKey || !publicKey || !certificateSerial || !encryptedApiV3Key)) {
+          throw new Error(`支付通道 ${method.name} 启用前必须填写 AppID、商户号、商户私钥、平台证书、证书序列号和 API v3 密钥`);
         }
         this.db.prepare(`
           INSERT INTO payment_channels (
             id, name, provider, enabled, instructions, payment_url, gateway_url, merchant_id,
-            merchant_secret_encrypted, channel, sandbox, sort_order, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            merchant_secret_encrypted, channel, currency, callback_base_url, app_id, private_key_encrypted,
+            public_key, certificate_serial, api_v3_key_encrypted, sandbox, sort_order, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider = excluded.provider,
             enabled = excluded.enabled, instructions = excluded.instructions, payment_url = excluded.payment_url,
             gateway_url = excluded.gateway_url, merchant_id = excluded.merchant_id,
             merchant_secret_encrypted = excluded.merchant_secret_encrypted, channel = excluded.channel,
-            sandbox = excluded.sandbox, sort_order = excluded.sort_order, updated_at = excluded.updated_at
+            currency = excluded.currency, callback_base_url = excluded.callback_base_url, app_id = excluded.app_id,
+            private_key_encrypted = excluded.private_key_encrypted, public_key = excluded.public_key,
+            certificate_serial = excluded.certificate_serial, api_v3_key_encrypted = excluded.api_v3_key_encrypted,
+            sandbox = excluded.sandbox, archived = 0, sort_order = excluded.sort_order, updated_at = excluded.updated_at
         `).run(method.id, method.name, provider, method.enabled ? 1 : 0, method.instructions, method.paymentUrl,
-          gatewayUrl, merchantId, encryptedSecret, channel, raw?.sandbox === true ? 1 : 0, method.sortOrder, timestamp, timestamp);
+          gatewayUrl, merchantId, encryptedSecret, channel, currency, callbackBaseUrl, appId, encryptedPrivateKey,
+          publicKey, certificateSerial, encryptedApiV3Key, raw?.sandbox === true ? 1 : 0, method.sortOrder, timestamp, timestamp);
       }
       const retained = methods.map(method => method.id);
-      if (retained.length) this.db.prepare(`DELETE FROM payment_channels WHERE id NOT IN (${retained.map(() => "?").join(",")})`).run(...retained);
+      if (retained.length) {
+        const placeholders = retained.map(() => "?").join(",");
+        this.db.prepare(`UPDATE payment_channels SET enabled = 0, archived = 1, updated_at = ? WHERE id NOT IN (${placeholders}) AND id IN (SELECT DISTINCT payment_provider FROM orders)`)
+          .run(nowIso(), ...retained);
+        this.db.prepare(`DELETE FROM payment_channels WHERE id NOT IN (${placeholders}) AND id NOT IN (SELECT DISTINCT payment_provider FROM orders)`)
+          .run(...retained);
+      }
     });
     save();
     return this.getPaymentMethods(true);
@@ -1035,7 +1164,12 @@ export class CommercialStore {
     return this.db.transaction(() => {
       const order = this.db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as any;
       if (!order) throw new Error("订单不存在");
-      if (order.status === "paid") return this.getOrder(orderId);
+      if (order.status === "paid") {
+        if (order.payment_provider !== provider || (order.payment_trade_no && order.payment_trade_no !== tradeNo)) {
+          throw new Error("订单已经由其他支付交易完成");
+        }
+        return this.getOrder(orderId);
+      }
       if (order.status !== "pending") throw new Error("只有待支付订单可以确认收款");
       if (order.expires_at && order.expires_at <= nowIso()) {
         this.db.prepare("UPDATE orders SET status = 'expired', updated_at = ? WHERE id = ?").run(nowIso(), orderId);
@@ -1097,6 +1231,15 @@ export class CommercialStore {
     return this.getPaymentAttempt(id)!;
   }
 
+  createFailedPaymentAttempt(orderId: string, provider: string, requestPayload: unknown, error: unknown, expiresAt?: string | null) {
+    const id = randomUUID();
+    const timestamp = nowIso();
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.db.prepare(`INSERT INTO payment_attempts (id, order_id, provider, status, request_payload, error_message, expires_at, created_at, updated_at) VALUES (?, ?, ?, 'failed', ?, ?, ?, ?, ?)`)
+      .run(id, orderId, provider, JSON.stringify(requestPayload || {}), errorMessage.slice(0, 1000), expiresAt || null, timestamp, timestamp);
+    return this.getPaymentAttempt(id)!;
+  }
+
   getPaymentAttempt(id: string) {
     return this.db.prepare(`SELECT id, order_id AS orderId, provider, status, provider_trade_no AS providerTradeNo,
       checkout_url AS checkoutUrl, error_message AS errorMessage, expires_at AS expiresAt, paid_at AS paidAt,
@@ -1114,10 +1257,34 @@ export class CommercialStore {
   completePaymentAttempt(orderId: string, provider: string, tradeNo: string, payload: unknown) {
     return this.db.transaction(() => {
       const result = this.markOrderPaid(orderId, provider, tradeNo);
-      this.db.prepare(`UPDATE payment_attempts SET status = 'paid', provider_trade_no = ?, response_payload = ?, paid_at = ?, updated_at = ? WHERE order_id = ? AND provider = ? AND status IN ('created', 'pending')`)
+      this.db.prepare(`UPDATE payment_attempts SET status = 'paid', provider_trade_no = ?, response_payload = ?, paid_at = COALESCE(paid_at, ?), updated_at = ? WHERE order_id = ? AND provider = ? AND status IN ('created', 'pending', 'paid')`)
         .run(tradeNo, JSON.stringify(payload || {}), nowIso(), nowIso(), orderId, provider);
       return result;
     })();
+  }
+
+  closeOpenPaymentAttempts(orderId: string) {
+    this.db.prepare("UPDATE payment_attempts SET status = 'closed', updated_at = ? WHERE order_id = ? AND status IN ('created', 'pending')")
+      .run(nowIso(), orderId);
+  }
+
+  recordPaymentNotification(channelId: string, provider: string, orderNo: string, status: "accepted" | "rejected", payload: unknown, errorMessage = "") {
+    const sanitize = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(sanitize);
+      if (!value || typeof value !== "object") return value;
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        /sign|signature|ciphertext|private|secret|key/i.test(key) ? "[REDACTED]" : sanitize(item),
+      ]));
+    };
+    this.db.prepare("INSERT INTO payment_notifications (id, channel_id, provider, order_no, status, payload, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), channelId, provider, orderNo.slice(0, 100), status, JSON.stringify(sanitize(payload || {})).slice(0, 20_000), errorMessage.slice(0, 1000), nowIso());
+  }
+
+  listPaymentNotifications() {
+    return this.db.prepare(`SELECT id, channel_id AS channelId, provider, order_no AS orderNo, status,
+      payload, error_message AS errorMessage, created_at AS createdAt
+      FROM payment_notifications ORDER BY created_at DESC LIMIT 500`).all();
   }
 
   private grantOrderEntitlement(order: any) {

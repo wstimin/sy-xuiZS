@@ -1,6 +1,8 @@
 export type UserRole = 'user' | 'admin';
 export type QuotaMode = 'none' | 'limited' | 'unlimited';
 export type DurationUnit = 'days' | 'months' | 'years' | 'lifetime';
+export type PaymentProvider = 'manual' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'alipay_official' | 'wechat_official';
+export type PaymentMethodType = 'manual' | 'alipay' | 'wechat' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt';
 
 export interface CurrentUser {
   id: string;
@@ -14,18 +16,60 @@ export interface CurrentUser {
 export interface PaymentMethod {
   id: string;
   name: string;
-  type: 'manual' | 'alipay' | 'wechat' | 'epay';
+  type: PaymentMethodType;
   enabled: boolean;
   instructions: string;
   paymentUrl: string;
   sortOrder: number;
-  provider?: 'manual' | 'epay';
+  provider?: PaymentProvider;
   gatewayUrl?: string;
   merchantId?: string;
   merchantSecret?: string;
   merchantSecretConfigured?: boolean;
-  channel?: 'alipay' | 'wxpay' | 'qqpay';
+  channel?: string;
+  currency?: string;
+  callbackBaseUrl?: string;
+  callbackUrl?: string;
+  appId?: string;
+  privateKey?: string;
+  privateKeyConfigured?: boolean;
+  publicKey?: string;
+  certificateSerial?: string;
+  apiV3Key?: string;
+  apiV3KeyConfigured?: boolean;
   sandbox?: boolean;
+}
+
+export interface PaymentAttempt {
+  id: string;
+  orderId: string;
+  orderNo: string;
+  provider: string;
+  status: 'created' | 'pending' | 'paid' | 'failed' | 'closed';
+  providerTradeNo?: string;
+  checkoutUrl?: string;
+  errorMessage?: string;
+  expiresAt?: string;
+  paidAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentNotification {
+  id: string;
+  channelId: string;
+  provider: string;
+  orderNo: string;
+  status: 'accepted' | 'rejected';
+  payload: string;
+  errorMessage: string;
+  createdAt: string;
+}
+
+export interface PaymentCheckout {
+  attemptId: string;
+  checkoutType: 'redirect' | 'qrcode';
+  checkoutUrl: string;
 }
 
 export interface EmailSettings {

@@ -4,6 +4,7 @@ import express from "express";
 import { AddressInfo } from "node:net";
 import { attachCommercialUser, createCommercialRouter } from "./commercial-api.js";
 import { CommercialStore } from "./commercial-store.js";
+import { epaySign } from "./payment-service.js";
 
 function sessionCookie(response: Response) {
   const header = response.headers.get("set-cookie") || "";
@@ -297,6 +298,69 @@ test("email registration, payment settings and provider validation align across 
     const account = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
     assert.equal(account.paymentInstructions, "请将订单号填写为付款备注。");
     assert.equal(account.paymentMethods[0].id, "alipay");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});
+
+test("online payment callbacks reject wrong amounts and grant benefits only once", async () => {
+  const store = new CommercialStore(":memory:");
+  const app = express();
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+
+  try {
+    store.bootstrapAdmin("payment-admin", "strong-password");
+    store.setPaymentMethods([{
+      id: "epay-live", name: "在线支付", type: "epay", provider: "epay", enabled: true,
+      instructions: "在线付款", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001",
+      merchantSecret: "callback-secret", channel: "alipay", sortOrder: 10,
+    }]);
+    const user = store.createUser("callback-user", "strong-password", "user", "callback@example.com");
+    const login = await fetch(`${base}/auth/login`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ identifier: user.email, password: "strong-password" }),
+    });
+    const userCookie = sessionCookie(login);
+    const orderResponse = await fetch(`${base}/orders`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: userCookie },
+      body: JSON.stringify({ planId: store.listPlans()[0].id, paymentProvider: "epay-live" }),
+    });
+    assert.equal(orderResponse.status, 201);
+    const order = (await orderResponse.json() as any).order;
+
+    const callback = (money: string) => {
+      const params: Record<string, string> = {
+        pid: "1001", out_trade_no: order.orderNo, trade_no: "EPAY-TRADE-1",
+        trade_status: "TRADE_SUCCESS", money, sign_type: "MD5",
+      };
+      params.sign = epaySign(params, "callback-secret");
+      return fetch(`${base}/payment/epay/epay-live/notify?${new URLSearchParams(params)}`);
+    };
+
+    const wrongAmount = await callback("99.00");
+    assert.equal(wrongAmount.status, 400);
+    assert.equal(store.getOrder(order.id).status, "pending");
+    assert.equal(store.listEntitlements(user.id).length, 0);
+
+    const paid = await callback((order.amountCents / 100).toFixed(2));
+    assert.equal(paid.status, 200);
+    assert.equal(await paid.text(), "success");
+    assert.equal(store.getOrder(order.id).status, "paid");
+    assert.equal(store.listEntitlements(user.id).length, 1);
+
+    const repeated = await callback((order.amountCents / 100).toFixed(2));
+    assert.equal(repeated.status, 200);
+    assert.equal(store.listEntitlements(user.id).length, 1);
+    assert.equal(store.listPaymentNotifications().filter((item: any) => item.status === "accepted").length, 2);
+    assert.equal(store.listPaymentNotifications().filter((item: any) => item.status === "rejected").length, 1);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     store.close();

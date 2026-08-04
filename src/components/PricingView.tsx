@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Clock3, CreditCard, ExternalLink, Network, ShoppingCart, Terminal } from 'lucide-react';
-import { api, formatMoney, PaymentMethod, Plan, quotaText } from '../commercial';
+import { api, formatMoney, Order, PaymentCheckout, PaymentMethod, Plan, quotaText } from '../commercial';
+import { PaymentCheckoutDialog } from './PaymentCheckoutDialog';
 
 interface PricingViewProps {
   plans: Plan[];
@@ -19,6 +20,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [paymentProvider, setPaymentProvider] = useState('');
+  const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
 
   useEffect(() => {
     api<{ paymentMethods: PaymentMethod[] }>('/api/payment-methods').then(result => {
@@ -34,10 +36,15 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
     }
     setOrdering(plan.id);
     try {
-      const data = await api<{ order: { orderNo: string }; payment: { checkoutUrl: string } | null }>('/api/orders', { method: 'POST', body: JSON.stringify({ planId: plan.id, paymentProvider }) });
+      const data = await api<{ order: Order; payment: PaymentCheckout | null }>('/api/orders', { method: 'POST', body: JSON.stringify({ planId: plan.id, paymentProvider }) });
       await onOrderCreated();
-      if (data.payment?.checkoutUrl) {
+      if (data.payment?.checkoutType === 'redirect') {
         window.location.assign(data.payment.checkoutUrl);
+        return;
+      }
+      if (data.payment?.checkoutType === 'qrcode') {
+        setSelectedPlan(null);
+        setCheckout({ order: data.order, payment: data.payment });
         return;
       }
       showToast('订单已创建', `订单号 ${data.order.orderNo}，请按账户页说明完成付款`, 'success');
@@ -92,6 +99,11 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
           <button className="payment-confirm" disabled={ordering === selectedPlan.id || !paymentProvider} onClick={() => void order(selectedPlan)}><ShoppingCart />{ordering === selectedPlan.id ? '正在创建订单...' : '确认创建订单'}</button>
         </section>
       </div>}
+      {checkout && <PaymentCheckoutDialog order={checkout.order} payment={checkout.payment} onClose={() => setCheckout(null)} onPaid={() => {
+        setCheckout(null);
+        void onOrderCreated();
+        showToast('支付成功', '套餐权益已经自动发放到账户', 'success');
+      }} />}
     </div>
   );
 };

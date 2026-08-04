@@ -421,6 +421,81 @@ test("payment secrets are encrypted and excluded from public channel data", () =
   }
 });
 
+test("official payment credentials are encrypted and only expose configured markers", () => {
+  const store = createStore();
+  try {
+    store.setPaymentMethods([
+      {
+        id: "alipay-official", name: "支付宝官方", type: "alipay", provider: "alipay_official", enabled: true,
+        instructions: "扫码支付", paymentUrl: "", merchantId: "2026000000000000", privateKey: "alipay-private-key",
+        publicKey: "alipay-public-key", sortOrder: 10,
+      },
+      {
+        id: "wechat-official", name: "微信支付官方", type: "wechat", provider: "wechat_official", enabled: true,
+        instructions: "扫码支付", paymentUrl: "", appId: "wx-app-id", merchantId: "1900000001",
+        certificateSerial: "SERIAL1", privateKey: "wechat-private-key", publicKey: "wechat-platform-key",
+        apiV3Key: "12345678901234567890123456789012", sortOrder: 20,
+      },
+    ]);
+    const publicMethods = store.getPaymentMethods();
+    assert.equal(publicMethods[0].privateKey, undefined);
+    assert.equal(publicMethods[1].apiV3Key, undefined);
+    const adminMethods = store.getPaymentMethods(true);
+    assert.equal(adminMethods[0].privateKeyConfigured, true);
+    assert.equal(adminMethods[1].privateKeyConfigured, true);
+    assert.equal(adminMethods[1].apiV3KeyConfigured, true);
+    assert.equal(adminMethods[0].privateKey, undefined);
+    assert.equal(adminMethods[1].apiV3Key, undefined);
+    const privateCiphertext = (store.db.prepare("SELECT private_key_encrypted AS value FROM payment_channels WHERE id = ?").get("alipay-official") as any).value;
+    const apiV3Ciphertext = (store.db.prepare("SELECT api_v3_key_encrypted AS value FROM payment_channels WHERE id = ?").get("wechat-official") as any).value;
+    assert.ok(privateCiphertext.startsWith("v1."));
+    assert.ok(apiV3Ciphertext.startsWith("v1."));
+    assert.ok(!privateCiphertext.includes("alipay-private-key"));
+    assert.ok(!apiV3Ciphertext.includes("12345678901234567890123456789012"));
+  } finally {
+    store.close();
+  }
+});
+
+test("channels referenced by historical orders are archived instead of deleting callback credentials", () => {
+  const store = createStore();
+  try {
+    store.setPaymentMethods([{
+      id: "epay-history", name: "历史易支付", type: "epay", provider: "epay", enabled: true,
+      instructions: "在线支付", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001",
+      merchantSecret: "history-secret", channel: "alipay", sortOrder: 10,
+    }]);
+    const user = store.createUser("history-user", "strong-password");
+    store.createOrder(user.id, store.listPlans()[0].id, "epay-history");
+    store.setPaymentMethods([{
+      id: "manual", name: "人工收款", type: "manual", provider: "manual", enabled: true,
+      instructions: "联系管理员", paymentUrl: "", sortOrder: 10,
+    }]);
+    assert.equal(store.getPaymentMethods(true).some(method => method.id === "epay-history"), false);
+    const archived = store.getPaymentMethods(true, true, true).find(method => method.id === "epay-history");
+    assert.ok(archived);
+    assert.equal(archived.enabled, false);
+    assert.equal(archived.merchantSecret, "history-secret");
+  } finally {
+    store.close();
+  }
+});
+
+test("duplicate payment completion grants one entitlement and rejects another trade number", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("idempotent-user", "strong-password");
+    const order = store.createOrder(user.id, store.listPlans()[0].id, "manual");
+    store.markOrderPaid(order.id, "manual", "trade-one");
+    store.markOrderPaid(order.id, "manual", "trade-one");
+    assert.equal(store.listEntitlements(user.id).length, 1);
+    assert.throws(() => store.markOrderPaid(order.id, "manual", "trade-two"), /其他支付交易/);
+    assert.equal(store.listEntitlements(user.id).length, 1);
+  } finally {
+    store.close();
+  }
+});
+
 test("epay URLs and callback signatures use the documented MD5 scheme", () => {
   const params = { pid: "1001", out_trade_no: "ORDER1", money: "9.90", sign_type: "MD5" };
   const sign = epaySign(params, "secret");

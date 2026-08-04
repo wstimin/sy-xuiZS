@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response, Router } from "express";
 import { CommercialStore, DurationUnit, EntitlementGrantInput, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
 import { sendSmtpMail } from "./email-service.js";
-import { createEpayUrl, verifyEpaySignature } from "./payment-service.js";
+import { getPaymentDriver, PaymentChannelConfig, PaymentProvider } from "./payment-service.js";
 
 const USER_COOKIE_NAME = "xui_user_session";
 const ADMIN_COOKIE_NAME = "xui_admin_session";
@@ -163,9 +163,63 @@ async function sendConfiguredMail(store: CommercialStore, recipient: string, pur
   }
 }
 
-function epayParams(req: Request) {
+function paymentParams(req: Request) {
   const source = { ...(req.query || {}), ...(req.body || {}) } as Record<string, unknown>;
-  return Object.fromEntries(Object.entries(source).map(([key, value]) => [key, Array.isArray(value) ? String(value[0] || "") : String(value || "")])) as Record<string, string>;
+  return Object.fromEntries(Object.entries(source).map(([key, value]) => [key, Array.isArray(value) ? String(value[0] || "") : value && typeof value === "object" ? JSON.stringify(value) : String(value || "")])) as Record<string, string>;
+}
+
+function paymentHeaders(req: Request) {
+  return Object.fromEntries(Object.entries(req.headers).map(([key, value]) => [key.toLowerCase(), Array.isArray(value) ? value.join(",") : String(value || "")])) as Record<string, string>;
+}
+
+function channelConfig(method: ReturnType<CommercialStore["getPaymentMethods"]>[number]): PaymentChannelConfig {
+  return {
+    id: method.id,
+    provider: method.provider as PaymentProvider,
+    gatewayUrl: method.gatewayUrl,
+    merchantId: method.merchantId,
+    merchantSecret: method.merchantSecret,
+    channel: method.channel,
+    currency: method.currency,
+    callbackBaseUrl: method.callbackBaseUrl,
+    appId: method.appId,
+    privateKey: method.privateKey,
+    publicKey: method.publicKey,
+    certificateSerial: method.certificateSerial,
+    apiV3Key: method.apiV3Key,
+  };
+}
+
+function paymentBaseUrl(req: Request, store: CommercialStore, callbackBaseUrl = "") {
+  return callbackBaseUrl.replace(/\/+$/, "") || publicBaseUrl(req, store);
+}
+
+async function createCheckout(req: Request, store: CommercialStore, order: any) {
+  const method = store.getPaymentMethods(true, true).find(item => item.id === order.paymentProvider);
+  if (!method?.enabled) throw new Error("订单所选支付方式已停用，请取消订单后重新下单");
+  if (!method.provider || method.provider === "manual") return null;
+  const provider = method.provider as PaymentProvider;
+  const driver = getPaymentDriver(provider);
+  const baseUrl = paymentBaseUrl(req, store, method.callbackBaseUrl);
+  const snapshot = JSON.parse(order.planSnapshot || "{}");
+  const user = store.getUserById(order.userId);
+  const requestContext = { provider, channelId: method.id, orderNo: order.orderNo };
+  try {
+    const result = await driver.createCheckout(channelConfig(method), {
+      orderNo: order.orderNo,
+      amountCents: order.amountCents,
+      name: String(snapshot.name || "网络搭建服务"),
+      userKey: user?.email || user?.username || order.userId,
+      notifyUrl: `${baseUrl}/api/payment/${provider}/${encodeURIComponent(method.id)}/notify`,
+      returnUrl: `${baseUrl}/console?payment=return&order=${encodeURIComponent(order.id)}`,
+    });
+    store.closeOpenPaymentAttempts(order.id);
+    const attempt = store.createPaymentAttempt(order.id, method.id, result.checkoutUrl, result.requestPayload, order.expiresAt);
+    return { attemptId: attempt.id, checkoutType: result.type, checkoutUrl: result.checkoutUrl };
+  } catch (error) {
+    store.createFailedPaymentAttempt(order.id, method.id, requestContext, error, order.expiresAt);
+    throw error;
+  }
 }
 
 export function createCommercialRouter(store: CommercialStore) {
@@ -299,19 +353,29 @@ export function createCommercialRouter(store: CommercialStore) {
   router.get("/plans", (_req, res) => res.json({ plans: store.listPlans() }));
   router.get("/payment-methods", (_req, res) => res.json({ paymentMethods: store.getPaymentMethods() }));
 
-  router.all("/payment/epay/:channelId/notify", route((req, res) => {
-    const params = epayParams(req);
-    const channel = store.getPaymentMethods(true, true).find(item => item.id === req.params.channelId && item.provider === "epay");
-    if (!channel?.enabled || !channel.merchantSecret) return res.status(404).send("fail");
-    if (!verifyEpaySignature(params, channel.merchantSecret)) return res.status(400).send("fail");
-    if (params.trade_status && !["TRADE_SUCCESS", "TRADE_FINISHED"].includes(params.trade_status)) return res.status(400).send("fail");
-    const order = store.getOrderByNo(params.out_trade_no || "");
-    if (!order || order.paymentProvider !== channel.id) return res.status(400).send("fail");
-    const paidCents = Math.round(Number(params.money) * 100);
-    if (!Number.isFinite(paidCents) || paidCents !== order.amountCents) return res.status(400).send("fail");
-    store.completePaymentAttempt(order.id, channel.id, params.trade_no || `epay-${order.orderNo}`, params);
-    res.type("text/plain").send("success");
-  }));
+  router.all("/payment/:provider/:channelId/notify", async (req, res) => {
+    const provider = req.params.provider as PaymentProvider;
+    let driver;
+    try { driver = getPaymentDriver(provider); } catch { return res.status(404).type("text/plain").send("fail"); }
+    const channel = store.getPaymentMethods(true, true, true).find(item => item.id === req.params.channelId && item.provider === provider);
+    if (!channel) return res.status(404).type(provider === "wechat_official" ? "application/json" : "text/plain").send(driver.failureResponse);
+    const rawBody = (req as Request & { rawBody?: string }).rawBody;
+    const body = provider === "wechat_official" ? rawBody || JSON.stringify(req.body || {}) : req.body;
+    try {
+      const verified = await driver.verifyNotification(channelConfig(channel), {
+        params: paymentParams(req), body, headers: paymentHeaders(req),
+      });
+      const order = store.getOrderByNo(verified.orderNo);
+      if (!order || order.paymentProvider !== channel.id) throw new Error("支付通知订单或渠道不匹配");
+      if (verified.amountCents !== order.amountCents) throw new Error("支付通知金额与订单金额不一致");
+      store.completePaymentAttempt(order.id, channel.id, verified.tradeNo || `${provider}-${order.orderNo}`, verified.payload);
+      store.recordPaymentNotification(channel.id, provider, verified.orderNo, "accepted", verified.payload);
+      res.type(provider === "wechat_official" ? "application/json" : "text/plain").send(driver.successResponse);
+    } catch (error) {
+      store.recordPaymentNotification(channel.id, provider, paymentParams(req).out_trade_no || paymentParams(req).OutOrderId || paymentParams(req).order_id || "", "rejected", req.body, message(error));
+      res.status(400).type(provider === "wechat_official" ? "application/json" : "text/plain").send(driver.failureResponse);
+    }
+  });
 
   router.get("/account", requireCommercialUser, (_req, res) => {
     const user = commercialUser(res);
@@ -325,28 +389,23 @@ export function createCommercialRouter(store: CommercialStore) {
     });
   });
 
-  router.post("/orders", requireCommercialUser, route((req, res) => {
+  router.post("/orders", requireCommercialUser, route(async (req, res) => {
     const order = store.createOrder(
       commercialUser(res).id,
       String(req.body?.planId || ""),
       String(req.body?.paymentProvider || "manual"),
     );
-    const method = store.getPaymentMethods(true, true).find(item => item.id === order.paymentProvider);
-    if (method?.provider === "epay") {
-      const baseUrl = publicBaseUrl(req, store);
-      const snapshot = JSON.parse(order.planSnapshot || "{}");
-      const checkoutUrl = createEpayUrl({
-        gatewayUrl: method.gatewayUrl || "", merchantId: method.merchantId || "",
-        merchantSecret: method.merchantSecret || "", channel: method.channel || "alipay",
-      }, {
-        orderNo: order.orderNo, amountCents: order.amountCents, name: String(snapshot.name || "网络交付服务"),
-        notifyUrl: `${baseUrl}/api/payment/epay/${encodeURIComponent(method.id)}/notify`,
-        returnUrl: `${baseUrl}/console?payment=return&order=${encodeURIComponent(order.id)}`,
-      });
-      const attempt = store.createPaymentAttempt(order.id, method.id, checkoutUrl, { channel: method.channel }, order.expiresAt);
-      return res.status(201).json({ success: true, order, payment: { attemptId: attempt.id, checkoutUrl } });
-    }
-    res.status(201).json({ success: true, order, payment: null });
+    const payment = await createCheckout(req, store, order);
+    res.status(201).json({ success: true, order, payment });
+  }));
+
+  router.post("/orders/:id/checkout", requireCommercialUser, route(async (req, res) => {
+    store.expirePendingOrders();
+    const order = store.getOrder(req.params.id);
+    if (!order || order.userId !== commercialUser(res).id) return res.status(404).json({ success: false, error: "订单不存在" });
+    if (order.status !== "pending") throw new Error("只有待付款订单可以继续支付");
+    const payment = await createCheckout(req, store, order);
+    res.json({ success: true, order, payment });
   }));
 
   router.get("/orders/:id/status", requireCommercialUser, route((req, res) => {
@@ -367,6 +426,7 @@ export function createCommercialRouter(store: CommercialStore) {
   router.get("/admin/entitlements", requireAdmin, (_req, res) => res.json({ entitlements: store.listAllEntitlements() }));
   router.get("/admin/deployments", requireAdmin, (_req, res) => res.json({ deployments: store.listDeployments() }));
   router.get("/admin/payment-attempts", requireAdmin, (_req, res) => res.json({ attempts: store.listPaymentAttempts() }));
+  router.get("/admin/payment-notifications", requireAdmin, (_req, res) => res.json({ notifications: store.listPaymentNotifications() }));
   router.get("/admin/usage-ledger", requireAdmin, (_req, res) => res.json({ entries: store.listUsageLedger() }));
   router.get("/admin/audit-logs", requireAdmin, (_req, res) => res.json({ logs: store.listAdminAuditLogs() }));
   router.get("/admin/users/:id/detail", requireAdmin, route((req, res) => {
@@ -380,7 +440,12 @@ export function createCommercialRouter(store: CommercialStore) {
       panelDeployEnabled: store.getSetting("panel_deploy_enabled", "true") === "true",
       nodeDeployEnabled: store.getSetting("node_deploy_enabled", "true") === "true",
       paymentInstructions: store.getSetting("payment_instructions", "下单后请联系管理员完成支付确认。"),
-      paymentMethods: store.getPaymentMethods(true),
+      paymentMethods: store.getPaymentMethods(true).map(method => ({
+        ...method,
+        callbackUrl: method.provider && method.provider !== "manual"
+          ? `${paymentBaseUrl(_req, store, method.callbackBaseUrl)}/api/payment/${method.provider}/${encodeURIComponent(method.id)}/notify`
+          : "",
+      })),
       email: store.getEmailSettings(),
       orderExpiryMinutes: Number(store.getSetting("order_expiry_minutes", "30")) || 30,
       adminPath: store.getAdminPath(),

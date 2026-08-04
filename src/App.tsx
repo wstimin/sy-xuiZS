@@ -107,6 +107,47 @@ export default function App() {
     else setAccount(null);
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!user) return;
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('payment') !== 'return') return;
+    const orderId = query.get('order');
+    if (!orderId) return;
+    let stopped = false;
+    let attempts = 0;
+    const checkPayment = async () => {
+      try {
+        const result = await api<{ order: { status: string } }>(`/api/orders/${encodeURIComponent(orderId)}/status`);
+        if (stopped) return;
+        if (result.order.status === 'paid') {
+          await refreshAccount();
+          setCurrentView('account');
+          showToast('支付成功', '套餐权益已经自动发放到账户', 'success');
+          window.history.replaceState({}, '', '/console');
+          return;
+        }
+        if (result.order.status !== 'pending') {
+          setCurrentView('account');
+          showToast('订单未完成', '请在账户订单中查看当前状态', 'warning');
+          window.history.replaceState({}, '', '/console');
+          return;
+        }
+        attempts += 1;
+        if (attempts < 8) window.setTimeout(checkPayment, 2000);
+        else {
+          setCurrentView('account');
+          showToast('正在等待支付结果', '到账后系统会自动发放权益，可在订单记录中刷新查看', 'info');
+          window.history.replaceState({}, '', '/console');
+        }
+      } catch {
+        setCurrentView('account');
+        window.history.replaceState({}, '', '/console');
+      }
+    };
+    void checkPayment();
+    return () => { stopped = true; };
+  }, [user?.id]);
+
   const saveHistory = (newItem: HistoryItem) => {
     setHistoryItems(prev => {
       const updated = [newItem, ...prev].slice(0, 30);

@@ -8,14 +8,16 @@ import {
   LogOut,
   Mail,
   Network,
+  PlayCircle,
   ReceiptText,
   RefreshCw,
   ShieldCheck,
   Terminal,
   UserCircle,
 } from 'lucide-react';
-import { AccountData, api, formatDate, formatMoney, quotaText } from '../commercial';
+import { AccountData, api, formatDate, formatMoney, Order, PaymentCheckout, quotaText } from '../commercial';
 import { ChangePasswordForm } from './ChangePasswordForm';
+import { PaymentCheckoutDialog } from './PaymentCheckoutDialog';
 
 interface AccountViewProps {
   account: AccountData | null;
@@ -41,6 +43,8 @@ function planName(snapshot: string) {
 
 export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRefresh, onLoggedOut, onLogout, showToast }) => {
   const [tab, setTab] = useState<AccountTab>('overview');
+  const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
+  const [payingOrderId, setPayingOrderId] = useState('');
   const activeEntitlements = useMemo(() => account?.entitlements.filter(item => item.status === 'active' && (!item.expiresAt || new Date(item.expiresAt).getTime() > Date.now())) || [], [account]);
   const panelQuota = activeEntitlements.some(item => item.panelMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.panelMode === 'limited' ? item.panelRemaining : 0), 0)} 次`;
   const nodeQuota = activeEntitlements.some(item => item.nodeMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.nodeMode === 'limited' ? item.nodeRemaining : 0), 0)} 次`;
@@ -53,6 +57,26 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       showToast('订单已取消', '该订单不会再发放权益', 'success');
     } catch (error) {
       showToast('取消订单失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    }
+  };
+
+  const continuePayment = async (order: Order) => {
+    setPayingOrderId(order.id);
+    try {
+      const result = await api<{ order: Order; payment: PaymentCheckout | null }>(`/api/orders/${order.id}/checkout`, { method: 'POST' });
+      if (!result.payment) {
+        showToast('该订单为人工收款', '请按付款说明完成支付，并等待管理员确认到账', 'info');
+        return;
+      }
+      if (result.payment.checkoutType === 'redirect') {
+        window.location.assign(result.payment.checkoutUrl);
+        return;
+      }
+      setCheckout({ order: result.order, payment: result.payment });
+    } catch (error) {
+      showToast('发起支付失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setPayingOrderId('');
     }
   };
 
@@ -109,10 +133,10 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       </section>}
 
       {tab === 'orders' && <section className="account-section">
-        <header><div><span>ORDER HISTORY</span><h2>订单记录</h2><p>查看套餐、金额、支付状态和付款方式。</p></div></header>
+        <header><div><span>订单中心</span><h2>订单记录</h2><p>查看套餐、金额、支付状态和付款方式。</p></div></header>
         <div className="account-table-wrap">
           <table className="account-table"><thead><tr><th>订单信息</th><th>金额</th><th>支付方式</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
-            <tbody>{account?.orders.map(order => { const method = paymentMethod(order.paymentProvider); return <tr key={order.id}><td><strong>{planName(order.planSnapshot)}</strong><small>{order.orderNo}</small></td><td className="account-money">{formatMoney(order.amountCents)}</td><td><span>{method?.name || order.paymentProvider || '-'}</span>{order.status === 'pending' && method?.instructions && <small>{method.instructions}</small>}</td><td><span className={`account-status ${order.status}`}>{orderLabels[order.status] || order.status}</span></td><td>{formatDate(order.createdAt)}</td><td>{order.status === 'pending' ? <button type="button" className="account-cancel-order" onClick={() => void cancelOrder(order.id)}>取消订单</button> : <span className="account-muted">-</span>}</td></tr>; })}</tbody>
+            <tbody>{account?.orders.map(order => { const method = paymentMethod(order.paymentProvider); return <tr key={order.id}><td><strong>{planName(order.planSnapshot)}</strong><small>{order.orderNo}</small></td><td className="account-money">{formatMoney(order.amountCents)}</td><td><span>{method?.name || order.paymentProvider || '-'}</span>{order.status === 'pending' && method?.instructions && <small>{method.instructions}</small>}</td><td><span className={`account-status ${order.status}`}>{orderLabels[order.status] || order.status}</span></td><td>{formatDate(order.createdAt)}</td><td>{order.status === 'pending' ? <div className="account-order-actions"><button type="button" className="account-continue-payment" disabled={payingOrderId === order.id} onClick={() => void continuePayment(order)}><PlayCircle /> {payingOrderId === order.id ? '处理中' : '继续支付'}</button><button type="button" className="account-cancel-order" onClick={() => void cancelOrder(order.id)}>取消</button></div> : <span className="account-muted">-</span>}</td></tr>; })}</tbody>
           </table>
           {!account?.orders.length && <AccountEmpty icon={ReceiptText} title="暂无订单" description="购买套餐后，订单会显示在这里。" />}
         </div>
@@ -137,6 +161,11 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
           <div className="account-session"><div><small>当前登录账号</small><strong>{account?.user.email || account?.user.username || '-'}</strong></div><button type="button" onClick={onLogout}><LogOut /> 退出登录</button></div>
         </div>
       </section>}
+      {checkout && <PaymentCheckoutDialog order={checkout.order} payment={checkout.payment} onClose={() => setCheckout(null)} onPaid={() => {
+        setCheckout(null);
+        onRefresh();
+        showToast('支付成功', '套餐权益已经自动发放到账户', 'success');
+      }} />}
     </div>
   );
 };

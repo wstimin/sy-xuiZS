@@ -82,7 +82,7 @@ jobs:
           grep -Fq "\"version\":\"${APP_VERSION}\"" "$RUNNER_TEMP/health.json"
           curl -fsS "http://127.0.0.1:${PORT}/api/auth/bootstrap-status" \
             | grep -Fq '"required":true'
-          node dist/admin-cli.cjs info | grep -Fq '管理员账号: 尚未初始化'
+          node dist/admin-cli.cjs info | grep -Fq "$DATABASE_PATH"
           kill "$server_pid"
           wait "$server_pid" 2>/dev/null || true
           trap - EXIT

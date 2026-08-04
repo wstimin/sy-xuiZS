@@ -43,11 +43,15 @@ import {
   formatDate,
   formatMoney,
   Order,
+  PaymentAttempt,
   PaymentMethod,
+  PaymentNotification,
+  PaymentProvider,
   EmailSettings,
   Plan,
   quotaText,
 } from '../commercial';
+import { copyToClipboard } from '../utils/clipboard';
 import { ChangePasswordForm } from './ChangePasswordForm';
 import { AdminDialog } from './admin/AdminDialog';
 
@@ -148,6 +152,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<UsageLedgerEntry[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [paymentAttempts, setPaymentAttempts] = useState<PaymentAttempt[]>([]);
+  const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
   const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin' });
   const [accountUsername, setAccountUsername] = useState(currentUser.username);
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
@@ -181,7 +187,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const load = async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      const [statsResult, plansResult, ordersResult, usersResult, entitlementResult, deploymentResult, ledgerResult, auditResult, settingsResult] = await Promise.all([
+      const [statsResult, plansResult, ordersResult, usersResult, entitlementResult, deploymentResult, ledgerResult, auditResult, settingsResult, attemptResult, notificationResult] = await Promise.all([
         api<{ stats: Stats }>('/api/admin/stats'),
         api<{ plans: Plan[] }>('/api/admin/plans'),
         api<{ orders: Order[] }>('/api/admin/orders'),
@@ -191,6 +197,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         api<{ entries: UsageLedgerEntry[] }>('/api/admin/usage-ledger'),
         api<{ logs: AuditLog[] }>('/api/admin/audit-logs'),
         api<{ settings: SystemSettings }>('/api/admin/settings'),
+        api<{ attempts: PaymentAttempt[] }>('/api/admin/payment-attempts'),
+        api<{ notifications: PaymentNotification[] }>('/api/admin/payment-notifications'),
       ]);
       setStats(statsResult.stats);
       setPlans(plansResult.plans);
@@ -200,6 +208,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       setDeployments(deploymentResult.deployments);
       setLedgerEntries(ledgerResult.entries);
       setAuditLogs(auditResult.logs);
+      setPaymentAttempts(attemptResult.attempts);
+      setPaymentNotifications(notificationResult.notifications);
       setSettingsData(settingsResult.settings);
       setAdminPathDraft(settingsResult.settings.adminPath);
       if (!grant.userId && usersResult.users.length) {
@@ -390,6 +400,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       ...editingPaymentMethod.method,
       id: editingPaymentMethod.method.id.trim(),
       name: editingPaymentMethod.method.name.trim(),
+      provider: paymentProvider(editingPaymentMethod.method),
+      type: legacyPaymentType(paymentProvider(editingPaymentMethod.method)),
     };
     setSettingsData(value => ({
       ...value,
@@ -585,17 +597,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                     <section className="admin-settings-section flush">
                       <div className="admin-payment-table-wrap">
                         <table className="admin-payment-table">
-                          <thead><tr><th>支付方式</th><th>收款类型</th><th>支付通道</th><th>排序</th><th>状态</th><th>操作</th></tr></thead>
+                          <thead><tr><th>支付方式</th><th>收款类型</th><th>支付通道</th><th>回调地址</th><th>排序</th><th>状态</th><th>操作</th></tr></thead>
                           <tbody>{settingsData.paymentMethods.map((method, index) => <tr key={`${method.id}-${index}`}>
                             <td><div className="admin-payment-name"><span><CreditCard /></span><div><strong>{method.name || '未命名支付方式'}</strong><small>{method.id || '未设置标识'}</small></div></div></td>
                             <td>{paymentProviderText(method)}</td>
                             <td>{paymentChannelText(method)}</td>
+                            <td>{method.callbackUrl ? <button type="button" className="admin-callback-copy" title={method.callbackUrl} onClick={() => void copyToClipboard(method.callbackUrl || '').then(success => showToast(success ? '回调地址已复制' : '复制失败', success ? method.callbackUrl : '请手动复制回调地址', success ? 'success' : 'error'))}><ClipboardCopy /><span>复制回调</span></button> : <span className="admin-muted">无需回调</span>}</td>
                             <td>{method.sortOrder}</td>
                             <td><div className="admin-payment-state"><StatusBadge status={method.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-label={`${method.enabled ? '停用' : '启用'} ${method.name}`} aria-checked={method.enabled} className={`admin-switch ${method.enabled ? 'on' : ''}`} onClick={() => updatePaymentMethod(index, { enabled: !method.enabled })}><span /></button></div></td>
                             <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑支付方式" onClick={() => setEditingPaymentMethod({ index, method: { ...method } })}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除支付方式" onClick={() => setDeletingPaymentMethod({ index, method })}><X /></button></div></td>
                           </tr>)}</tbody>
                         </table>
                         {!settingsData.paymentMethods.length && <div className="admin-table-empty compact"><CreditCard /><strong>暂无支付方式</strong><span>新增并启用支付方式后，用户才能在下单时选择付款渠道。</span></div>}
+                      </div>
+                    </section>
+                    <section className="admin-settings-section">
+                      <div className="admin-settings-section-title"><h3>支付运行记录</h3><p>用于核对下单请求、异步通知验签和自动发放结果，敏感字段已脱敏。</p></div>
+                      <div className="admin-payment-runtime-grid">
+                        <div className="admin-payment-runtime-panel"><header><div><strong>最近支付请求</strong><small>{paymentAttempts.length} 条记录</small></div><RefreshCw /></header><div className="admin-payment-runtime-list">{paymentAttempts.slice(0, 8).map(item => <article key={item.id}><span className={`admin-payment-dot ${item.status}`} /><div><strong>{item.orderNo}</strong><small>{paymentChannelName(item.provider, settingsData.paymentMethods)} · {formatDate(item.createdAt)}</small>{item.errorMessage && <p>{item.errorMessage}</p>}</div><StatusBadge status={item.status} /></article>)}{!paymentAttempts.length && <EmptyInline text="暂无支付请求记录" />}</div></div>
+                        <div className="admin-payment-runtime-panel"><header><div><strong>最近异步通知</strong><small>{paymentNotifications.length} 条记录</small></div><ShieldCheck /></header><div className="admin-payment-runtime-list">{paymentNotifications.slice(0, 8).map(item => <article key={item.id}><span className={`admin-payment-dot ${item.status}`} /><div><strong>{item.orderNo || '未识别订单号'}</strong><small>{paymentProviderName(item.provider)} · {formatDate(item.createdAt)}</small>{item.errorMessage && <p>{item.errorMessage}</p>}</div><StatusBadge status={item.status} /></article>)}{!paymentNotifications.length && <EmptyInline text="暂无支付回调记录" />}</div></div>
                       </div>
                     </section>
                   </>}
@@ -666,21 +686,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         <label className="admin-field"><span>测试收件邮箱</span><input type="email" value={testEmailRecipient} onChange={event => setTestEmailRecipient(event.target.value)} placeholder="name@example.com" /></label>
       </AdminDialog>
       <AdminDialog open={Boolean(editingPaymentMethod)} title={editingPaymentMethod?.index === -1 ? '新增支付方式' : '编辑支付方式'} description="支付方式会先保存在当前设置草稿中，点击页面右上角“保存全部设置”后正式生效。" confirmLabel="保存支付方式" busy={busy} confirmDisabled={!editingPaymentMethod?.method.name.trim() || !editingPaymentMethod?.method.id.trim()} onClose={() => setEditingPaymentMethod(null)} onConfirm={savePaymentMethodDraft}>
-        {editingPaymentMethod && <div className="admin-form-grid">
-          <label className="admin-field"><span>显示名称</span><input value={editingPaymentMethod.method.name} maxLength={40} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, name: event.target.value } })} /></label>
-          <label className="admin-field"><span>唯一标识</span><input value={editingPaymentMethod.method.id} maxLength={32} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') } })} /><small>订单创建后不建议修改已有标识。</small></label>
-          <label className="admin-field"><span>方式类型</span><select value={editingPaymentMethod.method.provider || (editingPaymentMethod.method.type === 'epay' ? 'epay' : 'manual')} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, provider: event.target.value as PaymentMethod['provider'], type: event.target.value === 'epay' ? 'epay' : 'manual' } })}><option value="manual">人工收款</option><option value="epay">易支付自动收款</option></select></label>
-          <label className="admin-field"><span>显示排序</span><input type="number" value={editingPaymentMethod.method.sortOrder} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, sortOrder: Number(event.target.value) } })} /></label>
-          <label className="admin-field span-2"><span>付款地址</span><input type="url" value={editingPaymentMethod.method.paymentUrl} maxLength={1000} placeholder="可选，例如收银台或付款页面地址" onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, paymentUrl: event.target.value } })} /></label>
-          <label className="admin-field span-2"><span>该方式付款说明</span><textarea value={editingPaymentMethod.method.instructions} maxLength={1000} placeholder="填写付款步骤、收款账号或联系管理员方式" onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, instructions: event.target.value } })} /></label>
-          {(editingPaymentMethod.method.provider === 'epay' || editingPaymentMethod.method.type === 'epay') && <>
-            <label className="admin-field span-2"><span>易支付网关地址</span><input type="url" value={editingPaymentMethod.method.gatewayUrl || ''} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, gatewayUrl: event.target.value } })} placeholder="https://pay.example.com/submit.php" /></label>
-            <label className="admin-field"><span>商户 PID</span><input value={editingPaymentMethod.method.merchantId || ''} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, merchantId: event.target.value } })} /></label>
-            <label className="admin-field"><span>支付通道</span><select value={editingPaymentMethod.method.channel || 'alipay'} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, channel: event.target.value as PaymentMethod['channel'] } })}><option value="alipay">支付宝</option><option value="wxpay">微信支付</option><option value="qqpay">QQ 钱包</option></select></label>
-            <label className="admin-field span-2"><span>商户密钥</span><input type="password" value={editingPaymentMethod.method.merchantSecret || ''} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, merchantSecret: event.target.value } })} placeholder={editingPaymentMethod.method.merchantSecretConfigured ? '已配置，留空保持不变' : '填写易支付商户密钥'} /><small>保存后不会再回传明文。</small></label>
-          </>}
-          <label className="admin-checkbox span-2"><input type="checkbox" checked={editingPaymentMethod.method.enabled} onChange={event => setEditingPaymentMethod({ ...editingPaymentMethod, method: { ...editingPaymentMethod.method, enabled: event.target.checked } })} /><span><strong>启用此支付方式</strong><small>只有启用的支付方式会出现在用户端。</small></span></label>
-        </div>}
+        {editingPaymentMethod && <PaymentMethodEditor method={editingPaymentMethod.method} onChange={method => setEditingPaymentMethod({ ...editingPaymentMethod, method })} />}
       </AdminDialog>
       <AdminDialog open={Boolean(deletingPaymentMethod)} title="删除支付方式" description={`将从设置草稿中删除“${deletingPaymentMethod?.method.name || '未命名支付方式'}”，保存全部设置后正式生效。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingPaymentMethod(null)} onConfirm={() => { if (deletingPaymentMethod) removePaymentMethod(deletingPaymentMethod.index); setDeletingPaymentMethod(null); }} />
       <AdminDialog open={Boolean(paymentOrder)} title="确认人工收款" description="确认后将按照下单时的套餐快照发放权益，此操作会直接改变用户可用次数。" confirmLabel="确认收款并发放权益" tone="success" busy={busy} confirmDisabled={!tradeNo.trim()} onClose={() => { setPaymentOrder(null); setTradeNo(''); }} onConfirm={() => void confirmPayment()}>
@@ -776,7 +782,7 @@ const PlanSnapshotDetails: React.FC<{ order: Order }> = ({ order }) => {
 };
 
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
-  const labels: Record<string, string> = { pending: '待确认', paid: '已付款', refunded: '已退款', cancelled: '已取消', expired: '已过期', active: '正常', disabled: '已禁用', admin: '管理员', user: '普通用户', enabled: '已上架', revoked: '已撤销', reserved: '已预约', running: '执行中', succeeded: '成功', failed: '失败', uncertain: '待核对', grant: '发放', reserve: '冻结', consume: '核销', release: '返还', adjust: '调额', panel: '面板', node: '节点', plan: '套餐', order: '订单', entitlement: '权益', deployment: '交付任务', settings: '系统设置' };
+  const labels: Record<string, string> = { created: '已创建', pending: '待确认', paid: '已付款', failed: '失败', closed: '已关闭', accepted: '已验收', rejected: '已拒绝', refunded: '已退款', cancelled: '已取消', expired: '已过期', active: '正常', disabled: '已禁用', admin: '管理员', user: '普通用户', enabled: '已上架', revoked: '已撤销', reserved: '已预约', running: '执行中', succeeded: '成功', uncertain: '待核对', grant: '发放', reserve: '冻结', consume: '核销', release: '返还', adjust: '调额', panel: '面板', node: '节点', plan: '套餐', order: '订单', entitlement: '权益', deployment: '交付任务', settings: '系统设置' };
   return <span className={`admin-status ${status}`}>{labels[status] || status}</span>;
 };
 
@@ -822,6 +828,78 @@ const QuotaDialog: React.FC<{ value: Entitlement | null; busy: boolean; onChange
   <label className="admin-field"><span>并发任务上限</span><input type="number" min="1" value={value.concurrencyLimit} onChange={event => onChange({ ...value, concurrencyLimit: Number(event.target.value) })} /></label>
 </div>}</AdminDialog>;
 
+const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: PaymentMethod) => void }> = ({ method, onChange }) => {
+  const provider = paymentProvider(method);
+  const patch = (value: Partial<PaymentMethod>) => onChange({ ...method, ...value });
+  const secretPlaceholder = method.merchantSecretConfigured ? '已配置，留空保持不变' : '请输入密钥';
+  const privateKeyPlaceholder = method.privateKeyConfigured ? '已配置，留空保持不变' : '粘贴完整私钥内容';
+  const apiV3Placeholder = method.apiV3KeyConfigured ? '已配置，留空保持不变' : '输入 32 位 API v3 密钥';
+  return <div className="admin-form-grid">
+    <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={40} onChange={event => patch({ name: event.target.value })} /></label>
+    <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={32} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>订单创建后不建议修改已有标识。</small></label>
+    <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, currency: method.currency || 'CNY' }); }}><option value="manual">人工收款</option><option value="epay">易支付</option><option value="mgate">MGate</option><option value="tokenpay">TokenPay</option><option value="epusdt">Epusdt</option><option value="alipay_official">支付宝官方</option><option value="wechat_official">微信支付官方</option></select></label>
+    <label className="admin-field"><span>显示排序</span><input type="number" value={method.sortOrder} onChange={event => patch({ sortOrder: Number(event.target.value) })} /></label>
+
+    {provider === 'manual' && <>
+      <label className="admin-field span-2"><span>付款地址</span><input type="url" value={method.paymentUrl} maxLength={1000} placeholder="可选，例如付款码页面或联系客服页面" onChange={event => patch({ paymentUrl: event.target.value })} /></label>
+      <label className="admin-field span-2"><span>人工付款说明</span><textarea value={method.instructions} maxLength={1000} placeholder="填写收款账号、付款备注和联系管理员方式" onChange={event => patch({ instructions: event.target.value })} /></label>
+    </>}
+
+    {provider !== 'manual' && <>
+      <label className="admin-field span-2"><span>前台付款说明</span><input value={method.instructions} maxLength={1000} placeholder="例如：支付完成后系统自动到账" onChange={event => patch({ instructions: event.target.value })} /></label>
+      <label className="admin-field span-2"><span>自定义回调域名</span><input type="url" value={method.callbackBaseUrl || ''} onChange={event => patch({ callbackBaseUrl: event.target.value })} placeholder="可选，留空使用系统公网访问地址" /><small>必须是支付平台能够通过公网访问的 HTTP 或 HTTPS 地址。</small></label>
+    </>}
+
+    {provider === 'epay' && <>
+      <label className="admin-field span-2"><span>易支付网关地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://pay.example.com/submit.php" /></label>
+      <label className="admin-field"><span>商户 PID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
+      <label className="admin-field"><span>支付通道</span><select value={method.channel || 'alipay'} onChange={event => patch({ channel: event.target.value })}><option value="alipay">支付宝</option><option value="wxpay">微信支付</option><option value="qqpay">QQ 钱包</option></select></label>
+      <SecretField label="商户密钥" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
+    </>}
+
+    {provider === 'mgate' && <>
+      <label className="admin-field span-2"><span>MGate API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://gateway.example.com" /></label>
+      <label className="admin-field"><span>APP ID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
+      <label className="admin-field"><span>源货币</span><input value={method.currency || 'CNY'} onChange={event => patch({ currency: event.target.value.toUpperCase() })} placeholder="CNY" /></label>
+      <SecretField label="App Secret" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
+    </>}
+
+    {provider === 'tokenpay' && <>
+      <label className="admin-field span-2"><span>TokenPay API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://tokenpay.example.com" /></label>
+      <label className="admin-field span-2"><span>币种标识</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} placeholder="USDT_TRC20、TRX、ETH 等" /></label>
+      <SecretField label="API 密钥" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
+    </>}
+
+    {provider === 'epusdt' && <>
+      <label className="admin-field span-2"><span>Epusdt API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://epusdt.example.com/api/v1/order/create-transaction" /></label>
+      <SecretField label="签名 Token" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
+    </>}
+
+    {provider === 'alipay_official' && <>
+      <label className="admin-field span-2"><span>支付宝网关</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="留空使用 https://openapi.alipay.com/gateway.do" /></label>
+      <label className="admin-field span-2"><span>应用 APPID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
+      <label className="admin-field span-2"><span>应用私钥</span><textarea value={method.privateKey || ''} onChange={event => patch({ privateKey: event.target.value })} placeholder={privateKeyPlaceholder} /><small>支持 PEM 或未带头尾的 PKCS8 私钥，保存后不回传明文。</small></label>
+      <label className="admin-field span-2"><span>支付宝公钥</span><textarea value={method.publicKey || ''} onChange={event => patch({ publicKey: event.target.value })} placeholder="粘贴支付宝开放平台提供的支付宝公钥" /></label>
+      <label className="admin-checkbox span-2"><input type="checkbox" checked={method.sandbox === true} onChange={event => patch({ sandbox: event.target.checked })} /><span><strong>标记为沙箱通道</strong><small>启用后请同时填写支付宝沙箱网关地址与沙箱应用资料。</small></span></label>
+    </>}
+
+    {provider === 'wechat_official' && <>
+      <label className="admin-field span-2"><span>微信支付 API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="留空使用 https://api.mch.weixin.qq.com" /></label>
+      <label className="admin-field"><span>应用 AppID</span><input value={method.appId || ''} onChange={event => patch({ appId: event.target.value })} /></label>
+      <label className="admin-field"><span>商户号</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
+      <label className="admin-field"><span>商户证书序列号</span><input value={method.certificateSerial || ''} onChange={event => patch({ certificateSerial: event.target.value })} /></label>
+      <label className="admin-field"><span>结算货币</span><input value={method.currency || 'CNY'} onChange={event => patch({ currency: event.target.value.toUpperCase() })} /></label>
+      <label className="admin-field span-2"><span>商户 API 私钥</span><textarea value={method.privateKey || ''} onChange={event => patch({ privateKey: event.target.value })} placeholder={privateKeyPlaceholder} /><small>填写商户 API 证书对应私钥，保存后不回传明文。</small></label>
+      <label className="admin-field span-2"><span>微信支付平台证书或公钥</span><textarea value={method.publicKey || ''} onChange={event => patch({ publicKey: event.target.value })} placeholder="粘贴平台证书 PEM 或平台公钥" /></label>
+      <SecretField label="API v3 密钥" value={method.apiV3Key || ''} placeholder={apiV3Placeholder} onChange={apiV3Key => patch({ apiV3Key })} help="必须为 32 字节，用于解密支付通知。" />
+    </>}
+
+    <label className="admin-checkbox span-2"><input type="checkbox" checked={method.enabled} onChange={event => patch({ enabled: event.target.checked })} /><span><strong>启用此支付方式</strong><small>启用前必须填写该驱动要求的全部资料。</small></span></label>
+  </div>;
+};
+
+const SecretField: React.FC<{ label: string; value: string; placeholder: string; help?: string; onChange: (value: string) => void }> = ({ label, value, placeholder, help, onChange }) => <label className="admin-field span-2"><span>{label}</span><input type="password" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} autoComplete="new-password" /><small>{help || '保存后不会再向前端回传明文。'}</small></label>;
+
 function entitlementStatus(item: Entitlement) {
   if (item.status === 'revoked') return 'revoked';
   if (!item.lifetime && item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) return 'expired';
@@ -835,13 +913,44 @@ function durationText(plan: Plan) {
 }
 
 function paymentProviderText(method: PaymentMethod) {
-  return method.provider === 'epay' || method.type === 'epay' ? '易支付自动收款' : '人工收款';
+  return paymentProviderName(paymentProvider(method));
 }
 
 function paymentChannelText(method: PaymentMethod) {
-  if (!(method.provider === 'epay' || method.type === 'epay')) return '线下确认';
-  const channels = { alipay: '支付宝', wxpay: '微信支付', qqpay: 'QQ 钱包' };
-  return channels[method.channel || 'alipay'];
+  const provider = paymentProvider(method);
+  if (provider === 'manual') return '线下确认';
+  if (provider === 'epay') {
+    const channels: Record<string, string> = { alipay: '支付宝', wxpay: '微信支付', qqpay: 'QQ 钱包' };
+    return channels[method.channel || 'alipay'] || method.channel || '聚合支付';
+  }
+  if (provider === 'tokenpay') return method.merchantId || '数字货币';
+  if (provider === 'epusdt') return 'USDT';
+  if (provider === 'alipay_official') return '当面付二维码';
+  if (provider === 'wechat_official') return 'Native 二维码';
+  return method.currency || 'CNY';
+}
+
+function paymentProvider(method: PaymentMethod): PaymentProvider {
+  if (method.provider) return method.provider;
+  if (method.type === 'alipay') return 'alipay_official';
+  if (method.type === 'wechat') return 'wechat_official';
+  if (method.type === 'epay' || method.type === 'mgate' || method.type === 'tokenpay' || method.type === 'epusdt') return method.type;
+  return 'manual';
+}
+
+function legacyPaymentType(provider: PaymentProvider): PaymentMethod['type'] {
+  if (provider === 'alipay_official') return 'alipay';
+  if (provider === 'wechat_official') return 'wechat';
+  return provider;
+}
+
+function paymentProviderName(provider: string) {
+  const labels: Record<string, string> = { manual: '人工收款', epay: '易支付', mgate: 'MGate', tokenpay: 'TokenPay', epusdt: 'Epusdt', alipay_official: '支付宝官方', wechat_official: '微信支付官方' };
+  return labels[provider] || provider;
+}
+
+function paymentChannelName(channelId: string, methods: PaymentMethod[]) {
+  return methods.find(method => method.id === channelId)?.name || channelId;
 }
 
 function planSnapshotName(order: Order) {

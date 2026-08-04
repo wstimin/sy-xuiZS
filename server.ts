@@ -83,7 +83,7 @@ function noStore(_req: Request, res: Response, next: NextFunction) {
 }
 
 function requireAppAuth(req: Request, res: Response, next: NextFunction) {
-  if (/^\/payment\/epay\/[^/]+\/notify\/?$/.test(req.path)) return next();
+  if (/^\/payment\/(epay|mgate|tokenpay|epusdt|alipay_official|wechat_official)\/[^/]+\/notify\/?$/.test(req.path)) return next();
   if (req.path === "/runtime-config") return next();
   const expected = process.env.APP_AUTH_TOKEN;
   if (!expected) return next();
@@ -140,9 +140,18 @@ async function startServer() {
 
   app.disable("x-powered-by");
   app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-  app.use(express.json({ limit: "256kb" }));
+  app.use(express.json({
+    limit: "256kb",
+    verify: (req, _res, buffer) => { (req as Request & { rawBody?: string }).rawBody = buffer.toString("utf8"); },
+  }));
   app.use(express.urlencoded({ extended: false, limit: "64kb" }));
-  app.use("/api", rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false }));
+  app.use("/api", rateLimit({
+    windowMs: 60_000,
+    limit: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: req => /^\/payment\/(epay|mgate|tokenpay|epusdt|alipay_official|wechat_official)\/[^/]+\/notify\/?$/.test(req.path),
+  }));
   app.use("/api", noStore);
 
   app.get("/api/health", (_req, res) => {
