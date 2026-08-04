@@ -1,7 +1,7 @@
 {
   "name": "xui-zhushou",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "带用户、订单、权益和配额管理的 3x-ui 商业部署助手",
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server/admin-cli.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/admin-cli.cjs",
     "start": "node dist/server.cjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "package:release": "node scripts/create-release-package.mjs",

@@ -57,6 +57,24 @@ test("administrator username and management path can be updated safely", () => {
   }
 });
 
+test("server maintenance can list administrators and reset credentials", () => {
+  const store = new CommercialStore(":memory:");
+  try {
+    const admin = store.bootstrapAdmin("admin", "strong-password")!;
+    const session = store.createSession(admin.id);
+    assert.equal(store.listAdministrators()[0].username, "admin");
+
+    const updated = store.updateAdministratorCredentials("admin", "operations-admin", "new-strong-password");
+    assert.equal(updated.username, "operations-admin");
+    assert.equal(store.getSessionUser(session), null);
+    assert.throws(() => store.authenticate("admin", "strong-password"), /错误/);
+    assert.equal(store.authenticate("operations-admin", "new-strong-password").id, admin.id);
+    assert.throws(() => store.updateAdministratorCredentials("missing-admin", "next-admin"), /不存在/);
+  } finally {
+    store.close();
+  }
+});
+
 test("orders persist an enabled payment method and reject disabled methods", () => {
   const store = createStore();
   try {

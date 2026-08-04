@@ -150,7 +150,10 @@ export class CommercialStore {
   readonly db: Database.Database;
   private readonly vault: SecretVault;
 
-  constructor(databasePath = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "app.db")) {
+  constructor(
+    databasePath = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "app.db"),
+    options: { recoverInterruptedDeployments?: boolean } = {},
+  ) {
     fs.mkdirSync(path.dirname(databasePath), { recursive: true });
     this.db = new Database(databasePath);
     this.db.pragma("journal_mode = WAL");
@@ -158,7 +161,7 @@ export class CommercialStore {
     this.db.pragma("busy_timeout = 5000");
     this.vault = new SecretVault(databasePath);
     this.migrate();
-    this.recoverInterruptedDeployments();
+    if (options.recoverInterruptedDeployments !== false) this.recoverInterruptedDeployments();
   }
 
   close() {
@@ -801,6 +804,47 @@ export class CommercialStore {
       SELECT id, username, email, email_verified AS emailVerified, role, status, created_at AS createdAt, last_login_at AS lastLoginAt
       FROM users ORDER BY created_at DESC
     `).all() as any[]).map(row => ({ ...row, emailVerified: Boolean(row.emailVerified) }));
+  }
+
+  listAdministrators() {
+    return (this.db.prepare(`
+      SELECT id, username, email, email_verified AS emailVerified, status,
+             created_at AS createdAt, last_login_at AS lastLoginAt
+      FROM users WHERE role = 'admin' ORDER BY created_at, username
+    `).all() as any[]).map(row => ({ ...row, emailVerified: Boolean(row.emailVerified) }));
+  }
+
+  updateAdministratorCredentials(currentUsername: string, nextUsername?: string, nextPassword?: string) {
+    const current = currentUsername.trim();
+    const next = nextUsername?.trim() || current;
+    if (!current) throw new Error("请输入当前管理员用户名");
+    if (!/^[A-Za-z0-9_.@-]{3,64}$/.test(next)) throw new Error("用户名必须为 3 到 64 位字母、数字或 ._@-");
+    if (nextPassword !== undefined && (nextPassword.length < 8 || nextPassword.length > 128)) {
+      throw new Error("新密码必须为 8 到 128 位");
+    }
+
+    const update = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT id, username FROM users WHERE role = 'admin' AND username = ? COLLATE NOCASE")
+        .get(current) as any;
+      if (!row) throw new Error("管理员账号不存在");
+      try {
+        this.db.prepare("UPDATE users SET username = ?, updated_at = ? WHERE id = ?").run(next, nowIso(), row.id);
+      } catch (error: any) {
+        if (/UNIQUE/i.test(String(error?.message))) throw new Error("用户名已经存在");
+        throw error;
+      }
+      if (nextPassword !== undefined) {
+        this.db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+          .run(hashPassword(nextPassword), nowIso(), row.id);
+      }
+      this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(row.id);
+      return { id: row.id as string, previousUsername: row.username as string };
+    });
+
+    const result = update.immediate();
+    this.recordAdminAction(result.id, "服务器菜单修改管理员账号", "user", result.id,
+      `${result.previousUsername} -> ${next}; passwordReset=${nextPassword !== undefined}`);
+    return this.getUserById(result.id)!;
   }
 
   getUserDetail(id: string) {

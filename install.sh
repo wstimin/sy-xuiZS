@@ -182,6 +182,17 @@ read_runtime_admin_path() {
   '
 }
 
+run_admin_cli() {
+  if [ ! -f "$TARGET_DIR/dist/admin-cli.cjs" ]; then
+    echo -e "${YELLOW}[WARN] 当前构建包不包含服务器账号管理工具，请先通过菜单 [1] 更新到最新版。${NC}"
+    return 1
+  fi
+  ACTIVE_PROJECT_DIR="$TARGET_DIR"
+  load_runtime_config
+  cd "$TARGET_DIR"
+  node dist/admin-cli.cjs "$@"
+}
+
 check_root() {
   if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}[ERROR] 请使用 root 权限或 sudo 执行此脚本！${NC}"
@@ -667,7 +678,92 @@ view_panel_info() {
     echo -e "   - IP   HTTP  链接: ${CYAN}http://${SERVER_IP}:${APP_PORT}${NC}"
   fi
 
+  # 3. 商业后台与管理员账号信息
+  echo -e "\n${BOLD}3️⃣  商业后台、管理员账号与业务开关:${NC}"
+  if run_admin_cli info; then
+    ADMIN_PATH=$(read_runtime_admin_path)
+    if [ -f "$SSL_DIR/cert.pem" ] && [ -f "$SSL_DIR/key.pem" ]; then
+      echo -e "   - 管理端完整地址: ${GREEN}https://${DOMAIN_IN_CERT}:${APP_PORT}/${ADMIN_PATH}${NC}"
+    else
+      echo -e "   - 管理端完整地址: ${CYAN}http://${SERVER_IP}:${APP_PORT}/${ADMIN_PATH}${NC}"
+    fi
+  fi
+
   echo -e "\n${CYAN}============================================================${NC}"
+  pause_if_tty
+}
+
+manage_admin_account() {
+  load_runtime_config
+  echo -e "${CYAN}============================================================${NC}"
+  echo -e "${BOLD}               🔐 管理员账号与密码维护               ${NC}"
+  echo -e "${CYAN}============================================================${NC}"
+
+  if [ ! -f "$TARGET_DIR/dist/admin-cli.cjs" ]; then
+    echo -e "${YELLOW}[WARN] 当前构建包版本较旧，请先通过菜单 [1] 更新后再修改管理账号。${NC}"
+    pause_if_tty
+    return 1
+  fi
+
+  mapfile -t ADMIN_USERNAMES < <(run_admin_cli usernames)
+  if [ "${#ADMIN_USERNAMES[@]}" -eq 0 ]; then
+    echo -e "${YELLOW}[INFO] 系统尚未初始化管理员，请先打开管理入口完成首次账号创建。${NC}"
+    pause_if_tty
+    return 0
+  fi
+
+  echo -e "${BOLD}当前管理员账号:${NC}"
+  local index
+  for index in "${!ADMIN_USERNAMES[@]}"; do
+    echo -e "  [$((index + 1))] ${CYAN}${ADMIN_USERNAMES[$index]}${NC}"
+  done
+
+  local selected_index=0
+  if [ "${#ADMIN_USERNAMES[@]}" -gt 1 ]; then
+    read -r -p "请选择要修改的管理员编号 [1-${#ADMIN_USERNAMES[@]}]: " selected_index
+    if ! [[ "$selected_index" =~ ^[0-9]+$ ]] || [ "$selected_index" -lt 1 ] || [ "$selected_index" -gt "${#ADMIN_USERNAMES[@]}" ]; then
+      echo -e "${RED}[ERROR] 管理员编号无效。${NC}"
+      pause_if_tty
+      return 1
+    fi
+    selected_index=$((selected_index - 1))
+  fi
+
+  local current_username="${ADMIN_USERNAMES[$selected_index]}"
+  local next_username=""
+  local next_password=""
+  local confirm_password=""
+  echo -e "\n当前选择: ${GREEN}${current_username}${NC}"
+  read -r -p "请输入新用户名（留空保持 ${current_username}）: " next_username
+  read -r -s -p "请输入新密码（留空表示不修改，至少 8 位）: " next_password
+  echo
+  if [ -n "$next_password" ]; then
+    read -r -s -p "请再次输入新密码: " confirm_password
+    echo
+    if [ "$next_password" != "$confirm_password" ]; then
+      echo -e "${RED}[ERROR] 两次输入的密码不一致。${NC}"
+      pause_if_tty
+      return 1
+    fi
+    if [ "${#next_password}" -lt 8 ] || [ "${#next_password}" -gt 128 ]; then
+      echo -e "${RED}[ERROR] 新密码必须为 8 到 128 位。${NC}"
+      pause_if_tty
+      return 1
+    fi
+  fi
+  if [ -z "$next_username" ] && [ -z "$next_password" ]; then
+    echo -e "${YELLOW}[INFO] 用户名和密码均未修改。${NC}"
+    pause_if_tty
+    return 0
+  fi
+
+  if ADMIN_CURRENT_USERNAME="$current_username" ADMIN_NEXT_USERNAME="$next_username" ADMIN_NEXT_PASSWORD="$next_password" run_admin_cli update-admin; then
+    echo -e "${GREEN}[OK] 管理员账号更新成功。${NC}"
+    echo -e "${YELLOW}[INFO] 已清除该管理员的旧登录会话，请在浏览器中重新登录。${NC}"
+  else
+    echo -e "${RED}[ERROR] 管理员账号更新失败。${NC}"
+  fi
+  unset next_password confirm_password ADMIN_NEXT_PASSWORD
   pause_if_tty
 }
 
@@ -818,20 +914,22 @@ show_menu() {
     echo -e " ${BOLD}[3]${NC} 查看当前面板配置与运行状态信息"
     echo -e " ${BOLD}[4]${NC} 检测 VPS 系统与网络运行环境"
     echo -e " ${BOLD}[5]${NC} 🔍 一键诊断与解决【域名无法访问】问题"
-    echo -e " ${BOLD}[6]${NC} 卸载与清除部署助手面板项目"
+    echo -e " ${BOLD}[6]${NC} 修改管理员用户名 / 重置管理密码"
+    echo -e " ${BOLD}[7]${NC} 卸载与清除部署助手面板项目"
     echo -e " ${BOLD}[0]${NC} 退出脚本"
     echo "============================================================"
     
-    read -p "请输入菜单功能编号 [0-6]: " CHOICE
+    read -p "请输入菜单功能编号 [0-7]: " CHOICE
     case "$CHOICE" in
       1) install_assistant ;;
       2) issue_ssl_cert ;;
       3) view_panel_info ;;
       4) check_environment ;;
       5) diagnose_domain_access ;;
-      6) uninstall_all ;;
+      6) manage_admin_account ;;
+      7) uninstall_all ;;
       0) echo -e "${GREEN}感谢使用！退出管理脚本。${NC}"; exit 0 ;;
-      *) echo -e "${RED}输入无效，请输入 0-6 之间的编号！${NC}"; sleep 1.5 ;;
+      *) echo -e "${RED}输入无效，请输入 0-7 之间的编号！${NC}"; sleep 1.5 ;;
     esac
   done
 }
