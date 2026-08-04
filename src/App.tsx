@@ -261,7 +261,7 @@ export default function App() {
         )}
 
         {currentView === 'pricing' && <PricingView plans={plans} onOrderCreated={refreshAccount} showToast={showToast} />}
-        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={() => void refreshAccount()} onLoggedOut={() => { setUser(null); window.location.assign('/'); }} showToast={showToast} />}
+        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={() => void refreshAccount()} onLoggedOut={() => { setUser(null); window.location.assign('/'); }} onLogout={() => void logout()} showToast={showToast} />}
       </main>
 
       {/* Footer */}

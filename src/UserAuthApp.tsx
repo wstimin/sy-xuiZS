@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  Mail,
   KeyRound,
   LockKeyhole,
   Network,
@@ -21,8 +22,16 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
   const isLogin = mode === 'login';
   const [checking, setChecking] = useState(true);
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
+  const [identifier, setIdentifier] = useState('');
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [resetMode, setResetMode] = useState(false);
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [verificationRequired, setVerificationRequired] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [codeCooldown, setCodeCooldown] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -31,14 +40,37 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
     Promise.all([
       api<{ user: CurrentUser | null }>('/api/auth/me'),
       api<{ required: boolean }>('/api/auth/bootstrap-status'),
-    ]).then(([me, bootstrap]) => {
+      api<{ emailEnabled: boolean; emailVerificationRequired: boolean; verificationResendSeconds: number }>('/api/auth/settings'),
+    ]).then(([me, bootstrap, settings]) => {
       if (me.user) {
         window.location.replace('/console');
         return;
       }
       setBootstrapRequired(bootstrap.required);
+      setEmailEnabled(settings.emailEnabled);
+      setVerificationRequired(settings.emailVerificationRequired);
     }).catch(() => undefined).finally(() => setChecking(false));
   }, []);
+
+  useEffect(() => {
+    if (codeCooldown <= 0) return;
+    const timer = window.setInterval(() => setCodeCooldown(value => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [codeCooldown]);
+
+  const sendCode = async () => {
+    if (!email.trim()) return setError('请先输入邮箱地址');
+    setSendingCode(true);
+    setError('');
+    try {
+      await api('/api/auth/send-code', { method: 'POST', body: JSON.stringify({ email, purpose: resetMode ? 'reset_password' : 'register' }) });
+      setCodeCooldown(60);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '验证码发送失败');
+    } finally {
+      setSendingCode(false);
+    }
+  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -46,9 +78,17 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
     setBusy(true);
     setError('');
     try {
+      if (resetMode) {
+        await api('/api/auth/reset-password', { method: 'POST', body: JSON.stringify({ email, code, nextPassword: password }) });
+        setResetMode(false);
+        setIdentifier(email);
+        setCode('');
+        setPassword('');
+        return;
+      }
       await api<{ user: CurrentUser }>(isLogin ? '/api/auth/login' : '/api/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(isLogin ? { identifier, password } : { username, email, password, code }),
       });
       window.location.assign('/console');
     } catch (reason) {
@@ -85,7 +125,7 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
       <main className="auth-layout">
         <section className="auth-story">
           <span className="auth-eyebrow">SECURE ACCESS / NEXUS ID</span>
-          <h1>{isLogin ? '欢迎回来，继续连接全球业务' : '创建你的全球网络工作台'}</h1>
+          <h1>{resetMode ? '安全找回你的账户访问权' : isLogin ? '欢迎回来，继续连接全球业务' : '创建你的全球网络工作台'}</h1>
           <p>
             {isLogin
               ? '登录后查看服务权益、发起环境交付任务，并统一管理每一次执行记录。'
@@ -100,10 +140,10 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
 
         <section className="auth-panel" aria-labelledby="auth-title">
           <div className="auth-panel-head">
-            <span className="auth-panel-icon">{isLogin ? <LockKeyhole className="h-5 w-5" /> : <UserRound className="h-5 w-5" />}</span>
+            <span className="auth-panel-icon">{isLogin && !resetMode ? <LockKeyhole className="h-5 w-5" /> : <UserRound className="h-5 w-5" />}</span>
             <div>
-              <span>{isLogin ? 'ACCOUNT LOGIN' : 'CREATE ACCOUNT'}</span>
-              <h2 id="auth-title">{isLogin ? '登录账户' : '注册账户'}</h2>
+              <span>{resetMode ? 'RESET PASSWORD' : isLogin ? 'ACCOUNT LOGIN' : 'CREATE ACCOUNT'}</span>
+              <h2 id="auth-title">{resetMode ? '重置密码' : isLogin ? '登录账户' : '注册账户'}</h2>
             </div>
           </div>
 
@@ -116,20 +156,46 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
 
           <form onSubmit={submit} className="auth-form">
             <label>
-              <span>用户名</span>
+              <span>{isLogin && !resetMode ? '邮箱或用户名' : '邮箱'}</span>
+              <div className="auth-input-wrap">
+                <Mail className="h-5 w-5" />
+                <input
+                  type={isLogin && !resetMode ? 'text' : 'email'}
+                  value={isLogin && !resetMode ? identifier : email}
+                  onChange={event => isLogin && !resetMode ? setIdentifier(event.target.value) : setEmail(event.target.value)}
+                  autoComplete="username"
+                  maxLength={254}
+                  required
+                  placeholder={isLogin && !resetMode ? '输入注册邮箱或旧用户名' : '输入常用邮箱地址'}
+                />
+              </div>
+            </label>
+
+            {!isLogin && !resetMode && <label>
+              <span>昵称 <small className="auth-optional">选填</small></span>
               <div className="auth-input-wrap">
                 <UserRound className="h-5 w-5" />
                 <input
                   value={username}
                   onChange={event => setUsername(event.target.value)}
-                  autoComplete="username"
+                  autoComplete="nickname"
                   minLength={3}
                   maxLength={64}
-                  required
-                  placeholder="输入 3-64 位用户名"
+                  placeholder="不填写时将根据邮箱自动生成"
                 />
               </div>
-            </label>
+            </label>}
+
+            {((!isLogin && verificationRequired) || resetMode) && <label>
+              <span>邮箱验证码</span>
+              <div className="auth-input-wrap auth-code-wrap">
+                <ShieldCheck className="h-5 w-5" />
+                <input value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" minLength={6} maxLength={6} required placeholder="输入 6 位验证码" />
+                <button type="button" className="auth-code-button" disabled={sendingCode || codeCooldown > 0 || !emailEnabled} onClick={() => void sendCode()}>
+                  {sendingCode ? '发送中' : codeCooldown > 0 ? `${codeCooldown}s` : '获取验证码'}
+                </button>
+              </div>
+            </label>}
 
             <label>
               <span>密码</span>
@@ -139,7 +205,7 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={event => setPassword(event.target.value)}
-                  autoComplete={isLogin ? 'current-password' : 'new-password'}
+                  autoComplete={isLogin && !resetMode ? 'current-password' : 'new-password'}
                   minLength={8}
                   required
                   placeholder="输入至少 8 位密码"
@@ -152,15 +218,17 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
 
             {error && <div className="auth-error" role="alert">{error}</div>}
 
+            {isLogin && !resetMode && emailEnabled && <button type="button" className="auth-forgot" onClick={() => { setResetMode(true); setError(''); setPassword(''); }}>忘记密码</button>}
+
             <button className="auth-submit" disabled={busy || (!isLogin && bootstrapRequired)}>
-              {busy ? '正在处理...' : isLogin ? '登录并进入工作台' : '创建账户并进入'}
+              {busy ? '正在处理...' : resetMode ? '确认重置密码' : isLogin ? '登录并进入工作台' : '创建账户并进入'}
               {!busy && <ArrowRight className="h-5 w-5" />}
             </button>
           </form>
 
           <div className="auth-switch">
-            {isLogin ? '还没有账户？' : '已经拥有账户？'}
-            <a href={isLogin ? '/register' : '/login'}>{isLogin ? '立即注册' : '返回登录'}</a>
+            {resetMode ? '已经想起密码？' : isLogin ? '还没有账户？' : '已经拥有账户？'}
+            {resetMode ? <button type="button" onClick={() => { setResetMode(false); setError(''); }}>返回登录</button> : <a href={isLogin ? '/register' : '/login'}>{isLogin ? '立即注册' : '返回登录'}</a>}
           </div>
           <div className="auth-security"><ShieldCheck className="h-4 w-4" /> 账户会话与管理端相互独立</div>
         </section>

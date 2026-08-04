@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { SecretVault } from "./secret-vault.js";
 
 export type UserRole = "user" | "admin";
 export type Capability = "panel" | "node";
@@ -11,8 +12,45 @@ export type DurationUnit = "days" | "months" | "years" | "lifetime";
 export interface SessionUser {
   id: string;
   username: string;
+  email: string | null;
+  emailVerified: boolean;
   role: UserRole;
   status: "active" | "disabled";
+}
+
+export interface PaymentMethod {
+  id: string;
+  name: string;
+  type: "manual" | "alipay" | "wechat" | "epay";
+  enabled: boolean;
+  instructions: string;
+  paymentUrl: string;
+  sortOrder: number;
+  provider?: "manual" | "epay";
+  gatewayUrl?: string;
+  merchantId?: string;
+  merchantSecret?: string;
+  merchantSecretConfigured?: boolean;
+  channel?: "alipay" | "wxpay" | "qqpay";
+  sandbox?: boolean;
+}
+
+export interface EmailSettings {
+  emailEnabled: boolean;
+  emailVerificationRequired: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpEncryption: "none" | "starttls" | "ssl";
+  smtpUsername: string;
+  smtpPassword?: string;
+  smtpPasswordConfigured: boolean;
+  smtpFromName: string;
+  smtpFromEmail: string;
+  smtpReplyTo: string;
+  verificationCodeTtlMinutes: number;
+  verificationResendSeconds: number;
+  siteName: string;
+  publicBaseUrl: string;
 }
 
 export interface PlanInput {
@@ -110,6 +148,7 @@ function publicPlan(row: any) {
 
 export class CommercialStore {
   readonly db: Database.Database;
+  private readonly vault: SecretVault;
 
   constructor(databasePath = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "app.db")) {
     fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -117,6 +156,7 @@ export class CommercialStore {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.pragma("busy_timeout = 5000");
+    this.vault = new SecretVault(databasePath);
     this.migrate();
     this.recoverInterruptedDeployments();
   }
@@ -130,6 +170,8 @@ export class CommercialStore {
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        email TEXT,
+        email_verified INTEGER NOT NULL DEFAULT 0,
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL CHECK (role IN ('user', 'admin')),
         status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
@@ -248,20 +290,143 @@ export class CommercialStore {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS admin_audit_logs (
+        id TEXT PRIMARY KEY,
+        admin_user_id TEXT NOT NULL REFERENCES users(id),
+        action TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL DEFAULT '',
+        detail TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
+
       CREATE TABLE IF NOT EXISTS system_settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS payment_channels (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        provider TEXT NOT NULL CHECK (provider IN ('manual', 'epay')),
+        enabled INTEGER NOT NULL DEFAULT 1,
+        instructions TEXT NOT NULL DEFAULT '',
+        payment_url TEXT NOT NULL DEFAULT '',
+        gateway_url TEXT NOT NULL DEFAULT '',
+        merchant_id TEXT NOT NULL DEFAULT '',
+        merchant_secret_encrypted TEXT NOT NULL DEFAULT '',
+        channel TEXT NOT NULL DEFAULT 'alipay' CHECK (channel IN ('alipay', 'wxpay', 'qqpay')),
+        sandbox INTEGER NOT NULL DEFAULT 0,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS payment_attempts (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        provider TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('created', 'pending', 'paid', 'failed', 'closed', 'refunded')),
+        provider_trade_no TEXT,
+        checkout_url TEXT NOT NULL DEFAULT '',
+        request_payload TEXT NOT NULL DEFAULT '{}',
+        response_payload TEXT NOT NULL DEFAULT '{}',
+        error_message TEXT NOT NULL DEFAULT '',
+        expires_at TEXT,
+        paid_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_payment_attempts_order ON payment_attempts(order_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS email_verification_codes (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL COLLATE NOCASE,
+        purpose TEXT NOT NULL CHECK (purpose IN ('register', 'reset_password', 'change_email')),
+        code_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        consumed_at TEXT,
+        created_at TEXT NOT NULL,
+        last_sent_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_email_codes_lookup ON email_verification_codes(email, purpose, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS email_delivery_logs (
+        id TEXT PRIMARY KEY,
+        recipient TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('sent', 'failed')),
+        error_message TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
     `);
+
+    const userColumns = this.db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    if (!userColumns.some(column => column.name === "email")) {
+      this.db.exec("ALTER TABLE users ADD COLUMN email TEXT");
+    }
+    if (!userColumns.some(column => column.name === "email_verified")) {
+      this.db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0");
+    }
+    const orderColumns = this.db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
+    for (const [name, definition] of [
+      ["expires_at", "TEXT"], ["cancelled_at", "TEXT"], ["refunded_at", "TEXT"],
+      ["refund_trade_no", "TEXT"], ["cancel_reason", "TEXT NOT NULL DEFAULT ''"], ["refund_reason", "TEXT NOT NULL DEFAULT ''"],
+    ] as const) {
+      if (!orderColumns.some(column => column.name === name)) this.db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${definition}`);
+    }
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
 
     const settings = this.db.prepare("INSERT OR IGNORE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)");
     settings.run("registration_enabled", "true", nowIso());
     settings.run("panel_deploy_enabled", "true", nowIso());
     settings.run("node_deploy_enabled", "true", nowIso());
+    settings.run("payment_instructions", "下单后请按照所选支付方式完成付款，并将订单号作为付款备注。", nowIso());
+    settings.run("payment_methods", JSON.stringify([{
+      id: "manual",
+      name: "人工收款",
+      type: "manual",
+      enabled: true,
+      instructions: "提交订单后，请联系管理员并提供订单号完成付款确认。",
+      paymentUrl: "",
+      sortOrder: 10,
+    }]), nowIso());
+    settings.run("email_enabled", "false", nowIso());
+    settings.run("email_verification_required", "false", nowIso());
+    settings.run("smtp_host", "", nowIso());
+    settings.run("smtp_port", "465", nowIso());
+    settings.run("smtp_encryption", "ssl", nowIso());
+    settings.run("smtp_username", "", nowIso());
+    settings.run("smtp_password_encrypted", "", nowIso());
+    settings.run("smtp_from_name", "NEXUS CLOUD", nowIso());
+    settings.run("smtp_from_email", "", nowIso());
+    settings.run("smtp_reply_to", "", nowIso());
+    settings.run("verification_code_ttl_minutes", "10", nowIso());
+    settings.run("verification_resend_seconds", "60", nowIso());
+    settings.run("site_name", "NEXUS CLOUD", nowIso());
+    settings.run("public_base_url", "", nowIso());
+    settings.run("order_expiry_minutes", "30", nowIso());
+    settings.run("admin_path", "admin", nowIso());
+
+    this.migratePaymentChannels();
 
     const count = Number((this.db.prepare("SELECT COUNT(*) AS count FROM plans").get() as any).count);
     if (count === 0) this.seedPlans();
+  }
+
+  private migratePaymentChannels() {
+    const count = Number((this.db.prepare("SELECT COUNT(*) AS count FROM payment_channels").get() as any).count);
+    if (count > 0) return;
+    for (const method of this.getLegacyPaymentMethods(true)) {
+      const timestamp = nowIso();
+      this.db.prepare(`
+        INSERT INTO payment_channels (id, name, provider, enabled, instructions, payment_url, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(method.id, method.name, method.type === "epay" ? "epay" : "manual", method.enabled ? 1 : 0, method.instructions, method.paymentUrl, method.sortOrder, timestamp, timestamp);
+    }
   }
 
   private seedPlans() {
@@ -357,25 +522,249 @@ export class CommercialStore {
     `).run(key, value, nowIso());
   }
 
-  createUser(username: string, password: string, role: UserRole = "user") {
-    const normalized = username.trim();
+  getAdminPath() {
+    const configured = this.getSetting("admin_path", "admin");
+    try {
+      return this.normalizeAdminPath(configured);
+    } catch {
+      return "admin";
+    }
+  }
+
+  setAdminPath(value: string) {
+    const normalized = this.normalizeAdminPath(value);
+    this.setSetting("admin_path", normalized);
+    return normalized;
+  }
+
+  private normalizeAdminPath(value: string) {
+    const normalized = value.trim().replace(/^\/+|\/+$/g, "").toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(normalized)) {
+      throw new Error("管理端入口后缀必须为 3 到 40 位小写字母、数字或短横线，且不能以短横线开头或结尾");
+    }
+    if (["api", "assets", "console", "login", "register"].includes(normalized)) {
+      throw new Error("该管理端入口后缀为系统保留路径，请更换其他名称");
+    }
+    return normalized;
+  }
+
+  private getLegacyPaymentMethods(includeDisabled = false): PaymentMethod[] {
+    let value: unknown;
+    try {
+      value = JSON.parse(this.getSetting("payment_methods", "[]"));
+    } catch {
+      value = [];
+    }
+    const methods = Array.isArray(value) ? value.map((item: any, index): PaymentMethod | null => {
+      if (!item || typeof item !== "object") return null;
+      const type = ["manual", "alipay", "wechat", "epay"].includes(item.type) ? item.type : "manual";
+      return {
+        id: String(item.id || "").trim(),
+        name: String(item.name || "").trim(),
+        type,
+        enabled: item.enabled !== false,
+        instructions: String(item.instructions || "").slice(0, 1000),
+        paymentUrl: String(item.paymentUrl || "").slice(0, 1000),
+        sortOrder: Number.isFinite(Number(item.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index * 10,
+      };
+    }).filter((item): item is PaymentMethod => Boolean(item?.id && item.name)) : [];
+    return methods.filter(item => includeDisabled || item.enabled).sort((a, b) => a.sortOrder - b.sortOrder);
+  }
+
+  getPaymentMethods(includeDisabled = false, includeSecrets = false): PaymentMethod[] {
+    const rows = this.db.prepare(`SELECT * FROM payment_channels ${includeDisabled ? "" : "WHERE enabled = 1"} ORDER BY sort_order, created_at`).all() as any[];
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      type: row.provider === "epay" ? "epay" : "manual",
+      provider: row.provider,
+      enabled: Boolean(row.enabled),
+      instructions: row.instructions || "",
+      paymentUrl: row.payment_url || "",
+      gatewayUrl: includeDisabled || includeSecrets ? row.gateway_url || "" : undefined,
+      merchantId: includeDisabled || includeSecrets ? row.merchant_id || "" : undefined,
+      merchantSecret: includeSecrets && row.merchant_secret_encrypted ? this.vault.decrypt(row.merchant_secret_encrypted) : undefined,
+      merchantSecretConfigured: includeDisabled || includeSecrets ? Boolean(row.merchant_secret_encrypted) : undefined,
+      channel: includeDisabled || includeSecrets ? row.channel : undefined,
+      sandbox: includeDisabled || includeSecrets ? Boolean(row.sandbox) : undefined,
+      sortOrder: row.sort_order,
+    }));
+  }
+
+  setPaymentMethods(value: unknown) {
+    if (!Array.isArray(value)) throw new Error("支付方式数据格式无效");
+    if (value.length > 12) throw new Error("支付方式最多配置 12 个");
+    const ids = new Set<string>();
+    const methods = value.map((item: any, index): PaymentMethod => {
+      const id = String(item?.id || "").trim().toLowerCase();
+      const name = String(item?.name || "").trim();
+      const type = String(item?.type || "manual") as PaymentMethod["type"];
+      if (!/^[a-z0-9_-]{2,32}$/.test(id)) throw new Error("支付方式标识必须为 2 到 32 位小写字母、数字、下划线或短横线");
+      if (ids.has(id)) throw new Error(`支付方式标识 ${id} 重复`);
+      if (!name || name.length > 40) throw new Error("支付方式名称必须为 1 到 40 位");
+      if (!["manual", "alipay", "wechat", "epay"].includes(type)) throw new Error("支付方式类型无效");
+      ids.add(id);
+      return {
+        id,
+        name,
+        type,
+        enabled: item?.enabled !== false,
+        instructions: String(item?.instructions || "").slice(0, 1000),
+        paymentUrl: String(item?.paymentUrl || "").slice(0, 1000),
+        sortOrder: Number.isFinite(Number(item?.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index * 10,
+      };
+    });
+    if (!methods.some(method => method.enabled)) throw new Error("至少需要启用一种支付方式");
+    const save = this.db.transaction(() => {
+      const existing = new Map((this.db.prepare("SELECT id, merchant_secret_encrypted FROM payment_channels").all() as any[])
+        .map(row => [row.id, row.merchant_secret_encrypted]));
+      const timestamp = nowIso();
+      for (const method of methods) {
+        const raw = value.find((item: any) => String(item?.id || "").trim().toLowerCase() === method.id) as any;
+        const provider = raw?.provider === "epay" || method.type === "epay" ? "epay" : "manual";
+        const gatewayUrl = String(raw?.gatewayUrl || "").trim().slice(0, 1000);
+        const merchantId = String(raw?.merchantId || "").trim().slice(0, 100);
+        const channel = ["alipay", "wxpay", "qqpay"].includes(raw?.channel) ? raw.channel : "alipay";
+        const suppliedSecret = String(raw?.merchantSecret || "");
+        const encryptedSecret = suppliedSecret ? this.vault.encrypt(suppliedSecret) : existing.get(method.id) || "";
+        if (provider === "epay" && method.enabled && (!gatewayUrl || !merchantId || !encryptedSecret)) {
+          throw new Error(`支付通道 ${method.name} 启用前必须填写网关地址、商户 PID 和商户密钥`);
+        }
+        this.db.prepare(`
+          INSERT INTO payment_channels (
+            id, name, provider, enabled, instructions, payment_url, gateway_url, merchant_id,
+            merchant_secret_encrypted, channel, sandbox, sort_order, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider = excluded.provider,
+            enabled = excluded.enabled, instructions = excluded.instructions, payment_url = excluded.payment_url,
+            gateway_url = excluded.gateway_url, merchant_id = excluded.merchant_id,
+            merchant_secret_encrypted = excluded.merchant_secret_encrypted, channel = excluded.channel,
+            sandbox = excluded.sandbox, sort_order = excluded.sort_order, updated_at = excluded.updated_at
+        `).run(method.id, method.name, provider, method.enabled ? 1 : 0, method.instructions, method.paymentUrl,
+          gatewayUrl, merchantId, encryptedSecret, channel, raw?.sandbox === true ? 1 : 0, method.sortOrder, timestamp, timestamp);
+      }
+      const retained = methods.map(method => method.id);
+      if (retained.length) this.db.prepare(`DELETE FROM payment_channels WHERE id NOT IN (${retained.map(() => "?").join(",")})`).run(...retained);
+    });
+    save();
+    return this.getPaymentMethods(true);
+  }
+
+  getEmailSettings(includePassword = false): EmailSettings {
+    const encryptedPassword = this.getSetting("smtp_password_encrypted", "");
+    const encryption = this.getSetting("smtp_encryption", "ssl");
+    return {
+      emailEnabled: this.getSetting("email_enabled", "false") === "true",
+      emailVerificationRequired: this.getSetting("email_verification_required", "false") === "true",
+      smtpHost: this.getSetting("smtp_host", ""),
+      smtpPort: Number(this.getSetting("smtp_port", "465")) || 465,
+      smtpEncryption: encryption === "none" || encryption === "starttls" ? encryption : "ssl",
+      smtpUsername: this.getSetting("smtp_username", ""),
+      smtpPassword: includePassword && encryptedPassword ? this.vault.decrypt(encryptedPassword) : undefined,
+      smtpPasswordConfigured: Boolean(encryptedPassword),
+      smtpFromName: this.getSetting("smtp_from_name", "NEXUS CLOUD"),
+      smtpFromEmail: this.getSetting("smtp_from_email", ""),
+      smtpReplyTo: this.getSetting("smtp_reply_to", ""),
+      verificationCodeTtlMinutes: Number(this.getSetting("verification_code_ttl_minutes", "10")) || 10,
+      verificationResendSeconds: Number(this.getSetting("verification_resend_seconds", "60")) || 60,
+      siteName: this.getSetting("site_name", "NEXUS CLOUD"),
+      publicBaseUrl: this.getSetting("public_base_url", ""),
+    };
+  }
+
+  setEmailSettings(input: Partial<EmailSettings>) {
+    const current = this.getEmailSettings(true);
+    const next = { ...current, ...input };
+    if (next.emailEnabled && (!next.smtpHost.trim() || !next.smtpPort || !next.smtpFromEmail.trim())) {
+      throw new Error("启用邮件服务前必须填写 SMTP 主机、端口和发件邮箱");
+    }
+    if (next.emailVerificationRequired && !next.emailEnabled) throw new Error("强制邮箱验证前必须先启用邮件服务");
+    if (!["none", "starttls", "ssl"].includes(next.smtpEncryption)) throw new Error("SMTP 加密方式无效");
+    if (next.smtpPort < 1 || next.smtpPort > 65535) throw new Error("SMTP 端口无效");
+    if (next.verificationCodeTtlMinutes < 3 || next.verificationCodeTtlMinutes > 60) throw new Error("验证码有效期必须为 3 到 60 分钟");
+    if (next.verificationResendSeconds < 30 || next.verificationResendSeconds > 600) throw new Error("重发间隔必须为 30 到 600 秒");
+    const values: Record<string, string> = {
+      email_enabled: String(next.emailEnabled), email_verification_required: String(next.emailVerificationRequired),
+      smtp_host: next.smtpHost.trim(), smtp_port: String(next.smtpPort), smtp_encryption: next.smtpEncryption,
+      smtp_username: next.smtpUsername.trim(), smtp_from_name: next.smtpFromName.trim(), smtp_from_email: next.smtpFromEmail.trim(),
+      smtp_reply_to: next.smtpReplyTo.trim(), verification_code_ttl_minutes: String(next.verificationCodeTtlMinutes),
+      verification_resend_seconds: String(next.verificationResendSeconds), site_name: next.siteName.trim(), public_base_url: next.publicBaseUrl.trim(),
+    };
+    if (input.smtpPassword) values.smtp_password_encrypted = this.vault.encrypt(input.smtpPassword);
+    for (const [key, value] of Object.entries(values)) this.setSetting(key, value);
+    return this.getEmailSettings();
+  }
+
+  createEmailCode(email: string, purpose: "register" | "reset_password" | "change_email") {
+    const normalized = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) throw new Error("邮箱格式不正确");
+    const settings = this.getEmailSettings();
+    const latest = this.db.prepare(`SELECT last_sent_at AS lastSentAt FROM email_verification_codes WHERE email = ? AND purpose = ? ORDER BY created_at DESC LIMIT 1`).get(normalized, purpose) as any;
+    if (latest && Date.now() - new Date(latest.lastSentAt).getTime() < settings.verificationResendSeconds * 1000) {
+      throw new Error(`验证码发送过于频繁，请等待 ${settings.verificationResendSeconds} 秒`);
+    }
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const timestamp = nowIso();
+    this.db.prepare("UPDATE email_verification_codes SET consumed_at = ? WHERE email = ? AND purpose = ? AND consumed_at IS NULL")
+      .run(timestamp, normalized, purpose);
+    this.db.prepare(`INSERT INTO email_verification_codes (id, email, purpose, code_hash, expires_at, created_at, last_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(randomUUID(), normalized, purpose, hashToken(code), new Date(Date.now() + settings.verificationCodeTtlMinutes * 60_000).toISOString(), timestamp, timestamp);
+    return { email: normalized, code, expiresAt: new Date(Date.now() + settings.verificationCodeTtlMinutes * 60_000).toISOString() };
+  }
+
+  verifyEmailCode(email: string, purpose: "register" | "reset_password" | "change_email", code: string, consume = true) {
+    const normalized = email.trim().toLowerCase();
+    const row = this.db.prepare(`SELECT * FROM email_verification_codes WHERE email = ? AND purpose = ? AND consumed_at IS NULL ORDER BY created_at DESC LIMIT 1`).get(normalized, purpose) as any;
+    if (!row || row.expires_at <= nowIso()) throw new Error("验证码无效或已过期");
+    if (row.attempt_count >= 5) throw new Error("验证码尝试次数过多，请重新获取");
+    if (!timingSafeEqual(Buffer.from(row.code_hash), Buffer.from(hashToken(code.trim())))) {
+      this.db.prepare("UPDATE email_verification_codes SET attempt_count = attempt_count + 1 WHERE id = ?").run(row.id);
+      throw new Error("验证码错误");
+    }
+    if (consume) this.db.prepare("UPDATE email_verification_codes SET consumed_at = ? WHERE id = ?").run(nowIso(), row.id);
+    return true;
+  }
+
+  recordEmailDelivery(recipient: string, purpose: string, status: "sent" | "failed", errorMessage = "") {
+    this.db.prepare("INSERT INTO email_delivery_logs (id, recipient, purpose, status, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), recipient, purpose, status, errorMessage.slice(0, 1000), nowIso());
+  }
+
+  createUser(username: string, password: string, role: UserRole = "user", email?: string, emailVerified = false) {
+    const normalizedEmail = email?.trim().toLowerCase() || null;
+    if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error("邮箱格式不正确");
+    let normalized = username.trim();
+    if (!normalized && normalizedEmail) normalized = this.availableUsername(normalizedEmail.split("@")[0]);
     if (!/^[A-Za-z0-9_.@-]{3,64}$/.test(normalized)) throw new Error("用户名必须为 3 到 64 位字母、数字或 ._@-");
     if (password.length < 8 || password.length > 128) throw new Error("密码必须为 8 到 128 位");
     const id = randomUUID();
     const timestamp = nowIso();
     try {
-      this.db.prepare(`INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(id, normalized, hashPassword(password), role, timestamp, timestamp);
+      this.db.prepare(`INSERT INTO users (id, username, email, email_verified, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, normalized, normalizedEmail, emailVerified ? 1 : 0, hashPassword(password), role, timestamp, timestamp);
     } catch (error: any) {
+      if (/users\.email|idx_users_email/i.test(String(error?.message))) throw new Error("邮箱已经注册");
       if (/UNIQUE/i.test(String(error?.message))) throw new Error("用户名已经存在");
       throw error;
     }
     return this.getUserById(id)!;
   }
 
-  authenticate(username: string, password: string) {
-    const row = this.db.prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE").get(username.trim()) as any;
-    if (!row || !verifyPassword(password, row.password_hash)) throw new Error("用户名或密码错误");
+  private availableUsername(seed: string) {
+    const base = seed.replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 48) || "user";
+    const normalized = base.length >= 3 ? base : `${base}user`;
+    if (!this.db.prepare("SELECT 1 FROM users WHERE username = ? COLLATE NOCASE").get(normalized)) return normalized;
+    for (let index = 1; index < 1000; index += 1) {
+      const candidate = `${normalized.slice(0, 56)}-${index}`;
+      if (!this.db.prepare("SELECT 1 FROM users WHERE username = ? COLLATE NOCASE").get(candidate)) return candidate;
+    }
+    return `user-${randomBytes(5).toString("hex")}`;
+  }
+
+  authenticate(identifier: string, password: string) {
+    const normalized = identifier.trim();
+    const row = this.db.prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE").get(normalized, normalized) as any;
+    if (!row || !verifyPassword(password, row.password_hash)) throw new Error("邮箱、用户名或密码错误");
     if (row.status !== "active") throw new Error("账号已被禁用");
     this.db.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?").run(nowIso(), nowIso(), row.id);
     return this.getUserById(row.id)!;
@@ -395,22 +784,38 @@ export class CommercialStore {
   getSessionUser(token: string): SessionUser | null {
     if (!token) return null;
     const row = this.db.prepare(`
-      SELECT u.id, u.username, u.role, u.status
+      SELECT u.id, u.username, u.email, u.email_verified AS emailVerified, u.role, u.status
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ? AND s.expires_at > ?
     `).get(hashToken(token), nowIso()) as any;
-    return row || null;
+    return row ? { ...row, emailVerified: Boolean(row.emailVerified) } : null;
   }
 
   getUserById(id: string): SessionUser | null {
-    return (this.db.prepare("SELECT id, username, role, status FROM users WHERE id = ?").get(id) as SessionUser | undefined) || null;
+    const row = this.db.prepare("SELECT id, username, email, email_verified AS emailVerified, role, status FROM users WHERE id = ?").get(id) as any;
+    return row ? { ...row, emailVerified: Boolean(row.emailVerified) } : null;
   }
 
   listUsers() {
-    return this.db.prepare(`
-      SELECT id, username, role, status, created_at AS createdAt, last_login_at AS lastLoginAt
+    return (this.db.prepare(`
+      SELECT id, username, email, email_verified AS emailVerified, role, status, created_at AS createdAt, last_login_at AS lastLoginAt
       FROM users ORDER BY created_at DESC
-    `).all();
+    `).all() as any[]).map(row => ({ ...row, emailVerified: Boolean(row.emailVerified) }));
+  }
+
+  getUserDetail(id: string) {
+    const user = this.db.prepare(`
+      SELECT id, username, email, email_verified AS emailVerified, role, status, created_at AS createdAt, last_login_at AS lastLoginAt
+      FROM users WHERE id = ?
+    `).get(id) as any;
+    if (!user) return null;
+    user.emailVerified = Boolean(user.emailVerified);
+    return {
+      user,
+      orders: this.listOrders(id),
+      entitlements: this.listEntitlements(id),
+      deployments: this.listDeployments(id),
+    };
   }
 
   updateUserStatus(id: string, status: "active" | "disabled") {
@@ -420,6 +825,20 @@ export class CommercialStore {
 
   updateUserRole(id: string, role: UserRole) {
     this.db.prepare("UPDATE users SET role = ?, updated_at = ? WHERE id = ?").run(role, nowIso(), id);
+  }
+
+  updateUsername(id: string, username: string) {
+    const normalized = username.trim();
+    if (!/^[A-Za-z0-9_.@-]{3,64}$/.test(normalized)) throw new Error("用户名必须为 3 到 64 位字母、数字或 ._@-");
+    try {
+      const result = this.db.prepare("UPDATE users SET username = ?, updated_at = ? WHERE id = ?")
+        .run(normalized, nowIso(), id);
+      if (!result.changes) throw new Error("用户不存在");
+    } catch (error: any) {
+      if (/UNIQUE/i.test(String(error?.message))) throw new Error("用户名已经存在");
+      throw error;
+    }
+    return this.getUserById(id)!;
   }
 
   changePassword(userId: string, currentPassword: string, nextPassword: string) {
@@ -437,6 +856,29 @@ export class CommercialStore {
       .run(hashPassword(nextPassword), nowIso(), userId);
     if (!result.changes) throw new Error("用户不存在");
     this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+  }
+
+  resetPasswordByEmail(email: string, nextPassword: string) {
+    const row = this.db.prepare("SELECT id FROM users WHERE email = ? COLLATE NOCASE").get(email.trim()) as any;
+    if (!row) throw new Error("该邮箱没有注册账户");
+    this.resetPassword(row.id, nextPassword);
+  }
+
+  emailExists(email: string) {
+    return Boolean(this.db.prepare("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE").get(email.trim()));
+  }
+
+  updateUserEmail(id: string, email: string, verified = false) {
+    const normalized = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) throw new Error("邮箱格式不正确");
+    try {
+      const result = this.db.prepare("UPDATE users SET email = ?, email_verified = ?, updated_at = ? WHERE id = ?")
+        .run(normalized, verified ? 1 : 0, nowIso(), id);
+      if (!result.changes) throw new Error("用户不存在");
+    } catch (error: any) {
+      if (/UNIQUE|users\.email|idx_users_email/i.test(String(error?.message))) throw new Error("邮箱已经注册");
+      throw error;
+    }
   }
 
   listPlans(includeDisabled = false) {
@@ -499,16 +941,20 @@ export class CommercialStore {
     if (input.nodeMode === "limited" && input.nodeLimit < 1) throw new Error("限制节点次数时必须至少为 1 次");
   }
 
-  createOrder(userId: string, planId: string) {
+  createOrder(userId: string, planId: string, paymentProvider = "manual") {
     const plan = this.getPlan(planId);
     if (!plan) throw new Error("套餐不存在或已经下架");
+    const paymentMethod = this.getPaymentMethods().find(method => method.id === paymentProvider);
+    if (!paymentMethod) throw new Error("所选支付方式不存在或已停用");
     const id = randomUUID();
     const timestamp = nowIso();
     const orderNo = `XUI${Date.now()}${randomBytes(4).toString("hex").toUpperCase()}`;
+    const expiryMinutes = Math.max(5, Number(this.getSetting("order_expiry_minutes", "30")) || 30);
+    const expiresAt = new Date(Date.now() + expiryMinutes * 60_000).toISOString();
     this.db.prepare(`
-      INSERT INTO orders (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
-    `).run(id, orderNo, userId, planId, plan.priceCents, JSON.stringify(plan), timestamp, timestamp);
+      INSERT INTO orders (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, payment_provider, created_at, expires_at, updated_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
+    `).run(id, orderNo, userId, planId, plan.priceCents, JSON.stringify(plan), paymentMethod.id, timestamp, expiresAt, timestamp);
     return this.getOrder(id)!;
   }
 
@@ -516,16 +962,25 @@ export class CommercialStore {
     return this.db.prepare(`
       SELECT id, order_no AS orderNo, user_id AS userId, plan_id AS planId, status,
         amount_cents AS amountCents, plan_snapshot AS planSnapshot, payment_provider AS paymentProvider,
-        payment_trade_no AS paymentTradeNo, created_at AS createdAt, paid_at AS paidAt
+        payment_trade_no AS paymentTradeNo, created_at AS createdAt, paid_at AS paidAt,
+        expires_at AS expiresAt, cancelled_at AS cancelledAt, refunded_at AS refundedAt,
+        refund_trade_no AS refundTradeNo, cancel_reason AS cancelReason, refund_reason AS refundReason
       FROM orders WHERE id = ?
     `).get(id) as any;
+  }
+
+  getOrderByNo(orderNo: string) {
+    const row = this.db.prepare("SELECT id FROM orders WHERE order_no = ?").get(orderNo) as any;
+    return row ? this.getOrder(row.id) : null;
   }
 
   listOrders(userId?: string) {
     return this.db.prepare(`
       SELECT o.id, o.order_no AS orderNo, o.user_id AS userId, u.username, o.status,
         o.amount_cents AS amountCents, o.plan_snapshot AS planSnapshot, o.payment_provider AS paymentProvider,
-        o.payment_trade_no AS paymentTradeNo, o.created_at AS createdAt, o.paid_at AS paidAt
+        o.payment_trade_no AS paymentTradeNo, o.created_at AS createdAt, o.paid_at AS paidAt,
+        o.expires_at AS expiresAt, o.cancelled_at AS cancelledAt, o.refunded_at AS refundedAt,
+        o.refund_trade_no AS refundTradeNo, o.cancel_reason AS cancelReason, o.refund_reason AS refundReason
       FROM orders o JOIN users u ON u.id = o.user_id
       ${userId ? "WHERE o.user_id = ?" : ""}
       ORDER BY o.created_at DESC
@@ -538,6 +993,10 @@ export class CommercialStore {
       if (!order) throw new Error("订单不存在");
       if (order.status === "paid") return this.getOrder(orderId);
       if (order.status !== "pending") throw new Error("只有待支付订单可以确认收款");
+      if (order.expires_at && order.expires_at <= nowIso()) {
+        this.db.prepare("UPDATE orders SET status = 'expired', updated_at = ? WHERE id = ?").run(nowIso(), orderId);
+        throw new Error("订单已过期，请重新下单");
+      }
       const eventKey = `${provider}:${tradeNo}`;
       this.db.prepare("INSERT INTO payment_events (id, provider, event_key, order_id, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)")
         .run(randomUUID(), provider, eventKey, orderId, "{}", nowIso());
@@ -548,16 +1007,16 @@ export class CommercialStore {
     })();
   }
 
-  cancelOrder(orderId: string, userId?: string) {
+  cancelOrder(orderId: string, userId?: string, reason = "") {
     const order = this.getOrder(orderId);
     if (!order || (userId && order.userId !== userId)) throw new Error("订单不存在");
     if (order.status !== "pending") throw new Error("只有待支付订单可以取消");
-    this.db.prepare("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE id = ?")
-      .run(nowIso(), orderId);
+    this.db.prepare("UPDATE orders SET status = 'cancelled', cancelled_at = ?, cancel_reason = ?, updated_at = ? WHERE id = ?")
+      .run(nowIso(), reason.slice(0, 500), nowIso(), orderId);
     return this.getOrder(orderId);
   }
 
-  refundOrder(orderId: string) {
+  refundOrder(orderId: string, reason = "", refundTradeNo = "") {
     return this.db.transaction(() => {
       const order = this.getOrder(orderId);
       if (!order) throw new Error("订单不存在");
@@ -570,11 +1029,50 @@ export class CommercialStore {
         LIMIT 1
       `).get(orderId);
       if (activeDeployment) throw new Error("该订单仍有执行中或待确认任务，请处理完成后再退款");
-      this.db.prepare("UPDATE orders SET status = 'refunded', updated_at = ? WHERE id = ?")
-        .run(nowIso(), orderId);
+      this.db.prepare("UPDATE orders SET status = 'refunded', refunded_at = ?, refund_reason = ?, refund_trade_no = ?, updated_at = ? WHERE id = ?")
+        .run(nowIso(), reason.slice(0, 500), refundTradeNo.slice(0, 200), nowIso(), orderId);
       this.db.prepare("UPDATE entitlements SET status = 'revoked' WHERE source_order_id = ?")
         .run(orderId);
       return this.getOrder(orderId);
+    })();
+  }
+
+  expirePendingOrders() {
+    const timestamp = nowIso();
+    const result = this.db.prepare("UPDATE orders SET status = 'expired', updated_at = ? WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?")
+      .run(timestamp, timestamp);
+    this.db.prepare("UPDATE payment_attempts SET status = 'closed', updated_at = ? WHERE status IN ('created', 'pending') AND order_id IN (SELECT id FROM orders WHERE status = 'expired')").run(timestamp);
+    return result.changes;
+  }
+
+  createPaymentAttempt(orderId: string, provider: string, checkoutUrl: string, requestPayload: unknown, expiresAt?: string | null) {
+    const id = randomUUID();
+    const timestamp = nowIso();
+    this.db.prepare(`INSERT INTO payment_attempts (id, order_id, provider, status, checkout_url, request_payload, expires_at, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`)
+      .run(id, orderId, provider, checkoutUrl, JSON.stringify(requestPayload || {}), expiresAt || null, timestamp, timestamp);
+    return this.getPaymentAttempt(id)!;
+  }
+
+  getPaymentAttempt(id: string) {
+    return this.db.prepare(`SELECT id, order_id AS orderId, provider, status, provider_trade_no AS providerTradeNo,
+      checkout_url AS checkoutUrl, error_message AS errorMessage, expires_at AS expiresAt, paid_at AS paidAt,
+      created_at AS createdAt, updated_at AS updatedAt FROM payment_attempts WHERE id = ?`).get(id) as any;
+  }
+
+  listPaymentAttempts(orderId?: string) {
+    return this.db.prepare(`SELECT pa.id, pa.order_id AS orderId, o.order_no AS orderNo, pa.provider, pa.status,
+      pa.provider_trade_no AS providerTradeNo, pa.checkout_url AS checkoutUrl, pa.error_message AS errorMessage,
+      pa.expires_at AS expiresAt, pa.paid_at AS paidAt, pa.created_at AS createdAt, pa.updated_at AS updatedAt
+      FROM payment_attempts pa JOIN orders o ON o.id = pa.order_id ${orderId ? "WHERE pa.order_id = ?" : ""}
+      ORDER BY pa.created_at DESC LIMIT 500`).all(...(orderId ? [orderId] : []));
+  }
+
+  completePaymentAttempt(orderId: string, provider: string, tradeNo: string, payload: unknown) {
+    return this.db.transaction(() => {
+      const result = this.markOrderPaid(orderId, provider, tradeNo);
+      this.db.prepare(`UPDATE payment_attempts SET status = 'paid', provider_trade_no = ?, response_payload = ?, paid_at = ?, updated_at = ? WHERE order_id = ? AND provider = ? AND status IN ('created', 'pending')`)
+        .run(tradeNo, JSON.stringify(payload || {}), nowIso(), nowIso(), orderId, provider);
+      return result;
     })();
   }
 
@@ -623,6 +1121,11 @@ export class CommercialStore {
       input.nodeMode, input.nodeMode === "limited" ? input.nodeLimit : 0, input.nodeMode === "limited" ? input.nodeLimit : 0,
       input.dailyPanelLimit || 0, input.dailyNodeLimit || 0, input.concurrencyLimit || 1, nowIso(),
     );
+    for (const capability of ["panel", "node"] as Capability[]) {
+      const mode = input[`${capability}Mode`];
+      const amount = mode === "limited" ? input[`${capability}Limit`] : 0;
+      if (mode !== "none") this.addLedger(userId, id, null, capability, "grant", amount, "管理员手工发放权益");
+    }
     return id;
   }
 
@@ -697,6 +1200,12 @@ export class CommercialStore {
       values.nodeRemaining, values.nodeRemaining,
       values.dailyPanelLimit, values.dailyNodeLimit, values.concurrencyLimit, id,
     );
+    if (entitlement.panel_mode === "limited" && values.panelRemaining !== entitlement.panel_remaining) {
+      this.addLedger(entitlement.user_id, id, null, "panel", "adjust", values.panelRemaining - entitlement.panel_remaining, "管理员调整面板剩余次数");
+    }
+    if (entitlement.node_mode === "limited" && values.nodeRemaining !== entitlement.node_remaining) {
+      this.addLedger(entitlement.user_id, id, null, "node", "adjust", values.nodeRemaining - entitlement.node_remaining, "管理员调整节点剩余次数");
+    }
     return (this.listAllEntitlements() as any[]).find(item => item.id === id);
   }
 
@@ -811,13 +1320,62 @@ export class CommercialStore {
     `).all(...(userId ? [userId] : []));
   }
 
+  listUsageLedger() {
+    return this.db.prepare(`
+      SELECT l.id, l.user_id AS userId, u.username, l.entitlement_id AS entitlementId,
+        e.plan_name AS planName, l.deployment_id AS deploymentId, l.capability,
+        l.action, l.amount, l.note, l.created_at AS createdAt
+      FROM usage_ledger l
+      JOIN users u ON u.id = l.user_id
+      JOIN entitlements e ON e.id = l.entitlement_id
+      ORDER BY l.created_at DESC LIMIT 500
+    `).all();
+  }
+
+  recordAdminAction(adminUserId: string, action: string, targetType: string, targetId = "", detail = "") {
+    this.db.prepare(`
+      INSERT INTO admin_audit_logs (id, admin_user_id, action, target_type, target_id, detail, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(randomUUID(), adminUserId, action.slice(0, 80), targetType.slice(0, 40), targetId.slice(0, 128), detail.slice(0, 500), nowIso());
+  }
+
+  listAdminAuditLogs() {
+    return this.db.prepare(`
+      SELECT l.id, l.admin_user_id AS adminUserId, u.username AS adminUsername,
+        l.action, l.target_type AS targetType, l.target_id AS targetId,
+        l.detail, l.created_at AS createdAt
+      FROM admin_audit_logs l
+      JOIN users u ON u.id = l.admin_user_id
+      ORDER BY l.created_at DESC LIMIT 500
+    `).all();
+  }
+
   getDashboardStats() {
+    const now = nowIso();
     return {
       users: Number((this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'user'").get() as any).count),
+      activeUsers: Number((this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'user' AND status = 'active'").get() as any).count),
+      disabledUsers: Number((this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'user' AND status = 'disabled'").get() as any).count),
+      admins: Number((this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").get() as any).count),
+      orders: Number((this.db.prepare("SELECT COUNT(*) AS count FROM orders").get() as any).count),
+      pendingOrders: Number((this.db.prepare("SELECT COUNT(*) AS count FROM orders WHERE status = 'pending'").get() as any).count),
       paidOrders: Number((this.db.prepare("SELECT COUNT(*) AS count FROM orders WHERE status = 'paid'").get() as any).count),
+      refundedOrders: Number((this.db.prepare("SELECT COUNT(*) AS count FROM orders WHERE status = 'refunded'").get() as any).count),
       revenueCents: Number((this.db.prepare("SELECT COALESCE(SUM(amount_cents), 0) AS total FROM orders WHERE status = 'paid'").get() as any).total),
+      entitlements: Number((this.db.prepare("SELECT COUNT(*) AS count FROM entitlements").get() as any).count),
+      activeEntitlements: Number((this.db.prepare(`
+        SELECT COUNT(*) AS count FROM entitlements
+        WHERE status = 'active' AND starts_at <= ? AND (lifetime = 1 OR expires_at > ?)
+      `).get(now, now) as any).count),
+      expiredEntitlements: Number((this.db.prepare(`
+        SELECT COUNT(*) AS count FROM entitlements
+        WHERE status = 'active' AND lifetime = 0 AND expires_at <= ?
+      `).get(now) as any).count),
+      revokedEntitlements: Number((this.db.prepare("SELECT COUNT(*) AS count FROM entitlements WHERE status = 'revoked'").get() as any).count),
       deployments: Number((this.db.prepare("SELECT COUNT(*) AS count FROM deployments").get() as any).count),
+      running: Number((this.db.prepare("SELECT COUNT(*) AS count FROM deployments WHERE status IN ('reserved', 'running')").get() as any).count),
       succeeded: Number((this.db.prepare("SELECT COUNT(*) AS count FROM deployments WHERE status = 'succeeded'").get() as any).count),
+      failed: Number((this.db.prepare("SELECT COUNT(*) AS count FROM deployments WHERE status = 'failed'").get() as any).count),
       uncertain: Number((this.db.prepare("SELECT COUNT(*) AS count FROM deployments WHERE status = 'uncertain'").get() as any).count),
     };
   }

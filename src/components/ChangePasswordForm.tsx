@@ -6,9 +6,10 @@ interface ChangePasswordFormProps {
   endpoint: string;
   onChanged: () => void;
   showToast?: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
+  variant?: 'default' | 'admin' | 'account';
 }
 
-export const ChangePasswordForm: React.FC<ChangePasswordFormProps> = ({ endpoint, onChanged, showToast }) => {
+export const ChangePasswordForm: React.FC<ChangePasswordFormProps> = ({ endpoint, onChanged, showToast, variant = 'default' }) => {
   const [currentPassword, setCurrentPassword] = useState('');
   const [nextPassword, setNextPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -30,6 +31,26 @@ export const ChangePasswordForm: React.FC<ChangePasswordFormProps> = ({ endpoint
       setBusy(false);
     }
   };
+
+  if (variant === 'admin') return <form onSubmit={submit} className="admin-password-form">
+    <div className="admin-form-grid">
+      <label className="admin-field"><span>当前密码</span><input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required /></label>
+      <label className="admin-field"><span>新密码</span><input type="password" autoComplete="new-password" value={nextPassword} onChange={event => setNextPassword(event.target.value)} minLength={8} maxLength={128} required /><small>密码长度为 8 到 128 位。</small></label>
+      <label className="admin-field"><span>确认新密码</span><input type="password" autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} minLength={8} maxLength={128} required /></label>
+    </div>
+    {error && <div className="admin-form-error">{error}</div>}
+    <button disabled={busy} className="admin-button primary"><Save />{busy ? '正在保存...' : '修改密码'}</button>
+  </form>;
+
+  if (variant === 'account') return <form onSubmit={submit} className="account-password-form">
+    <label><span>当前密码</span><input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required /></label>
+    <div className="account-password-row">
+      <label><span>新密码</span><input type="password" autoComplete="new-password" value={nextPassword} onChange={event => setNextPassword(event.target.value)} minLength={8} maxLength={128} required /><small>密码长度为 8 到 128 位</small></label>
+      <label><span>确认新密码</span><input type="password" autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} minLength={8} maxLength={128} required /></label>
+    </div>
+    {error && <div className="account-form-error">{error}</div>}
+    <button disabled={busy}><Save />{busy ? '正在保存...' : '保存新密码'}</button>
+  </form>;
 
   return <form onSubmit={submit} className="max-w-xl border border-white/10 rounded-lg p-5 space-y-4">
     <div><h2 className="font-semibold text-white flex items-center gap-2"><KeyRound className="w-4 h-4 text-indigo-400" />修改密码</h2><p className="text-xs text-zinc-500 mt-1">修改后当前登录会话会退出。</p></div>

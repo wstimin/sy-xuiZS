@@ -27,7 +27,9 @@ export const AuthView: React.FC<AuthViewProps> = ({ bootstrapRequired, portal, o
         : mode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const result = await api<{ user: CurrentUser }>(endpoint, {
         method: 'POST',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(mode === 'register'
+          ? { email: username, password }
+          : { identifier: username, username, password }),
       });
       onAuthenticated(result.user);
     } catch (reason) {

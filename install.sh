@@ -53,6 +53,7 @@ backup_commercial_database() {
   fi
   mkdir -p "$DATABASE_BACKUP_DIR"
   local backup_file="$DATABASE_BACKUP_DIR/app-$(date +%Y%m%d-%H%M%S).db"
+  local key_file="${DATABASE_PATH}.key"
   echo -e "${BLUE}[DATA] 正在备份用户、订单与权益数据库...${NC}"
   SOURCE_DB="$DATABASE_PATH" BACKUP_DB="$backup_file" node --input-type=module -e '
     import Database from "better-sqlite3";
@@ -60,6 +61,10 @@ backup_commercial_database() {
     try { await database.backup(process.env.BACKUP_DB); } finally { database.close(); }
   '
   chmod 600 "$backup_file"
+  if [ -f "$key_file" ]; then
+    cp -p "$key_file" "${backup_file}.key"
+    chmod 600 "${backup_file}.key"
+  fi
   echo -e "${GREEN}[OK] 数据库备份已保存至 ${backup_file}${NC}"
 }
 
@@ -152,6 +157,29 @@ verify_running_release() {
     sleep 1
   done
   return 1
+}
+
+read_runtime_admin_path() {
+  local protocol="http"
+  local cert_path="${SSL_CERT:-$SSL_DIR/cert.pem}"
+  local key_path="${SSL_KEY:-$SSL_DIR/key.pem}"
+  local config_output=""
+  if [ -f "$cert_path" ] && [ -f "$key_path" ]; then
+    protocol="https"
+  fi
+  config_output=$(curl -skf --max-time 5 "${protocol}://127.0.0.1:${APP_PORT}/api/runtime-config" 2>/dev/null || true)
+  if [ -z "$config_output" ]; then
+    echo "admin"
+    return 0
+  fi
+  RUNTIME_CONFIG="$config_output" node -e '
+    try {
+      const value = JSON.parse(process.env.RUNTIME_CONFIG || "{}").adminPath;
+      process.stdout.write(typeof value === "string" && value ? value : "admin");
+    } catch {
+      process.stdout.write("admin");
+    }
+  '
 }
 
 check_root() {
@@ -383,12 +411,14 @@ install_assistant() {
     chmod 600 "$DOWNLOADED_PACKAGE_DIR/.env"
     echo -e "${GREEN}[OK] 已创建 .env 配置文件。${NC}"
   fi
-  mkdir -p "$DATA_DIR"
-  chmod 700 "$DATA_DIR"
   if ! grep -q '^DATABASE_PATH=' "$DOWNLOADED_PACKAGE_DIR/.env"; then
     printf '\nDATABASE_PATH=%s\n' "$DATA_DIR/app.db" >> "$DOWNLOADED_PACKAGE_DIR/.env"
   fi
   load_runtime_config
+  mkdir -p "$(dirname "$DATABASE_PATH")"
+  if [ "$(dirname "$DATABASE_PATH")" = "$DATA_DIR" ]; then
+    chmod 700 "$DATA_DIR"
+  fi
   backup_commercial_database
 
   BACKUP_DIR="${TARGET_DIR}.previous"
@@ -433,6 +463,7 @@ install_assistant() {
     return 1
   fi
   echo -e "${GREEN}[OK] 运行健康检查通过，当前版本为 v${APP_VERSION}。${NC}"
+  ADMIN_PATH=$(read_runtime_admin_path)
 
   if command -v systemctl &>/dev/null; then
     pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
@@ -462,6 +493,8 @@ install_assistant() {
     echo -e "🌐 面板访问地址: ${CYAN}http://${SERVER_IP}:${APP_PORT}${NC}"
     echo -e "💡 提示: 您可在菜单选择 [2] 为本面板申请域名 SSL 证书并开启 HTTPS 访问。"
   fi
+  echo -e "🏠 官网入口: ${CYAN}/${NC}    用户登录: ${CYAN}/login${NC}    用户注册: ${CYAN}/register${NC}"
+  echo -e "🛡️ 管理入口: ${CYAN}/${ADMIN_PATH}${NC}（登录后可在管理后台修改入口后缀）"
 
   echo -e "\n${YELLOW}⚠️ 【重要】如果安装完成后浏览器无法打开页面，请检查：${NC}"
   echo -e "  1. ${BOLD}云厂商安全组/防火墙${NC}: 请登录阿里云/腾讯云/AWS/甲骨文云后台，在【安全组入站规则】中放行 ${YELLOW}${APP_PORT}${NC} 及 ${YELLOW}80${NC} 端口(TCP)！"
@@ -644,7 +677,7 @@ uninstall_all() {
   echo -e "${RED}============================================================${NC}"
   
   echo -e "${YELLOW}此操作将停止 PM2 守护进程，并删除一键安装在 ${TARGET_DIR} 的项目与快捷命令。${NC}"
-  echo -e "${YELLOW}用户、订单与权益数据库位于 ${DATA_DIR}，默认不会随应用卸载删除。${NC}"
+  echo -e "${YELLOW}用户、订单、权益数据库及商业配置加密密钥位于 ${DATA_DIR}，默认不会随应用卸载删除。${NC}"
   if [ "$SCRIPT_DIR" != "$TARGET_DIR" ]; then
     echo -e "${YELLOW}当前脚本位于 ${SCRIPT_DIR}，该本地源码目录不会被删除。${NC}"
   fi

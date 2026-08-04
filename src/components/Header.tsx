@@ -1,6 +1,6 @@
 import React from 'react';
 import { ViewMode } from '../types';
-import { Terminal, Cpu, Network, History, HelpCircle, ShieldCheck, BookOpen, CreditCard, UserCircle, LogOut } from 'lucide-react';
+import { Terminal, Cpu, Network, History, HelpCircle, ShieldCheck, BookOpen, CreditCard, UserCircle, LogOut, Waypoints } from 'lucide-react';
 import { CurrentUser } from '../commercial';
 
 interface HeaderProps {
@@ -34,7 +34,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-emerald-500 p-[1px] shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-all duration-300">
             <div className="w-full h-full bg-[#0a0a0c] rounded-[11px] flex items-center justify-center">
-              <Terminal className="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" />
+              <Waypoints className="w-5 h-5 text-cyan-300 group-hover:scale-110 transition-transform" />
             </div>
           </div>
           <div className="hidden lg:block">
@@ -106,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Helper Action Tools */}
         <div className="flex items-center gap-2">
-          <span className="hidden xl:inline text-xs text-zinc-500 max-w-28 truncate">{user.username}</span>
+          <button type="button" className="app-header-account" onClick={() => onSelectView('account')} title="打开我的账户"><span>{user.username.slice(0, 1).toUpperCase()}</span><div><strong>{user.username}</strong><small>我的账户</small></div></button>
           {onOpenSetupGuide && (
             <button
               onClick={onOpenSetupGuide}
@@ -141,8 +141,8 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          <button onClick={onLogout} title="退出登录" className="p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-300 hover:text-rose-300 hover:border-rose-500/30 transition-all">
-            <LogOut className="w-4 h-4" />
+          <button onClick={onLogout} title="退出登录" className="app-header-logout">
+            <LogOut className="w-4 h-4" /><span>退出</span>
           </button>
         </div>
       </div>

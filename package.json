@@ -1,7 +1,7 @@
 {
   "name": "xui-zhushou",
   "private": true,
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "带用户、订单、权益和配额管理的 3x-ui 商业部署助手",
   "type": "module",
   "engines": {

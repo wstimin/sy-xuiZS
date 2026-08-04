@@ -1,28 +1,42 @@
-import {StrictMode} from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import AdminApp from './AdminApp.tsx';
 import UserAuthApp from './UserAuthApp.tsx';
 import { LandingPage } from './components/LandingPage.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { api } from './commercial.ts';
 import './index.css';
 
-const path = window.location.pathname.replace(/\/+$/, '') || '/';
+function normalizedPath() {
+  return window.location.pathname.replace(/\/+$/, '') || '/';
+}
 
-const RootApp = path === '/admin' || path.startsWith('/admin/')
-  ? AdminApp
-  : path === '/console' || path.startsWith('/console/')
-    ? App
-    : path === '/login'
-      ? () => <UserAuthApp mode="login" />
-      : path === '/register'
-        ? () => <UserAuthApp mode="register" />
-        : LandingPage;
+function RootRouter() {
+  const [adminPath, setAdminPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ adminPath: string }>('/api/runtime-config')
+      .then(config => setAdminPath(config.adminPath || 'admin'))
+      .catch(() => setAdminPath('admin'));
+  }, []);
+
+  if (!adminPath) return <div className="app-route-loading" aria-label="正在加载" />;
+
+  const path = normalizedPath();
+  const adminRoot = `/${adminPath}`;
+
+  if (path === adminRoot || path.startsWith(`${adminRoot}/`)) return <AdminApp />;
+  if (path === '/console' || path.startsWith('/console/')) return <App />;
+  if (path === '/login') return <UserAuthApp mode="login" />;
+  if (path === '/register') return <UserAuthApp mode="register" />;
+  return <LandingPage />;
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <RootApp />
+      <RootRouter />
     </ErrorBoundary>
   </StrictMode>,
 );

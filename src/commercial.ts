@@ -5,8 +5,45 @@ export type DurationUnit = 'days' | 'months' | 'years' | 'lifetime';
 export interface CurrentUser {
   id: string;
   username: string;
+  email: string | null;
+  emailVerified: boolean;
   role: UserRole;
   status: 'active' | 'disabled';
+}
+
+export interface PaymentMethod {
+  id: string;
+  name: string;
+  type: 'manual' | 'alipay' | 'wechat' | 'epay';
+  enabled: boolean;
+  instructions: string;
+  paymentUrl: string;
+  sortOrder: number;
+  provider?: 'manual' | 'epay';
+  gatewayUrl?: string;
+  merchantId?: string;
+  merchantSecret?: string;
+  merchantSecretConfigured?: boolean;
+  channel?: 'alipay' | 'wxpay' | 'qqpay';
+  sandbox?: boolean;
+}
+
+export interface EmailSettings {
+  emailEnabled: boolean;
+  emailVerificationRequired: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpEncryption: 'none' | 'starttls' | 'ssl';
+  smtpUsername: string;
+  smtpPassword?: string;
+  smtpPasswordConfigured: boolean;
+  smtpFromName: string;
+  smtpFromEmail: string;
+  smtpReplyTo: string;
+  verificationCodeTtlMinutes: number;
+  verificationResendSeconds: number;
+  siteName: string;
+  publicBaseUrl: string;
 }
 
 export interface Plan {
@@ -64,6 +101,12 @@ export interface Order {
   paymentTradeNo?: string;
   createdAt: string;
   paidAt?: string;
+  expiresAt?: string;
+  cancelledAt?: string;
+  refundedAt?: string;
+  refundTradeNo?: string;
+  cancelReason?: string;
+  refundReason?: string;
 }
 
 export interface DeploymentRecord {
@@ -88,6 +131,7 @@ export interface AccountData {
   orders: Order[];
   deployments: DeploymentRecord[];
   paymentInstructions: string;
+  paymentMethods: PaymentMethod[];
 }
 
 export class ApiError extends Error {

@@ -1,5 +1,7 @@
 import { NextFunction, Request, Response, Router } from "express";
 import { CommercialStore, DurationUnit, EntitlementGrantInput, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
+import { sendSmtpMail } from "./email-service.js";
+import { createEpayUrl, verifyEpaySignature } from "./payment-service.js";
 
 const USER_COOKIE_NAME = "xui_user_session";
 const ADMIN_COOKIE_NAME = "xui_admin_session";
@@ -136,12 +138,79 @@ function route(handler: (req: Request, res: Response) => unknown) {
   };
 }
 
+function publicBaseUrl(req: Request, store: CommercialStore) {
+  const configured = store.getEmailSettings().publicBaseUrl.replace(/\/+$/, "");
+  if (configured) return configured;
+  const protocol = req.header("x-forwarded-proto") || req.protocol;
+  const host = req.header("x-forwarded-host") || req.header("host");
+  if (!host) throw new Error("无法确定公网回调地址，请在邮件设置中填写公网访问地址");
+  return `${protocol}://${host}`;
+}
+
+async function sendConfiguredMail(store: CommercialStore, recipient: string, purpose: string, subject: string, text: string) {
+  const settings = store.getEmailSettings(true);
+  if (!settings.emailEnabled) throw new Error("邮件服务尚未启用");
+  try {
+    await sendSmtpMail({
+      host: settings.smtpHost, port: settings.smtpPort, encryption: settings.smtpEncryption,
+      username: settings.smtpUsername, password: settings.smtpPassword || "", fromName: settings.smtpFromName,
+      fromEmail: settings.smtpFromEmail, replyTo: settings.smtpReplyTo,
+    }, recipient, subject, text);
+    store.recordEmailDelivery(recipient, purpose, "sent");
+  } catch (error) {
+    store.recordEmailDelivery(recipient, purpose, "failed", message(error));
+    throw error;
+  }
+}
+
+function epayParams(req: Request) {
+  const source = { ...(req.query || {}), ...(req.body || {}) } as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(source).map(([key, value]) => [key, Array.isArray(value) ? String(value[0] || "") : String(value || "")])) as Record<string, string>;
+}
+
 export function createCommercialRouter(store: CommercialStore) {
   const router = Router();
+
+  router.get("/runtime-config", (_req, res) => {
+    res.json({ adminPath: store.getAdminPath() });
+  });
 
   router.get("/auth/bootstrap-status", (_req, res) => {
     res.json({ required: !store.hasUsers() });
   });
+
+  router.get("/auth/settings", (_req, res) => {
+    const email = store.getEmailSettings();
+    res.json({
+      registrationEnabled: store.getSetting("registration_enabled", "true") === "true",
+      emailEnabled: email.emailEnabled,
+      emailVerificationRequired: email.emailVerificationRequired,
+      verificationResendSeconds: email.verificationResendSeconds,
+      siteName: email.siteName,
+    });
+  });
+
+  router.post("/auth/send-code", route(async (req, res) => {
+    const purpose = req.body?.purpose === "reset_password" ? "reset_password" : "register";
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const settings = store.getEmailSettings();
+    if (!settings.emailEnabled) throw new Error("邮件服务尚未启用");
+    if (purpose === "register" && store.emailExists(email)) throw new Error("邮箱已经注册");
+    if (purpose === "reset_password" && !store.emailExists(email)) return res.json({ success: true });
+    const result = store.createEmailCode(email, purpose);
+    const action = purpose === "register" ? "注册账户" : "重置密码";
+    await sendConfiguredMail(store, result.email, purpose, `${settings.siteName} ${action}验证码`,
+      `你正在${action}。\n\n验证码：${result.code}\n\n验证码 ${settings.verificationCodeTtlMinutes} 分钟内有效，请勿转发给他人。`);
+    res.json({ success: true, expiresAt: result.expiresAt });
+  }));
+
+  router.post("/auth/reset-password", route((req, res) => {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    store.verifyEmailCode(email, "reset_password", String(req.body?.code || ""), false);
+    store.resetPasswordByEmail(email, String(req.body?.nextPassword || ""));
+    store.verifyEmailCode(email, "reset_password", String(req.body?.code || ""));
+    res.json({ success: true });
+  }));
 
   router.post("/auth/bootstrap", route((req, res) => {
     const user = store.bootstrapAdmin(String(req.body?.username || ""), String(req.body?.password || ""));
@@ -158,14 +227,19 @@ export function createCommercialRouter(store: CommercialStore) {
     if (store.getSetting("registration_enabled", "true") !== "true") {
       return res.status(403).json({ success: false, error: "管理员已关闭新用户注册" });
     }
-    const user = store.createUser(String(req.body?.username || ""), String(req.body?.password || ""), "user");
+    const email = String(req.body?.email || "");
+    if (!email.trim()) throw new Error("请输入邮箱地址");
+    const emailSettings = store.getEmailSettings();
+    if (emailSettings.emailVerificationRequired) store.verifyEmailCode(email, "register", String(req.body?.code || ""), false);
+    const user = store.createUser(String(req.body?.username || ""), String(req.body?.password || ""), "user", email, emailSettings.emailVerificationRequired);
+    if (emailSettings.emailVerificationRequired) store.verifyEmailCode(email, "register", String(req.body?.code || ""));
     const token = store.createSession(user.id);
     setSessionCookie(req, res, USER_COOKIE_NAME, token);
     res.json({ success: true, user });
   }));
 
   router.post("/auth/login", route((req, res) => {
-    const user = store.authenticate(String(req.body?.username || ""), String(req.body?.password || ""));
+    const user = store.authenticate(String(req.body?.identifier || req.body?.username || ""), String(req.body?.password || ""));
     if (user.role !== "user") return res.status(403).json({ success: false, error: "管理员请从 /admin 登录管理端" });
     const token = store.createSession(user.id);
     setSessionCookie(req, res, USER_COOKIE_NAME, token);
@@ -173,7 +247,7 @@ export function createCommercialRouter(store: CommercialStore) {
   }));
 
   router.post("/admin/auth/login", route((req, res) => {
-    const user = store.authenticate(String(req.body?.username || ""), String(req.body?.password || ""));
+    const user = store.authenticate(String(req.body?.identifier || req.body?.username || ""), String(req.body?.password || ""));
     if (user.role !== "admin") return res.status(403).json({ success: false, error: "该账号不是管理员" });
     const token = store.createSession(user.id);
     setSessionCookie(req, res, ADMIN_COOKIE_NAME, token);
@@ -214,7 +288,30 @@ export function createCommercialRouter(store: CommercialStore) {
     res.json({ success: true });
   }));
 
+  router.patch("/admin/account", requireAdmin, route((req, res) => {
+    const acting = adminUser(res);
+    const previousUsername = acting.username;
+    const user = store.updateUsername(acting.id, String(req.body?.username || ""));
+    store.recordAdminAction(acting.id, "修改管理员用户名", "user", acting.id, `${previousUsername} -> ${user.username}`);
+    res.json({ success: true, user });
+  }));
+
   router.get("/plans", (_req, res) => res.json({ plans: store.listPlans() }));
+  router.get("/payment-methods", (_req, res) => res.json({ paymentMethods: store.getPaymentMethods() }));
+
+  router.all("/payment/epay/:channelId/notify", route((req, res) => {
+    const params = epayParams(req);
+    const channel = store.getPaymentMethods(true, true).find(item => item.id === req.params.channelId && item.provider === "epay");
+    if (!channel?.enabled || !channel.merchantSecret) return res.status(404).send("fail");
+    if (!verifyEpaySignature(params, channel.merchantSecret)) return res.status(400).send("fail");
+    if (params.trade_status && !["TRADE_SUCCESS", "TRADE_FINISHED"].includes(params.trade_status)) return res.status(400).send("fail");
+    const order = store.getOrderByNo(params.out_trade_no || "");
+    if (!order || order.paymentProvider !== channel.id) return res.status(400).send("fail");
+    const paidCents = Math.round(Number(params.money) * 100);
+    if (!Number.isFinite(paidCents) || paidCents !== order.amountCents) return res.status(400).send("fail");
+    store.completePaymentAttempt(order.id, channel.id, params.trade_no || `epay-${order.orderNo}`, params);
+    res.type("text/plain").send("success");
+  }));
 
   router.get("/account", requireCommercialUser, (_req, res) => {
     const user = commercialUser(res);
@@ -224,12 +321,39 @@ export function createCommercialRouter(store: CommercialStore) {
       orders: store.listOrders(user.id),
       deployments: store.listDeployments(user.id),
       paymentInstructions: store.getSetting("payment_instructions", "下单后请联系管理员完成支付确认。"),
+      paymentMethods: store.getPaymentMethods(),
     });
   });
 
   router.post("/orders", requireCommercialUser, route((req, res) => {
-    const order = store.createOrder(commercialUser(res).id, String(req.body?.planId || ""));
-    res.status(201).json({ success: true, order });
+    const order = store.createOrder(
+      commercialUser(res).id,
+      String(req.body?.planId || ""),
+      String(req.body?.paymentProvider || "manual"),
+    );
+    const method = store.getPaymentMethods(true, true).find(item => item.id === order.paymentProvider);
+    if (method?.provider === "epay") {
+      const baseUrl = publicBaseUrl(req, store);
+      const snapshot = JSON.parse(order.planSnapshot || "{}");
+      const checkoutUrl = createEpayUrl({
+        gatewayUrl: method.gatewayUrl || "", merchantId: method.merchantId || "",
+        merchantSecret: method.merchantSecret || "", channel: method.channel || "alipay",
+      }, {
+        orderNo: order.orderNo, amountCents: order.amountCents, name: String(snapshot.name || "网络交付服务"),
+        notifyUrl: `${baseUrl}/api/payment/epay/${encodeURIComponent(method.id)}/notify`,
+        returnUrl: `${baseUrl}/console?payment=return&order=${encodeURIComponent(order.id)}`,
+      });
+      const attempt = store.createPaymentAttempt(order.id, method.id, checkoutUrl, { channel: method.channel }, order.expiresAt);
+      return res.status(201).json({ success: true, order, payment: { attemptId: attempt.id, checkoutUrl } });
+    }
+    res.status(201).json({ success: true, order, payment: null });
+  }));
+
+  router.get("/orders/:id/status", requireCommercialUser, route((req, res) => {
+    store.expirePendingOrders();
+    const order = store.getOrder(req.params.id);
+    if (!order || order.userId !== commercialUser(res).id) return res.status(404).json({ success: false, error: "订单不存在" });
+    res.json({ order, attempts: store.listPaymentAttempts(order.id) });
   }));
 
   router.post("/orders/:id/cancel", requireCommercialUser, route((req, res) => {
@@ -242,22 +366,48 @@ export function createCommercialRouter(store: CommercialStore) {
   router.get("/admin/orders", requireAdmin, (_req, res) => res.json({ orders: store.listOrders() }));
   router.get("/admin/entitlements", requireAdmin, (_req, res) => res.json({ entitlements: store.listAllEntitlements() }));
   router.get("/admin/deployments", requireAdmin, (_req, res) => res.json({ deployments: store.listDeployments() }));
+  router.get("/admin/payment-attempts", requireAdmin, (_req, res) => res.json({ attempts: store.listPaymentAttempts() }));
+  router.get("/admin/usage-ledger", requireAdmin, (_req, res) => res.json({ entries: store.listUsageLedger() }));
+  router.get("/admin/audit-logs", requireAdmin, (_req, res) => res.json({ logs: store.listAdminAuditLogs() }));
+  router.get("/admin/users/:id/detail", requireAdmin, route((req, res) => {
+    const detail = store.getUserDetail(req.params.id);
+    if (!detail) return res.status(404).json({ success: false, error: "用户不存在" });
+    res.json(detail);
+  }));
   router.get("/admin/settings", requireAdmin, (_req, res) => res.json({
     settings: {
       registrationEnabled: store.getSetting("registration_enabled", "true") === "true",
       panelDeployEnabled: store.getSetting("panel_deploy_enabled", "true") === "true",
       nodeDeployEnabled: store.getSetting("node_deploy_enabled", "true") === "true",
       paymentInstructions: store.getSetting("payment_instructions", "下单后请联系管理员完成支付确认。"),
+      paymentMethods: store.getPaymentMethods(true),
+      email: store.getEmailSettings(),
+      orderExpiryMinutes: Number(store.getSetting("order_expiry_minutes", "30")) || 30,
+      adminPath: store.getAdminPath(),
     },
   }));
 
   router.post("/admin/plans", requireAdmin, route((req, res) => {
-    res.status(201).json({ success: true, plan: store.createPlan(planInput(req.body || {})) });
+    const plan = store.createPlan(planInput(req.body || {}));
+    store.recordAdminAction(adminUser(res).id, "创建套餐", "plan", plan.id, plan.name);
+    res.status(201).json({ success: true, plan });
   }));
   router.put("/admin/plans/:id", requireAdmin, route((req, res) => {
     const plan = store.updatePlan(req.params.id, planInput(req.body || {}));
     if (!plan) return res.status(404).json({ success: false, error: "套餐不存在" });
+    store.recordAdminAction(adminUser(res).id, "更新套餐", "plan", plan.id, plan.name);
     res.json({ success: true, plan });
+  }));
+  router.post("/admin/users", requireAdmin, route((req, res) => {
+    const roleValue = req.body?.role === "admin" ? "admin" : "user";
+    const user = store.createUser(
+      String(req.body?.username || ""),
+      String(req.body?.password || ""),
+      roleValue,
+      req.body?.email === undefined ? undefined : String(req.body.email),
+    );
+    store.recordAdminAction(adminUser(res).id, "创建用户", "user", user.id, `${user.username} / ${user.role}`);
+    res.status(201).json({ success: true, user });
   }));
   router.patch("/admin/users/:id", requireAdmin, route((req, res) => {
     const acting = adminUser(res);
@@ -271,48 +421,64 @@ export function createCommercialRouter(store: CommercialStore) {
       if (acting.id === req.params.id && roleValue !== "admin") throw new Error("不能移除当前账号的管理员权限");
       store.updateUserRole(req.params.id, roleValue);
     }
+    if (typeof req.body?.email === "string") store.updateUserEmail(req.params.id, req.body.email, req.body?.emailVerified === true);
+    store.recordAdminAction(acting.id, "更新用户", "user", req.params.id, JSON.stringify({ status, role: roleValue }));
     res.json({ success: true });
   }));
   router.post("/admin/users/:id/reset-password", requireAdmin, route((req, res) => {
     if (adminUser(res).id === req.params.id) throw new Error("当前管理员请使用修改密码功能");
     store.resetPassword(req.params.id, String(req.body?.nextPassword || ""));
+    store.recordAdminAction(adminUser(res).id, "重置用户密码", "user", req.params.id);
     res.json({ success: true });
   }));
   router.post("/admin/orders/:id/mark-paid", requireAdmin, route((req, res) => {
     const tradeNo = String(req.body?.tradeNo || `manual-${Date.now()}`);
-    res.json({ success: true, order: store.markOrderPaid(req.params.id, "manual", tradeNo) });
+    const pendingOrder = store.getOrder(req.params.id);
+    if (!pendingOrder) throw new Error("订单不存在");
+    const order = store.markOrderPaid(req.params.id, pendingOrder.paymentProvider || "manual", tradeNo);
+    store.recordAdminAction(adminUser(res).id, "确认订单收款", "order", req.params.id, tradeNo);
+    res.json({ success: true, order });
   }));
   router.post("/admin/orders/:id/cancel", requireAdmin, route((req, res) => {
-    res.json({ success: true, order: store.cancelOrder(req.params.id) });
+    const order = store.cancelOrder(req.params.id);
+    store.recordAdminAction(adminUser(res).id, "取消订单", "order", req.params.id, order.orderNo);
+    res.json({ success: true, order });
   }));
   router.post("/admin/orders/:id/refund", requireAdmin, route((req, res) => {
-    res.json({ success: true, order: store.refundOrder(req.params.id) });
+    const order = store.refundOrder(req.params.id);
+    store.recordAdminAction(adminUser(res).id, "订单退款撤权", "order", req.params.id, order.orderNo);
+    res.json({ success: true, order });
   }));
   router.post("/admin/entitlements", requireAdmin, route((req, res) => {
     const userId = String(req.body?.userId || "");
     if (!store.getUserById(userId)) throw new Error("用户不存在");
     const id = store.grantEntitlement(userId, grantInput(req.body || {}));
+    store.recordAdminAction(adminUser(res).id, "手工发放权益", "entitlement", id, String(req.body?.name || ""));
     res.status(201).json({ success: true, id });
   }));
   router.patch("/admin/entitlements/:id", requireAdmin, route((req, res) => {
     const status = req.body?.status;
     if (status !== "active" && status !== "revoked") throw new Error("权益状态无效");
     store.updateEntitlementStatus(req.params.id, status);
+    store.recordAdminAction(adminUser(res).id, status === "active" ? "启用权益" : "撤销权益", "entitlement", req.params.id);
     res.json({ success: true });
   }));
   router.patch("/admin/entitlements/:id/quota", requireAdmin, route((req, res) => {
-    res.json({ success: true, entitlement: store.adjustEntitlement(req.params.id, {
+    const entitlement = store.adjustEntitlement(req.params.id, {
       panelRemaining: req.body?.panelRemaining === undefined ? undefined : intValue(req.body.panelRemaining, -1),
       nodeRemaining: req.body?.nodeRemaining === undefined ? undefined : intValue(req.body.nodeRemaining, -1),
       dailyPanelLimit: req.body?.dailyPanelLimit === undefined ? undefined : intValue(req.body.dailyPanelLimit, -1),
       dailyNodeLimit: req.body?.dailyNodeLimit === undefined ? undefined : intValue(req.body.dailyNodeLimit, -1),
       concurrencyLimit: req.body?.concurrencyLimit === undefined ? undefined : intValue(req.body.concurrencyLimit, -1),
-    }) });
+    });
+    store.recordAdminAction(adminUser(res).id, "调整权益额度", "entitlement", req.params.id, JSON.stringify(req.body || {}));
+    res.json({ success: true, entitlement });
   }));
   router.post("/admin/deployments/:id/resolve", requireAdmin, route((req, res) => {
     const resolution = req.body?.resolution;
     if (resolution !== "succeeded" && resolution !== "failed") throw new Error("处理结果无效");
     store.resolveUncertain(req.params.id, resolution);
+    store.recordAdminAction(adminUser(res).id, "核对交付任务", "deployment", req.params.id, resolution);
     res.json({ success: true });
   }));
   router.put("/admin/settings", requireAdmin, route((req, res) => {
@@ -320,6 +486,28 @@ export function createCommercialRouter(store: CommercialStore) {
     if (typeof req.body?.panelDeployEnabled === "boolean") store.setSetting("panel_deploy_enabled", String(req.body.panelDeployEnabled));
     if (typeof req.body?.nodeDeployEnabled === "boolean") store.setSetting("node_deploy_enabled", String(req.body.nodeDeployEnabled));
     if (typeof req.body?.paymentInstructions === "string") store.setSetting("payment_instructions", req.body.paymentInstructions.slice(0, 2000));
+    if (req.body?.paymentMethods !== undefined) store.setPaymentMethods(req.body.paymentMethods);
+    if (req.body?.email !== undefined) store.setEmailSettings(req.body.email);
+    if (req.body?.orderExpiryMinutes !== undefined) {
+      const minutes = intValue(req.body.orderExpiryMinutes);
+      if (minutes < 5 || minutes > 1440) throw new Error("订单有效期必须为 5 到 1440 分钟");
+      store.setSetting("order_expiry_minutes", String(minutes));
+    }
+    let adminPath: string | undefined;
+    if (req.body?.adminPath !== undefined) adminPath = store.setAdminPath(String(req.body.adminPath));
+    store.recordAdminAction(adminUser(res).id, "更新系统设置", "settings", "commercial", JSON.stringify({
+      registrationEnabled: req.body?.registrationEnabled,
+      panelDeployEnabled: req.body?.panelDeployEnabled,
+      nodeDeployEnabled: req.body?.nodeDeployEnabled,
+      adminPath,
+    }));
+    res.json({ success: true, adminPath: adminPath || store.getAdminPath() });
+  }));
+
+  router.post("/admin/settings/test-email", requireAdmin, route(async (req, res) => {
+    const recipient = String(req.body?.recipient || "").trim();
+    const settings = store.getEmailSettings();
+    await sendConfiguredMail(store, recipient, "smtp_test", `${settings.siteName} 邮件服务测试`, "SMTP 配置测试成功。此邮件由管理后台主动发送。\n");
     res.json({ success: true });
   }));
 

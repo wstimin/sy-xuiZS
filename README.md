@@ -15,9 +15,10 @@
 - TLS 节点复用面板安装阶段读取的 Web 证书路径，页面不要求手工填写证书路径。
 - 可向当前 Xray 模板注入 SOCKS5 出站、入站路由和多代理随机负载均衡。
 - 浏览器历史只保存非敏感元数据，不保存密码、Token、分享链接或 SOCKS 凭据。
-- 用户可注册、登录、创建订单，并在权益有效期内直接执行面板或节点搭建。
+- 用户可使用邮箱注册、登录和找回密码，并在权益有效期内直接执行面板或节点搭建。
 - 管理员可配置套餐价格、期限、面板次数、节点次数、每日限制和并发限制。
-- 当前收款流程为管理员人工确认；确认后系统按订单快照自动发放权益。
+- 支持人工收款链接与易支付自动收款；支付成功后按订单快照自动发放权益，管理员也可人工确认订单。
+- 管理后台可配置 SMTP、邮箱验证码、支付渠道、站点资料、管理员用户名和管理入口后缀。
 - 搭建成功扣除次数，明确失败退还次数，结果不确定时保留占用并交由管理员处理。
 
 ## 一键安装助手
@@ -62,7 +63,17 @@ pm2 logs 3xui-deploy-assistant
 sudo bash /opt/3xui-deploy-assistant/install.sh install
 ```
 
-一键脚本默认从 GitHub Releases 下载 `xui-zhushou-linux.tar.gz`，通过 `SHA256SUMS` 校验完整性后部署到 `/opt/3xui-deploy-assistant`。通过 `sy` 或 `sudo bash install.sh install` 更新时，会保留现有 `.env`、`/var/lib/xui-assistant/app.db` 数据库和 `/etc/3xui-assistant/ssl` 证书目录，仅替换应用构建包并重启 PM2。升级前会将数据库备份到 `/var/backups/xui-assistant`，新构建包启动失败或运行版本校验不一致时会自动恢复上一版本。
+一键脚本默认从 GitHub Releases 下载 `xui-zhushou-linux.tar.gz`，通过 `SHA256SUMS` 校验完整性后部署到 `/opt/3xui-deploy-assistant`。通过 `sy` 或 `sudo bash install.sh install` 更新时，会保留现有 `.env`、`/var/lib/xui-assistant/app.db` 数据库、数据库旁可能存在的 `app.db.key` 商业配置加密密钥和 `/etc/3xui-assistant/ssl` 证书目录，仅替换应用构建包并重启 PM2。升级前会将数据库及其现有加密密钥备份到 `/var/backups/xui-assistant`，新构建包启动失败或运行版本校验不一致时会自动恢复上一版本。
+
+默认页面入口：
+
+```text
+/           官网首页
+/login      用户登录
+/register   用户注册
+/console    用户控制台
+/admin      管理后台（后缀可在管理后台修改）
+```
 
 检查服务器当前代码和运行版本：
 
@@ -71,14 +82,14 @@ cat /opt/3xui-deploy-assistant/VERSION
 curl -s http://127.0.0.1:1888/api/health
 ```
 
-`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.1`。
+`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.2`。
 
 ## 远端构建与发布
 
-推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.1`）时，会自动创建 GitHub Release，发布以下文件：
+推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.2`）时，会自动创建 GitHub Release，发布以下文件：
 
 ```text
-xui-zhushou-linux-v3.0.1.tar.gz
+xui-zhushou-linux-v3.0.2.tar.gz
 xui-zhushou-linux.tar.gz
 SHA256SUMS
 ```
@@ -157,6 +168,7 @@ PORT=1888
 APP_AUTH_TOKEN=
 DATABASE_PATH=/var/lib/xui-assistant/app.db
 SESSION_COOKIE_SECURE=
+COMMERCIAL_SECRET_KEY=
 SSL_CERT=
 SSL_KEY=
 ```
@@ -165,6 +177,7 @@ SSL_KEY=
 - `APP_AUTH_TOKEN`：可选的助手 API 保护。设置后，请由受信任的反向代理添加 `Authorization: Bearer <token>` 或 `X-App-Token` 请求头。
 - `DATABASE_PATH`：用户、订单、权益和任务数据库路径。正式安装默认放在应用目录之外，升级不会覆盖。
 - `SESSION_COOKIE_SECURE`：使用 HTTPS 时建议设为 `true`；留空时按当前请求协议自动判断。
+- `COMMERCIAL_SECRET_KEY`：可选的 SMTP 密码、支付商户密钥加密主密钥。应在保存商业敏感配置前设置并长期保持不变；留空时会先复用 `APP_AUTH_TOKEN`，两者都为空时程序才会自动创建并复用数据库旁的 `app.db.key`。
 - `SSL_CERT` / `SSL_KEY`：助手自身 HTTPS 证书路径。两者留空时，服务端也会自动检查 `/etc/3xui-assistant/ssl/cert.pem` 和 `/etc/3xui-assistant/ssl/key.pem`。
 
 ## SOCKS 路由
