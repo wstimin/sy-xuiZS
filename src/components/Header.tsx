@@ -1,6 +1,6 @@
 import React from 'react';
 import { ViewMode } from '../types';
-import { Terminal, Cpu, Network, History, HelpCircle, ShieldCheck, BookOpen, CreditCard, UserCircle, LogOut, Waypoints } from 'lucide-react';
+import { Terminal, Cpu, Network, History, HelpCircle, ShieldCheck, BookOpen, CreditCard, UserCircle, LogOut } from 'lucide-react';
 import { CurrentUser } from '../commercial';
 
 interface HeaderProps {
@@ -34,7 +34,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-emerald-500 p-[1px] shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-all duration-300">
             <div className="w-full h-full bg-[#0a0a0c] rounded-[11px] flex items-center justify-center">
-              <Waypoints className="w-5 h-5 text-cyan-300 group-hover:scale-110 transition-transform" />
+              <Terminal className="w-5 h-5 text-cyan-300 group-hover:scale-110 transition-transform" />
             </div>
           </div>
           <div className="hidden lg:block">

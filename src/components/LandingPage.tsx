@@ -10,6 +10,7 @@ import {
   ServerCog,
   ShieldCheck,
   Sparkles,
+  Terminal,
   Workflow,
   Waypoints,
   Zap,
@@ -68,7 +69,7 @@ export const LandingPage: React.FC = () => {
   return <div className="landing-shell text-slate-100 selection:bg-cyan-400 selection:text-slate-950">
     <header className="landing-header">
       <a href="/" className="brand-lockup" aria-label="NEXUS CLOUD 首页">
-        <span className="brand-mark"><Orbit className="h-5 w-5" /></span>
+        <span className="brand-mark"><Terminal className="h-5 w-5" /></span>
         <span>
           <strong>NEXUS CLOUD</strong>
           <small>GLOBAL NETWORK DELIVERY</small>

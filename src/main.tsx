@@ -21,6 +21,17 @@ function RootRouter() {
       .catch(() => setAdminPath('admin'));
   }, []);
 
+  useEffect(() => {
+    const path = normalizedPath();
+    const adminRoot = `/${adminPath || 'admin'}`;
+
+    if (path === adminRoot || path.startsWith(`${adminRoot}/`)) document.title = '运营管理后台';
+    else if (path === '/console' || path.startsWith('/console/')) document.title = '用户工作台';
+    else if (path === '/login') document.title = '用户登录';
+    else if (path === '/register') document.title = '用户注册';
+    else document.title = '网络搭建服务';
+  }, [adminPath]);
+
   if (!adminPath) return <div className="app-route-loading" aria-label="正在加载" />;
 
   const path = normalizedPath();

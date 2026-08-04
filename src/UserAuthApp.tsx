@@ -10,6 +10,7 @@ import {
   LockKeyhole,
   Network,
   ShieldCheck,
+  Terminal,
   UserRound,
 } from 'lucide-react';
 import { api, CurrentUser } from './commercial';
@@ -116,7 +117,7 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
 
       <header className="auth-topbar">
         <a href="/" className="brand-lockup">
-          <span className="brand-mark"><Network className="h-5 w-5" /></span>
+          <span className="brand-mark"><Terminal className="h-5 w-5" /></span>
           <span><strong>NEXUS CLOUD</strong><small>GLOBAL NETWORK DELIVERY</small></span>
         </a>
         <a href="/" className="auth-back"><ArrowLeft className="h-4 w-4" /> 返回首页</a>

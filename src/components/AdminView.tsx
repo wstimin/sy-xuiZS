@@ -30,6 +30,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Terminal,
   UserPlus,
   Users,
   X,
@@ -420,7 +421,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   return (
     <div className="admin-workspace">
       <aside className={`admin-sidebar ${mobileNavOpen ? 'open' : ''}`}>
-        <div className="admin-sidebar-brand"><span><ShieldCheck /></span><div><strong>NEXUS CONTROL</strong><small>运营管理后台</small></div></div>
+        <div className="admin-sidebar-brand"><span><Terminal /></span><div><strong>NEXUS CONTROL</strong><small>运营管理后台</small></div></div>
         <nav className="admin-navigation">
           {navigation.map(item => {
             const Icon = item.icon;
