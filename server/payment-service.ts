@@ -226,14 +226,15 @@ const tokenpayDriver: PaymentDriver = {
   successResponse: "success",
   failureResponse: "fail",
   async createCheckout(config, input) {
-    if (!config.gatewayUrl || !config.merchantId || !config.merchantSecret) throw new Error("TokenPay 地址、币种或 API 密钥未配置");
+    const currency = String(config.currency || config.merchantId || "").toUpperCase().replace(/-/g, "_");
+    if (!config.gatewayUrl || !currency || !config.merchantSecret) throw new Error("TokenPay 地址、币种或 API 密钥未配置");
     const gateway = normalizedHttpUrl(config.gatewayUrl, "TokenPay 地址");
     gateway.pathname = `${gateway.pathname.replace(/\/+$/, "")}/CreateOrder`;
     const params: Record<string, string> = {
       ActualAmount: (input.amountCents / 100).toFixed(2),
       OutOrderId: input.orderNo,
       OrderUserKey: input.userKey || input.orderNo,
-      Currency: config.merchantId,
+      Currency: currency,
       RedirectUrl: input.returnUrl,
       NotifyUrl: input.notifyUrl,
     };

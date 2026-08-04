@@ -85,14 +85,14 @@ curl -s http://127.0.0.1:1888/api/health
 
 菜单 `[3]` 会显示管理员用户名、真实管理入口、注册/搭建开关、SMTP 和支付渠道状态。密码采用不可逆哈希保存，因此不会显示明文；忘记密码时使用菜单 `[6]` 安全重置，重置后旧管理端会话会全部失效。
 
-`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.5`。
+`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.6`。
 
 ## 远端构建与发布
 
-推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.5`）时，会自动创建 GitHub Release，发布以下文件：
+推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.6`）时，会自动创建 GitHub Release，发布以下文件：
 
 ```text
-xui-zhushou-linux-v3.0.5.tar.gz
+xui-zhushou-linux-v3.0.6.tar.gz
 xui-zhushou-linux.tar.gz
 SHA256SUMS
 ```

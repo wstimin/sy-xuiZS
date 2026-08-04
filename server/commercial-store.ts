@@ -45,6 +45,24 @@ export interface PaymentMethod {
   sandbox?: boolean;
 }
 
+const TOKENPAY_CURRENCIES = new Set(["USDT_TRC20", "TRX", "ETH", "USDT_ERC20", "USDC_ERC20"]);
+const MGATE_CURRENCIES = new Set(["CNY", "USD", "EUR", "HKD", "TWD", "JPY", "KRW", "SGD"]);
+
+function normalizeTokenPayCurrency(value: unknown) {
+  return String(value || "").trim().toUpperCase().replace(/-/g, "_");
+}
+
+function storedPaymentCurrency(row: any) {
+  if (row.provider === "tokenpay") {
+    const configured = normalizeTokenPayCurrency(row.currency);
+    if (TOKENPAY_CURRENCIES.has(configured)) return configured;
+    const legacy = normalizeTokenPayCurrency(row.merchant_id);
+    return TOKENPAY_CURRENCIES.has(legacy) ? legacy : "USDT_TRC20";
+  }
+  if (row.provider === "epusdt") return "USDT-TRC20";
+  return row.currency || "CNY";
+}
+
 export interface EmailSettings {
   emailEnabled: boolean;
   emailVerificationRequired: boolean;
@@ -668,7 +686,7 @@ export class CommercialStore {
       merchantSecret: includeSecrets && row.merchant_secret_encrypted ? this.vault.decrypt(row.merchant_secret_encrypted) : undefined,
       merchantSecretConfigured: includeDisabled || includeSecrets ? Boolean(row.merchant_secret_encrypted) : undefined,
       channel: includeDisabled || includeSecrets ? row.channel : undefined,
-      currency: includeDisabled || includeSecrets ? row.currency || "CNY" : undefined,
+      currency: includeDisabled || includeSecrets ? storedPaymentCurrency(row) : undefined,
       callbackBaseUrl: includeDisabled || includeSecrets ? row.callback_base_url || "" : undefined,
       appId: includeDisabled || includeSecrets ? row.app_id || "" : undefined,
       privateKey: includeSecrets && row.private_key_encrypted ? this.vault.decrypt(row.private_key_encrypted) : undefined,
@@ -722,7 +740,19 @@ export class CommercialStore {
         const gatewayUrl = String(raw?.gatewayUrl || "").trim().slice(0, 1000);
         const merchantId = String(raw?.merchantId || "").trim().slice(0, 100);
         const channel = String(raw?.channel || "alipay").trim().slice(0, 50);
-        const currency = String(raw?.currency || "CNY").trim().toUpperCase().slice(0, 20);
+        let currency = String(raw?.currency || "CNY").trim().toUpperCase().slice(0, 20);
+        if (provider === "tokenpay") {
+          const selected = normalizeTokenPayCurrency(currency);
+          const legacy = normalizeTokenPayCurrency(merchantId);
+          currency = TOKENPAY_CURRENCIES.has(selected) ? selected : TOKENPAY_CURRENCIES.has(legacy) ? legacy : selected;
+          if (!TOKENPAY_CURRENCIES.has(currency)) throw new Error(`支付通道 ${method.name} 的 TokenPay 币种无效`);
+        }
+        if (provider === "epusdt") {
+          if (currency !== "CNY" && currency !== "USDT-TRC20" && currency !== "USDT_TRC20") throw new Error(`支付通道 ${method.name} 的 Epusdt 币种无效`);
+          currency = "USDT-TRC20";
+        }
+        if (provider === "mgate" && !MGATE_CURRENCIES.has(currency)) throw new Error(`支付通道 ${method.name} 的源货币无效`);
+        if (["alipay_official", "wechat_official"].includes(provider)) currency = "CNY";
         const callbackBaseUrl = String(raw?.callbackBaseUrl || "").trim().replace(/\/+$/, "").slice(0, 1000);
         const appId = String(raw?.appId || "").trim().slice(0, 100);
         const publicKey = String(raw?.publicKey || "").trim().slice(0, 20_000);
@@ -741,9 +771,10 @@ export class CommercialStore {
         if (provider !== "manual" && method.enabled && !gatewayUrl && !["alipay_official", "wechat_official"].includes(provider)) {
           throw new Error(`支付通道 ${method.name} 启用前必须填写网关或 API 地址`);
         }
-        if (["epay", "mgate", "tokenpay"].includes(provider) && method.enabled && (!merchantId || !encryptedSecret)) {
+        if (["epay", "mgate"].includes(provider) && method.enabled && (!merchantId || !encryptedSecret)) {
           throw new Error(`支付通道 ${method.name} 启用前必须填写商户标识和商户密钥`);
         }
+        if (provider === "tokenpay" && method.enabled && !encryptedSecret) throw new Error(`支付通道 ${method.name} 启用前必须填写 API 密钥`);
         if (provider === "epusdt" && method.enabled && !encryptedSecret) throw new Error(`支付通道 ${method.name} 启用前必须填写签名 Token`);
         if (provider === "alipay_official" && method.enabled && (!merchantId || !encryptedPrivateKey || !publicKey)) {
           throw new Error(`支付通道 ${method.name} 启用前必须填写 APPID、应用私钥和支付宝公钥`);

@@ -117,6 +117,14 @@ const emptyGrant = {
 const emptyUser = { username: '', email: '', password: '', role: 'user' as 'user' | 'admin' };
 const emptyPaymentMethod = (): PaymentMethod => ({ id: `method-${Date.now()}`, name: '新支付方式', type: 'manual', provider: 'manual', enabled: true, instructions: '', paymentUrl: '', gatewayUrl: '', merchantId: '', merchantSecret: '', merchantSecretConfigured: false, channel: 'alipay', sortOrder: 10 });
 const emptyEmailSettings: EmailSettings = { emailEnabled: false, emailVerificationRequired: false, smtpHost: '', smtpPort: 465, smtpEncryption: 'ssl', smtpUsername: '', smtpPassword: '', smtpPasswordConfigured: false, smtpFromName: 'NEXUS CLOUD', smtpFromEmail: '', smtpReplyTo: '', verificationCodeTtlMinutes: 10, verificationResendSeconds: 60, siteName: 'NEXUS CLOUD', publicBaseUrl: '' };
+const TOKENPAY_CURRENCIES = [
+  { value: 'USDT_TRC20', label: 'USDT-TRC20' },
+  { value: 'TRX', label: 'TRX' },
+  { value: 'ETH', label: 'ETH' },
+  { value: 'USDT_ERC20', label: 'USDT-ERC20' },
+  { value: 'USDC_ERC20', label: 'USDC-ERC20' },
+] as const;
+const MGATE_CURRENCIES = ['CNY', 'USD', 'EUR', 'HKD', 'TWD', 'JPY', 'KRW', 'SGD'] as const;
 
 const navigation: Array<{ id: AdminTab; label: string; icon: React.ElementType; tone: string; section?: string }> = [
   { id: 'dashboard', label: '运营概览', icon: LayoutDashboard, tone: 'cyan' },
@@ -837,7 +845,7 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
   return <div className="admin-form-grid">
     <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={40} onChange={event => patch({ name: event.target.value })} /></label>
     <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={32} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>订单创建后不建议修改已有标识。</small></label>
-    <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, currency: method.currency || 'CNY' }); }}><option value="manual">人工收款</option><option value="epay">易支付</option><option value="mgate">MGate</option><option value="tokenpay">TokenPay</option><option value="epusdt">Epusdt</option><option value="alipay_official">支付宝官方</option><option value="wechat_official">微信支付官方</option></select></label>
+    <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, currency: defaultPaymentCurrency(next, method) }); }}><option value="manual">人工收款</option><option value="epay">易支付</option><option value="mgate">MGate</option><option value="tokenpay">TokenPay</option><option value="epusdt">Epusdt</option><option value="alipay_official">支付宝官方</option><option value="wechat_official">微信支付官方</option></select></label>
     <label className="admin-field"><span>显示排序</span><input type="number" value={method.sortOrder} onChange={event => patch({ sortOrder: Number(event.target.value) })} /></label>
 
     {provider === 'manual' && <>
@@ -860,24 +868,26 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
     {provider === 'mgate' && <>
       <label className="admin-field span-2"><span>MGate API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://gateway.example.com" /></label>
       <label className="admin-field"><span>APP ID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
-      <label className="admin-field"><span>源货币</span><input value={method.currency || 'CNY'} onChange={event => patch({ currency: event.target.value.toUpperCase() })} placeholder="CNY" /></label>
+      <label className="admin-field"><span>源货币</span><select value={method.currency || 'CNY'} onChange={event => patch({ currency: event.target.value })}>{MGATE_CURRENCIES.map(currency => <option key={currency} value={currency}>{currency}</option>)}</select></label>
       <SecretField label="App Secret" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
     </>}
 
     {provider === 'tokenpay' && <>
       <label className="admin-field span-2"><span>TokenPay API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://tokenpay.example.com" /></label>
-      <label className="admin-field span-2"><span>币种标识</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} placeholder="USDT_TRC20、TRX、ETH 等" /></label>
+      <label className="admin-field span-2"><span>币种</span><select value={tokenPayCurrency(method)} onChange={event => patch({ currency: event.target.value })}>{TOKENPAY_CURRENCIES.map(currency => <option key={currency.value} value={currency.value}>{currency.label}</option>)}</select><small>系统会自动转换成 TokenPay 接口要求的币种标识。</small></label>
       <SecretField label="API 密钥" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
     </>}
 
     {provider === 'epusdt' && <>
       <label className="admin-field span-2"><span>Epusdt API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://epusdt.example.com/api/v1/order/create-transaction" /></label>
+      <label className="admin-field span-2"><span>币种</span><select value="USDT-TRC20" onChange={() => patch({ currency: 'USDT-TRC20' })}><option value="USDT-TRC20">USDT-TRC20</option></select><small>Epusdt 当前驱动固定使用 USDT-TRC20。</small></label>
       <SecretField label="签名 Token" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
     </>}
 
     {provider === 'alipay_official' && <>
       <label className="admin-field span-2"><span>支付宝网关</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="留空使用 https://openapi.alipay.com/gateway.do" /></label>
       <label className="admin-field span-2"><span>应用 APPID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
+      <label className="admin-field span-2"><span>订单币种</span><select value="CNY" onChange={() => patch({ currency: 'CNY' })}><option value="CNY">CNY - 人民币</option></select></label>
       <label className="admin-field span-2"><span>应用私钥</span><textarea value={method.privateKey || ''} onChange={event => patch({ privateKey: event.target.value })} placeholder={privateKeyPlaceholder} /><small>支持 PEM 或未带头尾的 PKCS8 私钥，保存后不回传明文。</small></label>
       <label className="admin-field span-2"><span>支付宝公钥</span><textarea value={method.publicKey || ''} onChange={event => patch({ publicKey: event.target.value })} placeholder="粘贴支付宝开放平台提供的支付宝公钥" /></label>
       <label className="admin-checkbox span-2"><input type="checkbox" checked={method.sandbox === true} onChange={event => patch({ sandbox: event.target.checked })} /><span><strong>标记为沙箱通道</strong><small>启用后请同时填写支付宝沙箱网关地址与沙箱应用资料。</small></span></label>
@@ -888,7 +898,7 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
       <label className="admin-field"><span>应用 AppID</span><input value={method.appId || ''} onChange={event => patch({ appId: event.target.value })} /></label>
       <label className="admin-field"><span>商户号</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
       <label className="admin-field"><span>商户证书序列号</span><input value={method.certificateSerial || ''} onChange={event => patch({ certificateSerial: event.target.value })} /></label>
-      <label className="admin-field"><span>结算货币</span><input value={method.currency || 'CNY'} onChange={event => patch({ currency: event.target.value.toUpperCase() })} /></label>
+      <label className="admin-field"><span>结算货币</span><select value="CNY" onChange={() => patch({ currency: 'CNY' })}><option value="CNY">CNY - 人民币</option></select></label>
       <label className="admin-field span-2"><span>商户 API 私钥</span><textarea value={method.privateKey || ''} onChange={event => patch({ privateKey: event.target.value })} placeholder={privateKeyPlaceholder} /><small>填写商户 API 证书对应私钥，保存后不回传明文。</small></label>
       <label className="admin-field span-2"><span>微信支付平台证书或公钥</span><textarea value={method.publicKey || ''} onChange={event => patch({ publicKey: event.target.value })} placeholder="粘贴平台证书 PEM 或平台公钥" /></label>
       <SecretField label="API v3 密钥" value={method.apiV3Key || ''} placeholder={apiV3Placeholder} onChange={apiV3Key => patch({ apiV3Key })} help="必须为 32 字节，用于解密支付通知。" />
@@ -923,11 +933,25 @@ function paymentChannelText(method: PaymentMethod) {
     const channels: Record<string, string> = { alipay: '支付宝', wxpay: '微信支付', qqpay: 'QQ 钱包' };
     return channels[method.channel || 'alipay'] || method.channel || '聚合支付';
   }
-  if (provider === 'tokenpay') return method.merchantId || '数字货币';
-  if (provider === 'epusdt') return 'USDT';
+  if (provider === 'tokenpay') return tokenPayCurrency(method).replace('_', '-').replace('_', '-');
+  if (provider === 'epusdt') return 'USDT-TRC20';
   if (provider === 'alipay_official') return '当面付二维码';
   if (provider === 'wechat_official') return 'Native 二维码';
   return method.currency || 'CNY';
+}
+
+function tokenPayCurrency(method: PaymentMethod) {
+  const values = TOKENPAY_CURRENCIES.map(item => item.value) as readonly string[];
+  const configured = String(method.currency || '').toUpperCase().replace(/-/g, '_');
+  if (values.includes(configured)) return configured;
+  const legacy = String(method.merchantId || '').toUpperCase().replace(/-/g, '_');
+  return values.includes(legacy) ? legacy : 'USDT_TRC20';
+}
+
+function defaultPaymentCurrency(provider: PaymentProvider, method: PaymentMethod) {
+  if (provider === 'tokenpay') return tokenPayCurrency(method);
+  if (provider === 'epusdt') return 'USDT-TRC20';
+  return 'CNY';
 }
 
 function paymentProvider(method: PaymentMethod): PaymentProvider {

@@ -421,6 +421,42 @@ test("payment secrets are encrypted and excluded from public channel data", () =
   }
 });
 
+test("payment currencies use supported selections and keep legacy TokenPay configurations", () => {
+  const store = createStore();
+  try {
+    store.setPaymentMethods([
+      {
+        id: "tokenpay-main", name: "TokenPay", type: "tokenpay", provider: "tokenpay", enabled: true,
+        instructions: "数字货币支付", paymentUrl: "", gatewayUrl: "https://tokenpay.example.test",
+        merchantSecret: "tokenpay-secret", currency: "USDT-ERC20", sortOrder: 10,
+      },
+      {
+        id: "epusdt-main", name: "Epusdt", type: "epusdt", provider: "epusdt", enabled: true,
+        instructions: "USDT 支付", paymentUrl: "", gatewayUrl: "https://epusdt.example.test/api/v1/order/create-transaction",
+        merchantSecret: "epusdt-secret", currency: "USDT-TRC20", sortOrder: 20,
+      },
+    ]);
+    const methods = store.getPaymentMethods(true);
+    assert.equal(methods.find(method => method.id === "tokenpay-main")?.currency, "USDT_ERC20");
+    assert.equal(methods.find(method => method.id === "epusdt-main")?.currency, "USDT-TRC20");
+
+    store.setPaymentMethods([{
+      id: "tokenpay-legacy", name: "旧 TokenPay", type: "tokenpay", provider: "tokenpay", enabled: true,
+      instructions: "兼容旧配置", paymentUrl: "", gatewayUrl: "https://tokenpay.example.test",
+      merchantId: "USDC_ERC20", merchantSecret: "tokenpay-secret", currency: "CNY", sortOrder: 10,
+    }]);
+    assert.equal(store.getPaymentMethods(true)[0].currency, "USDC_ERC20");
+
+    assert.throws(() => store.setPaymentMethods([{
+      id: "tokenpay-invalid", name: "错误币种", type: "tokenpay", provider: "tokenpay", enabled: true,
+      instructions: "", paymentUrl: "", gatewayUrl: "https://tokenpay.example.test",
+      merchantSecret: "tokenpay-secret", currency: "BTC", sortOrder: 10,
+    }]), /TokenPay 币种无效/);
+  } finally {
+    store.close();
+  }
+});
+
 test("official payment credentials are encrypted and only expose configured markers", () => {
   const store = createStore();
   try {
