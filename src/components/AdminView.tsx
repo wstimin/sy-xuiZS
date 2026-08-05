@@ -845,7 +845,7 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
   return <div className="admin-form-grid">
     <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={40} onChange={event => patch({ name: event.target.value })} /></label>
     <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={32} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>订单创建后不建议修改已有标识。</small></label>
-    <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, currency: defaultPaymentCurrency(next, method) }); }}><option value="manual">人工收款</option><option value="epay">易支付</option><option value="mgate">MGate</option><option value="tokenpay">TokenPay</option><option value="epusdt">Epusdt</option><option value="alipay_official">支付宝官方</option><option value="wechat_official">微信支付官方</option></select></label>
+    <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, enabledChannels: next === 'epay' ? method.enabledChannels || [method.channel || 'alipay'] : method.enabledChannels, currency: defaultPaymentCurrency(next, method) }); }}><option value="manual">人工收款</option><option value="epay">聚合支付</option><option value="mgate">MGate</option><option value="tokenpay">TokenPay</option><option value="epusdt">Epusdt</option><option value="alipay_official">支付宝官方</option><option value="wechat_official">微信支付官方</option></select></label>
     <label className="admin-field"><span>显示排序</span><input type="number" value={method.sortOrder} onChange={event => patch({ sortOrder: Number(event.target.value) })} /></label>
 
     {provider === 'manual' && <>
@@ -859,10 +859,17 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
     </>}
 
     {provider === 'epay' && <>
-      <label className="admin-field span-2"><span>易支付网关地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://pay.example.com/submit.php" /></label>
+      <label className="admin-field span-2"><span>支付平台网关地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://pay.example.com/submit.php" /></label>
       <label className="admin-field"><span>商户 PID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
-      <label className="admin-field"><span>支付通道</span><select value={method.channel || 'alipay'} onChange={event => patch({ channel: event.target.value })}><option value="alipay">支付宝</option><option value="wxpay">微信支付</option><option value="qqpay">QQ 钱包</option></select></label>
+      <div className="admin-field span-2"><span>用户可选支付方式</span><div className="admin-payment-channel-options">
+        {EPAY_CHANNEL_OPTIONS.map(option => <label key={option.value} className="admin-checkbox"><input type="checkbox" checked={(method.enabledChannels || [method.channel || 'alipay']).includes(option.value)} onChange={event => {
+          const current = method.enabledChannels || [method.channel || 'alipay'];
+          const next = event.target.checked ? [...new Set([...current, option.value])] : current.filter(item => item !== option.value);
+          patch({ enabledChannels: next, channel: next[0] || method.channel || 'alipay' });
+        }} /><span><strong>{option.label}</strong><small>允许用户在下单时选择</small></span></label>)}
+      </div><small>可同时启用多种方式。至少保留一种，实际下单类型会按用户选择传给支付平台。</small></div>
       <SecretField label="商户密钥" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
+      <div className="admin-form-context span-2"><strong>异步通知地址</strong><span>保存后在支付列表中复制，填写到支付平台后台的异步通知地址。同步返回地址由系统按当前站点自动生成。</span></div>
     </>}
 
     {provider === 'mgate' && <>
@@ -931,7 +938,8 @@ function paymentChannelText(method: PaymentMethod) {
   if (provider === 'manual') return '线下确认';
   if (provider === 'epay') {
     const channels: Record<string, string> = { alipay: '支付宝', wxpay: '微信支付', qqpay: 'QQ 钱包' };
-    return channels[method.channel || 'alipay'] || method.channel || '聚合支付';
+    const enabled = method.enabledChannels || [method.channel || 'alipay'];
+    return enabled.map(channel => channels[channel] || channel).join('、') || '未启用支付方式';
   }
   if (provider === 'tokenpay') return tokenPayCurrency(method).replace('_', '-').replace('_', '-');
   if (provider === 'epusdt') return 'USDT-TRC20';
@@ -968,8 +976,14 @@ function legacyPaymentType(provider: PaymentProvider): PaymentMethod['type'] {
   return provider;
 }
 
+const EPAY_CHANNEL_OPTIONS = [
+  { value: 'alipay', label: '支付宝' },
+  { value: 'wxpay', label: '微信支付' },
+  { value: 'qqpay', label: 'QQ 钱包' },
+] as const;
+
 function paymentProviderName(provider: string) {
-  const labels: Record<string, string> = { manual: '人工收款', epay: '易支付', mgate: 'MGate', tokenpay: 'TokenPay', epusdt: 'Epusdt', alipay_official: '支付宝官方', wechat_official: '微信支付官方' };
+  const labels: Record<string, string> = { manual: '人工收款', epay: '聚合支付', mgate: 'MGate', tokenpay: 'TokenPay', epusdt: 'Epusdt', alipay_official: '支付宝官方', wechat_official: '微信支付官方' };
   return labels[provider] || provider;
 }
 

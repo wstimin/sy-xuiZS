@@ -457,6 +457,36 @@ test("payment currencies use supported selections and keep legacy TokenPay confi
   }
 });
 
+test("one EPay merchant exposes independently enabled payment choices and snapshots the selection", () => {
+  const store = createStore();
+  try {
+    store.setPaymentMethods([{
+      id: "epay-merchant", name: "聚合收款", type: "epay", provider: "epay", enabled: true,
+      instructions: "在线付款", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001",
+      merchantSecret: "epay-secret", channel: "alipay", enabledChannels: ["alipay", "wxpay"], sortOrder: 10,
+    }]);
+    const publicMethods = store.getPaymentMethods();
+    assert.deepEqual(publicMethods.map(method => ({ id: method.id, name: method.name, channel: method.channel })), [
+      { id: "epay-merchant--alipay", name: "支付宝", channel: "alipay" },
+      { id: "epay-merchant--wxpay", name: "微信支付", channel: "wxpay" },
+    ]);
+    const adminMethod = store.getPaymentMethods(true)[0];
+    assert.deepEqual(adminMethod.enabledChannels, ["alipay", "wxpay"]);
+    const user = store.createUser("epay-choice-user", "strong-password");
+    const order = store.createOrder(user.id, store.listPlans()[0].id, "epay-merchant--wxpay");
+    assert.equal(order.paymentProvider, "epay-merchant");
+    assert.equal(order.paymentChannel, "wxpay");
+    assert.equal(order.paymentOptionId, "epay-merchant--wxpay");
+    assert.throws(() => store.setPaymentMethods([{
+      id: "epay-merchant", name: "聚合收款", type: "epay", provider: "epay", enabled: true,
+      instructions: "在线付款", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001",
+      merchantSecret: "epay-secret", enabledChannels: [], sortOrder: 10,
+    }]), /至少选择一种支付方式/);
+  } finally {
+    store.close();
+  }
+});
+
 test("official payment credentials are encrypted and only expose configured markers", () => {
   const store = createStore();
   try {

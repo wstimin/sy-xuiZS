@@ -138,8 +138,8 @@ export function verifyEpaySignature(params: Record<string, string>, secret: stri
 }
 
 export function createEpayUrl(config: { gatewayUrl: string; merchantId: string; merchantSecret: string; channel: string }, input: CheckoutInput) {
-  if (!config.merchantId || !config.merchantSecret) throw new Error("易支付商户 PID 或商户密钥未配置");
-  const gateway = normalizedHttpUrl(config.gatewayUrl, "易支付网关");
+  if (!config.merchantId || !config.merchantSecret) throw new Error("支付平台商户 PID 或商户密钥未配置");
+  const gateway = normalizedHttpUrl(config.gatewayUrl, "支付平台网关");
   if (!gateway.pathname || gateway.pathname === "/") gateway.pathname = "/submit.php";
   const params: Record<string, string> = {
     pid: config.merchantId,
@@ -179,8 +179,8 @@ const epayDriver: PaymentDriver = {
     return { type: "redirect", checkoutUrl, requestPayload: { channel: config.channel || "alipay" } };
   },
   async verifyNotification(config, input) {
-    if (!config.merchantSecret || !verifyEpaySignature(input.params, config.merchantSecret)) throw new Error("易支付通知签名无效");
-    if (input.params.trade_status && !["TRADE_SUCCESS", "TRADE_FINISHED"].includes(input.params.trade_status)) throw new Error("易支付订单尚未成功");
+    if (!config.merchantSecret || !verifyEpaySignature(input.params, config.merchantSecret)) throw new Error("支付平台通知签名无效");
+    if (input.params.trade_status && !["TRADE_SUCCESS", "TRADE_FINISHED"].includes(input.params.trade_status)) throw new Error("支付订单尚未成功");
     return {
       orderNo: input.params.out_trade_no || "",
       tradeNo: input.params.trade_no || input.params.out_trade_no || "",

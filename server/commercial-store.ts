@@ -33,6 +33,8 @@ export interface PaymentMethod {
   merchantSecret?: string;
   merchantSecretConfigured?: boolean;
   channel?: string;
+  enabledChannels?: string[];
+  baseMethodId?: string;
   currency?: string;
   callbackBaseUrl?: string;
   appId?: string;
@@ -47,6 +49,29 @@ export interface PaymentMethod {
 
 const TOKENPAY_CURRENCIES = new Set(["USDT_TRC20", "TRX", "ETH", "USDT_ERC20", "USDC_ERC20"]);
 const MGATE_CURRENCIES = new Set(["CNY", "USD", "EUR", "HKD", "TWD", "JPY", "KRW", "SGD"]);
+const EPAY_CHANNELS = ["alipay", "wxpay", "qqpay"] as const;
+const EPAY_CHANNEL_SET = new Set<string>(EPAY_CHANNELS);
+const EPAY_CHANNEL_NAMES: Record<string, string> = { alipay: "支付宝", wxpay: "微信支付", qqpay: "QQ 钱包" };
+
+function publicEpayName(channel: string) {
+  return EPAY_CHANNEL_NAMES[channel] || channel;
+}
+
+function normalizedEpayChannels(value: unknown, legacyChannel = "alipay") {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map(item => String(item || "").trim().toLowerCase()).filter(Boolean))];
+  }
+  const legacy = String(legacyChannel || "alipay").trim().toLowerCase();
+  return EPAY_CHANNEL_SET.has(legacy) ? [legacy] : ["alipay"];
+}
+
+function parseEpayChannels(value: unknown, legacyChannel = "alipay") {
+  try {
+    const parsed = JSON.parse(String(value || ""));
+    return Array.isArray(parsed) ? normalizedEpayChannels(parsed, legacyChannel) : normalizedEpayChannels(undefined, legacyChannel);
+  }
+  catch { return normalizedEpayChannels([], legacyChannel); }
+}
 
 function normalizeTokenPayCurrency(value: unknown) {
   return String(value || "").trim().toUpperCase().replace(/-/g, "_");
@@ -249,6 +274,7 @@ export class CommercialStore {
         amount_cents INTEGER NOT NULL,
         plan_snapshot TEXT NOT NULL,
         payment_provider TEXT NOT NULL DEFAULT 'manual',
+        payment_channel TEXT NOT NULL DEFAULT '',
         payment_trade_no TEXT UNIQUE,
         created_at TEXT NOT NULL,
         paid_at TEXT,
@@ -349,6 +375,7 @@ export class CommercialStore {
         merchant_id TEXT NOT NULL DEFAULT '',
         merchant_secret_encrypted TEXT NOT NULL DEFAULT '',
         channel TEXT NOT NULL DEFAULT 'alipay',
+        enabled_channels TEXT NOT NULL DEFAULT '[]',
         currency TEXT NOT NULL DEFAULT 'CNY',
         callback_base_url TEXT NOT NULL DEFAULT '',
         app_id TEXT NOT NULL DEFAULT '',
@@ -426,6 +453,7 @@ export class CommercialStore {
     for (const [name, definition] of [
       ["expires_at", "TEXT"], ["cancelled_at", "TEXT"], ["refunded_at", "TEXT"],
       ["refund_trade_no", "TEXT"], ["cancel_reason", "TEXT NOT NULL DEFAULT ''"], ["refund_reason", "TEXT NOT NULL DEFAULT ''"],
+      ["payment_channel", "TEXT NOT NULL DEFAULT ''"],
     ] as const) {
       if (!orderColumns.some(column => column.name === name)) this.db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${definition}`);
     }
@@ -474,7 +502,13 @@ export class CommercialStore {
     const requiredColumns = ["currency", "callback_base_url", "app_id", "private_key_encrypted", "public_key", "certificate_serial", "api_v3_key_encrypted", "archived"];
     const tableSql = String((this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'payment_channels'").get() as any)?.sql || "");
     const requiresRebuild = requiredColumns.some(name => !columns.some(column => column.name === name)) || /provider\s+IN\s*\(\s*'manual'\s*,\s*'epay'/i.test(tableSql);
-    if (!requiresRebuild) return;
+    if (!requiresRebuild) {
+      if (!columns.some(column => column.name === "enabled_channels")) {
+        this.db.exec("ALTER TABLE payment_channels ADD COLUMN enabled_channels TEXT NOT NULL DEFAULT '[]'");
+        this.db.exec("UPDATE payment_channels SET enabled_channels = json_array(channel) WHERE provider = 'epay' AND enabled_channels = '[]'");
+      }
+      return;
+    }
     this.db.transaction(() => {
       this.db.exec(`
         ALTER TABLE payment_channels RENAME TO payment_channels_legacy;
@@ -489,6 +523,7 @@ export class CommercialStore {
           merchant_id TEXT NOT NULL DEFAULT '',
           merchant_secret_encrypted TEXT NOT NULL DEFAULT '',
           channel TEXT NOT NULL DEFAULT 'alipay',
+          enabled_channels TEXT NOT NULL DEFAULT '[]',
           currency TEXT NOT NULL DEFAULT 'CNY',
           callback_base_url TEXT NOT NULL DEFAULT '',
           app_id TEXT NOT NULL DEFAULT '',
@@ -504,9 +539,10 @@ export class CommercialStore {
         );
         INSERT INTO payment_channels (
           id, name, provider, enabled, instructions, payment_url, gateway_url, merchant_id,
-          merchant_secret_encrypted, channel, sandbox, sort_order, created_at, updated_at
+          merchant_secret_encrypted, channel, enabled_channels, sandbox, sort_order, created_at, updated_at
         ) SELECT id, name, provider, enabled, instructions, payment_url, gateway_url, merchant_id,
-          merchant_secret_encrypted, channel, sandbox, sort_order, created_at, updated_at
+          merchant_secret_encrypted, channel, CASE WHEN provider = 'epay' THEN json_array(channel) ELSE '[]' END,
+          sandbox, sort_order, created_at, updated_at
         FROM payment_channels_legacy;
         DROP TABLE payment_channels_legacy;
       `);
@@ -518,10 +554,12 @@ export class CommercialStore {
     if (count > 0) return;
     for (const method of this.getLegacyPaymentMethods(true)) {
       const timestamp = nowIso();
+      const provider = method.type === "epay" ? "epay" : "manual";
       this.db.prepare(`
-        INSERT INTO payment_channels (id, name, provider, enabled, instructions, payment_url, sort_order, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(method.id, method.name, method.type === "epay" ? "epay" : "manual", method.enabled ? 1 : 0, method.instructions, method.paymentUrl, method.sortOrder, timestamp, timestamp);
+        INSERT INTO payment_channels (id, name, provider, enabled, instructions, payment_url, channel, enabled_channels, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(method.id, method.name, provider, method.enabled ? 1 : 0, method.instructions, method.paymentUrl,
+        method.channel || "alipay", provider === "epay" ? JSON.stringify([method.channel || "alipay"]) : "[]", method.sortOrder, timestamp, timestamp);
     }
   }
 
@@ -673,7 +711,7 @@ export class CommercialStore {
       includeArchived ? "" : "archived = 0",
     ].filter(Boolean);
     const rows = this.db.prepare(`SELECT * FROM payment_channels ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""} ORDER BY sort_order, created_at`).all() as any[];
-    return rows.map(row => ({
+    const methods = rows.map(row => ({
       id: row.id,
       name: row.name,
       type: row.provider === "alipay_official" ? "alipay" : row.provider === "wechat_official" ? "wechat" : row.provider,
@@ -686,6 +724,9 @@ export class CommercialStore {
       merchantSecret: includeSecrets && row.merchant_secret_encrypted ? this.vault.decrypt(row.merchant_secret_encrypted) : undefined,
       merchantSecretConfigured: includeDisabled || includeSecrets ? Boolean(row.merchant_secret_encrypted) : undefined,
       channel: includeDisabled || includeSecrets ? row.channel : undefined,
+      enabledChannels: row.provider === "epay"
+        ? parseEpayChannels(row.enabled_channels, row.channel)
+        : undefined,
       currency: includeDisabled || includeSecrets ? storedPaymentCurrency(row) : undefined,
       callbackBaseUrl: includeDisabled || includeSecrets ? row.callback_base_url || "" : undefined,
       appId: includeDisabled || includeSecrets ? row.app_id || "" : undefined,
@@ -698,6 +739,19 @@ export class CommercialStore {
       sandbox: includeDisabled || includeSecrets ? Boolean(row.sandbox) : undefined,
       sortOrder: row.sort_order,
     }));
+    if (includeDisabled || includeSecrets) return methods;
+    return methods.flatMap(method => {
+      if (method.provider !== "epay") return [method];
+      return (method.enabledChannels || []).map((channel, index) => ({
+        ...method,
+        id: `${method.id}--${channel}`,
+        baseMethodId: method.id,
+        channel,
+        enabledChannels: undefined,
+        name: publicEpayName(channel),
+        sortOrder: method.sortOrder * 10 + index,
+      }));
+    }).sort((left, right) => left.sortOrder - right.sortOrder);
   }
 
   setPaymentMethods(value: unknown) {
@@ -739,7 +793,13 @@ export class CommercialStore {
               : "manual";
         const gatewayUrl = String(raw?.gatewayUrl || "").trim().slice(0, 1000);
         const merchantId = String(raw?.merchantId || "").trim().slice(0, 100);
-        const channel = String(raw?.channel || "alipay").trim().slice(0, 50);
+        const enabledChannels = provider === "epay" ? normalizedEpayChannels(raw?.enabledChannels, raw?.channel) : [];
+        if (provider === "epay") {
+          const unsupported = enabledChannels.filter(item => !EPAY_CHANNEL_SET.has(item));
+          if (unsupported.length) throw new Error(`支付通道 ${method.name} 包含不支持的支付类型：${unsupported.join("、")}`);
+          if (method.enabled && !enabledChannels.length) throw new Error(`支付通道 ${method.name} 启用前至少选择一种支付方式`);
+        }
+        const channel = provider === "epay" ? enabledChannels[0] || "alipay" : String(raw?.channel || "alipay").trim().slice(0, 50);
         let currency = String(raw?.currency || "CNY").trim().toUpperCase().slice(0, 20);
         if (provider === "tokenpay") {
           const selected = normalizeTokenPayCurrency(currency);
@@ -785,19 +845,20 @@ export class CommercialStore {
         this.db.prepare(`
           INSERT INTO payment_channels (
             id, name, provider, enabled, instructions, payment_url, gateway_url, merchant_id,
-            merchant_secret_encrypted, channel, currency, callback_base_url, app_id, private_key_encrypted,
+            merchant_secret_encrypted, channel, enabled_channels, currency, callback_base_url, app_id, private_key_encrypted,
             public_key, certificate_serial, api_v3_key_encrypted, sandbox, sort_order, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider = excluded.provider,
             enabled = excluded.enabled, instructions = excluded.instructions, payment_url = excluded.payment_url,
             gateway_url = excluded.gateway_url, merchant_id = excluded.merchant_id,
             merchant_secret_encrypted = excluded.merchant_secret_encrypted, channel = excluded.channel,
+            enabled_channels = excluded.enabled_channels,
             currency = excluded.currency, callback_base_url = excluded.callback_base_url, app_id = excluded.app_id,
             private_key_encrypted = excluded.private_key_encrypted, public_key = excluded.public_key,
             certificate_serial = excluded.certificate_serial, api_v3_key_encrypted = excluded.api_v3_key_encrypted,
             sandbox = excluded.sandbox, archived = 0, sort_order = excluded.sort_order, updated_at = excluded.updated_at
         `).run(method.id, method.name, provider, method.enabled ? 1 : 0, method.instructions, method.paymentUrl,
-          gatewayUrl, merchantId, encryptedSecret, channel, currency, callbackBaseUrl, appId, encryptedPrivateKey,
+          gatewayUrl, merchantId, encryptedSecret, channel, JSON.stringify(enabledChannels), currency, callbackBaseUrl, appId, encryptedPrivateKey,
           publicKey, certificateSerial, encryptedApiV3Key, raw?.sandbox === true ? 1 : 0, method.sortOrder, timestamp, timestamp);
       }
       const retained = methods.map(method => method.id);
@@ -1148,17 +1209,23 @@ export class CommercialStore {
   createOrder(userId: string, planId: string, paymentProvider = "manual") {
     const plan = this.getPlan(planId);
     if (!plan) throw new Error("套餐不存在或已经下架");
-    const paymentMethod = this.getPaymentMethods().find(method => method.id === paymentProvider);
+    const publicMethod = this.getPaymentMethods().find(method => method.id === paymentProvider);
+    const legacyMethod = this.getPaymentMethods(true).find(method => method.id === paymentProvider && method.enabled);
+    const paymentMethod = publicMethod || legacyMethod;
     if (!paymentMethod) throw new Error("所选支付方式不存在或已停用");
+    const storedProvider = paymentMethod.baseMethodId || paymentMethod.id;
+    const paymentChannel = paymentMethod.provider === "epay"
+      ? paymentMethod.channel || paymentMethod.enabledChannels?.[0] || "alipay"
+      : "";
     const id = randomUUID();
     const timestamp = nowIso();
     const orderNo = `XUI${Date.now()}${randomBytes(4).toString("hex").toUpperCase()}`;
     const expiryMinutes = Math.max(5, Number(this.getSetting("order_expiry_minutes", "30")) || 30);
     const expiresAt = new Date(Date.now() + expiryMinutes * 60_000).toISOString();
     this.db.prepare(`
-      INSERT INTO orders (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, payment_provider, created_at, expires_at, updated_at)
-      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
-    `).run(id, orderNo, userId, planId, plan.priceCents, JSON.stringify(plan), paymentMethod.id, timestamp, expiresAt, timestamp);
+      INSERT INTO orders (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, payment_provider, payment_channel, created_at, expires_at, updated_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, orderNo, userId, planId, plan.priceCents, JSON.stringify(plan), storedProvider, paymentChannel, timestamp, expiresAt, timestamp);
     return this.getOrder(id)!;
   }
 
@@ -1166,6 +1233,8 @@ export class CommercialStore {
     return this.db.prepare(`
       SELECT id, order_no AS orderNo, user_id AS userId, plan_id AS planId, status,
         amount_cents AS amountCents, plan_snapshot AS planSnapshot, payment_provider AS paymentProvider,
+        payment_channel AS paymentChannel,
+        CASE WHEN payment_channel <> '' THEN payment_provider || '--' || payment_channel ELSE payment_provider END AS paymentOptionId,
         payment_trade_no AS paymentTradeNo, created_at AS createdAt, paid_at AS paidAt,
         expires_at AS expiresAt, cancelled_at AS cancelledAt, refunded_at AS refundedAt,
         refund_trade_no AS refundTradeNo, cancel_reason AS cancelReason, refund_reason AS refundReason
@@ -1182,6 +1251,8 @@ export class CommercialStore {
     return this.db.prepare(`
       SELECT o.id, o.order_no AS orderNo, o.user_id AS userId, u.username, o.status,
         o.amount_cents AS amountCents, o.plan_snapshot AS planSnapshot, o.payment_provider AS paymentProvider,
+        o.payment_channel AS paymentChannel,
+        CASE WHEN o.payment_channel <> '' THEN o.payment_provider || '--' || o.payment_channel ELSE o.payment_provider END AS paymentOptionId,
         o.payment_trade_no AS paymentTradeNo, o.created_at AS createdAt, o.paid_at AS paidAt,
         o.expires_at AS expiresAt, o.cancelled_at AS cancelledAt, o.refunded_at AS refundedAt,
         o.refund_trade_no AS refundTradeNo, o.cancel_reason AS cancelReason, o.refund_reason AS refundReason

@@ -205,7 +205,9 @@ async function createCheckout(req: Request, store: CommercialStore, order: any) 
   const user = store.getUserById(order.userId);
   const requestContext = { provider, channelId: method.id, orderNo: order.orderNo };
   try {
-    const result = await driver.createCheckout(channelConfig(method), {
+    const config = channelConfig(method);
+    if (provider === "epay" && order.paymentChannel) config.channel = order.paymentChannel;
+    const result = await driver.createCheckout(config, {
       orderNo: order.orderNo,
       amountCents: order.amountCents,
       name: String(snapshot.name || "网络搭建服务"),
@@ -359,11 +361,15 @@ export function createCommercialRouter(store: CommercialStore) {
     try { driver = getPaymentDriver(provider); } catch { return res.status(404).type("text/plain").send("fail"); }
     const channel = store.getPaymentMethods(true, true, true).find(item => item.id === req.params.channelId && item.provider === provider);
     if (!channel) return res.status(404).type(provider === "wechat_official" ? "application/json" : "text/plain").send(driver.failureResponse);
+    const params = paymentParams(req);
+    if (req.method === "GET" && !Object.keys(params).length && (!req.body || !Object.keys(req.body).length)) {
+      return res.status(200).type("text/plain; charset=utf-8").send("该地址是支付平台异步通知接口，不能直接在浏览器中测试。请将此地址填写到支付平台后台的异步通知地址。");
+    }
     const rawBody = (req as Request & { rawBody?: string }).rawBody;
     const body = provider === "wechat_official" ? rawBody || JSON.stringify(req.body || {}) : req.body;
     try {
       const verified = await driver.verifyNotification(channelConfig(channel), {
-        params: paymentParams(req), body, headers: paymentHeaders(req),
+        params, body, headers: paymentHeaders(req),
       });
       const order = store.getOrderByNo(verified.orderNo);
       if (!order || order.paymentProvider !== channel.id) throw new Error("支付通知订单或渠道不匹配");
@@ -372,7 +378,7 @@ export function createCommercialRouter(store: CommercialStore) {
       store.recordPaymentNotification(channel.id, provider, verified.orderNo, "accepted", verified.payload);
       res.type(provider === "wechat_official" ? "application/json" : "text/plain").send(driver.successResponse);
     } catch (error) {
-      store.recordPaymentNotification(channel.id, provider, paymentParams(req).out_trade_no || paymentParams(req).OutOrderId || paymentParams(req).order_id || "", "rejected", req.body, message(error));
+      store.recordPaymentNotification(channel.id, provider, params.out_trade_no || params.OutOrderId || params.order_id || "", "rejected", req.body, message(error));
       res.status(400).type(provider === "wechat_official" ? "application/json" : "text/plain").send(driver.failureResponse);
     }
   });

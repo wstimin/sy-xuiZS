@@ -321,7 +321,7 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
     store.setPaymentMethods([{
       id: "epay-live", name: "在线支付", type: "epay", provider: "epay", enabled: true,
       instructions: "在线付款", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001",
-      merchantSecret: "callback-secret", channel: "alipay", sortOrder: 10,
+      merchantSecret: "callback-secret", channel: "alipay", enabledChannels: ["alipay", "wxpay"], sortOrder: 10,
     }]);
     const user = store.createUser("callback-user", "strong-password", "user", "callback@example.com");
     const login = await fetch(`${base}/auth/login`, {
@@ -331,10 +331,19 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
     const userCookie = sessionCookie(login);
     const orderResponse = await fetch(`${base}/orders`, {
       method: "POST", headers: { "content-type": "application/json", cookie: userCookie },
-      body: JSON.stringify({ planId: store.listPlans()[0].id, paymentProvider: "epay-live" }),
+      body: JSON.stringify({ planId: store.listPlans()[0].id, paymentProvider: "epay-live--wxpay" }),
     });
     assert.equal(orderResponse.status, 201);
-    const order = (await orderResponse.json() as any).order;
+    const createdOrder = await orderResponse.json() as any;
+    const order = createdOrder.order;
+    assert.equal(order.paymentProvider, "epay-live");
+    assert.equal(order.paymentChannel, "wxpay");
+    assert.match(createdOrder.payment.checkoutUrl, /[?&]type=wxpay(?:&|$)/);
+
+    const directVisit = await fetch(`${base}/payment/epay/epay-live/notify`);
+    assert.equal(directVisit.status, 200);
+    assert.match(await directVisit.text(), /异步通知接口/);
+    assert.equal(store.listPaymentNotifications().length, 0);
 
     const callback = (money: string) => {
       const params: Record<string, string> = {

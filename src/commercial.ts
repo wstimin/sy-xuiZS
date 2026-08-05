@@ -27,6 +27,8 @@ export interface PaymentMethod {
   merchantSecret?: string;
   merchantSecretConfigured?: boolean;
   channel?: string;
+  enabledChannels?: string[];
+  baseMethodId?: string;
   currency?: string;
   callbackBaseUrl?: string;
   callbackUrl?: string;
@@ -142,6 +144,8 @@ export interface Order {
   amountCents: number;
   planSnapshot: string;
   paymentProvider: string;
+  paymentChannel?: string;
+  paymentOptionId?: string;
   paymentTradeNo?: string;
   createdAt: string;
   paidAt?: string;
