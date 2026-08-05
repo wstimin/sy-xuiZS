@@ -35,7 +35,7 @@ bash <(curl -fsSL --retry 3 https://raw.githubusercontent.com/wstimin/sy-xuiZS/m
 bash <(curl -fsSL --retry 3 https://raw.githubusercontent.com/wstimin/sy-xuiZS/main/install.sh) install
 ```
 
-上述 `raw.githubusercontent.com` 地址只用于获取管理脚本。GitHub Actions 会在远端执行测试、类型检查和生产构建，并生成 Linux 生产构建包；管理脚本随后从 GitHub Latest Release 下载 `xui-zhushou-linux.tar.gz` 和 `SHA256SUMS`。VPS 不会下载应用源码，也不会执行 Vite、TypeScript 或其他源码构建。默认访问地址为：
+上述 `raw.githubusercontent.com` 地址只用于获取管理脚本。GitHub Actions 会在远端执行测试、类型检查和生产构建，并生成 Linux 生产构建包；每次推送到 `main` 后还会更新滚动的 `latest` 生产 Release，管理脚本随后从 GitHub Latest Release 下载 `xui-zhushou-linux.tar.gz` 和 `SHA256SUMS`。VPS 不会下载应用源码，也不会执行 Vite、TypeScript 或其他源码构建。默认访问地址为：
 
 ```text
 http://服务器IP:1888

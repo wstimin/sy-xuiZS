@@ -126,3 +126,18 @@ jobs:
           files: |
             release/xui-zhushou-linux*.tar.gz
             release/SHA256SUMS
+
+      - name: Publish rolling latest release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest production build
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: false
+          make_latest: true
+          prerelease: false
+          overwrite_files: true
+          files: |
+            release/xui-zhushou-linux.tar.gz
+            release/SHA256SUMS
