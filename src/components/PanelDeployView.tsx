@@ -3,6 +3,7 @@ import { PanelDeployForm, PanelResult, ScriptType } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { ensureAssistantConnection } from '../utils/apiConnection';
 import { activeCapability, Entitlement, quotaText } from '../commercial';
+import { NumberInput } from './NumberInput';
 import {
   Terminal, Key, Server, Lock, Globe, Shield, Sparkles, Copy, Check, ExternalLink, Play, ArrowRight, X, Code2, CheckCircle2,
   AlertTriangle, ShieldAlert, Cpu, HardDrive, Activity, Clock, AlertCircle, ChevronDown, ChevronUp, Zap
@@ -146,6 +147,12 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     setSshTestError(null);
   };
 
+  const hasValidSshPort = () => {
+    if (Number.isInteger(form.sshPort) && form.sshPort >= 1 && form.sshPort <= 65535) return true;
+    showToast('SSH 端口无效', '请输入 1 到 65535 之间的整数', 'warning');
+    return false;
+  };
+
   // SSH Connection & System Inspection Handler
   const handleTestSSH = async () => {
     const cleanIp = cleanHostStr(form.ipOrDomain);
@@ -153,6 +160,8 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       showToast('请输入服务器 IP 或域名', '例如 192.0.2.1 或 vps.example.com', 'warning');
       return;
     }
+
+    if (!hasValidSshPort()) return;
 
     if (cleanIp !== form.ipOrDomain) {
       setForm(prev => ({ ...prev, ipOrDomain: cleanIp }));
@@ -217,6 +226,8 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       showToast('请输入服务器 IP 或域名', '这是 SSH 连接的必需字段', 'warning');
       return;
     }
+
+    if (!hasValidSshPort()) return;
 
     if (cleanIp !== form.ipOrDomain) {
       setForm(prev => ({ ...prev, ipOrDomain: cleanIp }));
@@ -505,10 +516,12 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               <label className="text-xs font-medium text-zinc-300">
                 SSH 端口
               </label>
-              <input
-                type="number"
+              <NumberInput
                 value={form.sshPort}
-                onChange={e => updateSshConnection({ sshPort: parseInt(e.target.value, 10) || 22 })}
+                onValueChange={sshPort => updateSshConnection({ sshPort })}
+                min={1}
+                max={65535}
+                step={1}
                 className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all"
               />
             </div>
