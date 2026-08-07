@@ -90,8 +90,8 @@ function limitedText(value: unknown, label: string, maxLength: number, fallback 
 function contactSettings(store: CommercialStore) {
   return {
     enabled: store.getSetting("contact_enabled", "false") === "true",
-    buttonLabel: store.getSetting("contact_button_label", "联系我们"),
-    title: store.getSetting("contact_title", "联系我们"),
+    buttonLabel: store.getSetting("contact_button_label", "立即咨询"),
+    title: store.getSetting("contact_title", "联系站长"),
     description: store.getSetting("contact_description", ""),
     contactText: store.getSetting("contact_text", ""),
     contactUrl: store.getSetting("contact_url", ""),
@@ -104,9 +104,9 @@ function contactSettingsInput(value: unknown, current: ReturnType<typeof contact
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
     enabled: typeof input.enabled === "boolean" ? input.enabled : current.enabled,
-    buttonLabel: limitedText(input.buttonLabel, "页脚按钮文案", 40, current.buttonLabel) || "联系我们",
-    title: limitedText(input.title, "联系弹窗标题", 100, current.title) || "联系我们",
-    description: limitedText(input.description, "联系说明", 1000, current.description),
+    buttonLabel: limitedText(input.buttonLabel, "悬浮按钮名称", 40, current.buttonLabel) || "立即咨询",
+    title: limitedText(input.title, "咨询弹窗标题", 100, current.title) || "联系站长",
+    description: limitedText(input.description, "咨询说明", 1000, current.description),
     contactText: limitedText(input.contactText, "联系方式", 1000, current.contactText),
     contactUrl: input.contactUrl === undefined ? current.contactUrl : optionalHttpUrl(input.contactUrl, "联系链接"),
     qrCodeUrl: input.qrCodeUrl === undefined ? current.qrCodeUrl : optionalHttpUrl(input.qrCodeUrl, "二维码图片地址"),

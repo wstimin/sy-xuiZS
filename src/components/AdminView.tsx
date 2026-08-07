@@ -125,7 +125,7 @@ const emptyGrant = {
 const emptyUser = { username: '', email: '', password: '', role: 'user' as 'user' | 'admin' };
 const emptyPaymentMethod = (): PaymentMethod => ({ id: `method-${Date.now()}`, name: '易支付', type: 'epay', provider: 'epay', enabled: true, instructions: '', paymentUrl: '', gatewayUrl: '', merchantId: '', merchantSecret: '', merchantSecretConfigured: false, channel: 'alipay', enabledChannels: ['alipay'], currency: 'CNY', sortOrder: 10 });
 const emptyEmailSettings: EmailSettings = { emailEnabled: false, emailVerificationRequired: false, smtpHost: '', smtpPort: 465, smtpEncryption: 'ssl', smtpUsername: '', smtpPassword: '', smtpPasswordConfigured: false, smtpFromName: 'NEXUS CLOUD', smtpFromEmail: '', smtpReplyTo: '', verificationCodeTtlMinutes: 10, verificationResendSeconds: 60, siteName: 'NEXUS CLOUD', publicBaseUrl: '' };
-const emptyContactSettings: ContactSettings = { enabled: false, buttonLabel: '联系我们', title: '联系我们', description: '', contactText: '', contactUrl: '', qrCodeUrl: '', qrCodeUploaded: false };
+const emptyContactSettings: ContactSettings = { enabled: false, buttonLabel: '立即咨询', title: '联系站长', description: '', contactText: '', contactUrl: '', qrCodeUrl: '', qrCodeUploaded: false };
 const TOKENPAY_CURRENCIES = [
   { value: 'USDT_TRC20', label: 'USDT-TRC20' },
   { value: 'USDT_ERC20', label: 'USDT-ERC20' },
@@ -329,7 +329,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const uploadContactQr = async (file?: File) => {
     if (!file) return;
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return showToast('图片格式不支持', '请选择 PNG、JPEG 或 WebP 图片', 'warning');
-    if (file.size > 1024 * 1024) return showToast('图片过大', '联系二维码不能超过 1MB', 'warning');
+    if (file.size > 1024 * 1024) return showToast('图片过大', '咨询二维码不能超过 1MB', 'warning');
     setBusy(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -340,7 +340,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       });
       await api('/api/admin/contact-qr', { method: 'POST', body: JSON.stringify({ dataUrl }) });
       setSettingsData(current => ({ ...current, contact: { ...current.contact, qrCodeUploaded: true } }));
-      showToast('联系二维码已上传', '前台将优先显示已上传的二维码', 'success');
+      showToast('咨询二维码已上传', '前台将优先显示已上传的二维码', 'success');
     } catch (error) {
       showToast('二维码上传失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
@@ -703,17 +703,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                       </div>
                     </section>
                     <section className="admin-settings-section">
-                      <div className="admin-settings-section-title"><h3>联系我们</h3><p>在公开首页和用户工作台页脚显示联系入口，可同时配置文字、链接和二维码。</p></div>
+                      <div className="admin-settings-section-title"><h3>咨询设置</h3><p>在公开首页和用户工作台右下角显示悬浮咨询入口，方便用户随时联系站长。</p></div>
                       <div className="admin-setting-list compact">
-                        <SettingSwitch label="显示联系我们按钮" description="关闭后前台页脚不显示联系入口，已保存的内容和二维码仍会保留。" checked={settingsData.contact.enabled} onChange={enabled => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, enabled } })} />
+                        <SettingSwitch label="显示悬浮咨询按钮" description="关闭后前台不显示咨询入口，已保存的内容和二维码仍会保留。至少填写一种联系方式后按钮才会出现。" checked={settingsData.contact.enabled} onChange={enabled => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, enabled } })} />
                       </div>
                       <div className="admin-settings-form contact-settings-form">
                         <div className="admin-form-grid">
-                          <label className="admin-field"><span>页脚按钮文案</span><input value={settingsData.contact.buttonLabel} maxLength={40} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, buttonLabel: event.target.value } })} placeholder="联系我们" /></label>
-                          <label className="admin-field"><span>弹窗标题</span><input value={settingsData.contact.title} maxLength={100} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, title: event.target.value } })} placeholder="联系我们" /></label>
-                          <label className="admin-field span-2"><span>联系说明</span><textarea value={settingsData.contact.description} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, description: event.target.value } })} placeholder="例如：工作时间、售前与售后说明" /><small>{settingsData.contact.description.length} / 1000</small></label>
+                          <label className="admin-field"><span>悬浮按钮名称</span><input value={settingsData.contact.buttonLabel} maxLength={40} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, buttonLabel: event.target.value } })} placeholder="立即咨询" /><small>建议填写 2 到 10 个字符，例如“联系站长”或“技术支持”。</small></label>
+                          <label className="admin-field"><span>咨询弹窗标题</span><input value={settingsData.contact.title} maxLength={100} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, title: event.target.value } })} placeholder="联系站长" /></label>
+                          <label className="admin-field span-2"><span>咨询说明</span><textarea value={settingsData.contact.description} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, description: event.target.value } })} placeholder="例如：遇到搭建、支付或使用问题，可以联系站长处理。" /><small>{settingsData.contact.description.length} / 1000</small></label>
                           <label className="admin-field span-2"><span>联系方式</span><textarea value={settingsData.contact.contactText} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, contactText: event.target.value } })} placeholder={'例如：\n微信：example\nTelegram：@example\n邮箱：support@example.com'} /><small>支持换行，会按填写格式显示。</small></label>
-                          <label className="admin-field"><span>联系链接</span><input type="url" value={settingsData.contact.contactUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, contactUrl: event.target.value } })} placeholder="https://t.me/example" /><small>可选，仅支持 HTTP 或 HTTPS。</small></label>
+                          <label className="admin-field"><span>咨询链接</span><input type="url" value={settingsData.contact.contactUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, contactUrl: event.target.value } })} placeholder="https://t.me/example" /><small>可选，仅支持 HTTP 或 HTTPS。</small></label>
                           <label className="admin-field"><span>二维码图片地址</span><input type="url" value={settingsData.contact.qrCodeUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, qrCodeUrl: event.target.value } })} placeholder="https://example.com/contact.png" /><small>未上传二维码时使用此地址。</small></label>
                         </div>
                         <div className="admin-contact-upload">

@@ -836,21 +836,44 @@ input {
 
 .landing-footer-actions > a:hover { color: #94a3b8; }
 
-.contact-footer-button {
+.contact-floating-button {
+  position: fixed;
+  z-index: 120;
+  right: 24px;
+  bottom: 84px;
+  max-width: min(280px, calc(100vw - 48px));
+  min-height: 48px;
+  padding: 0 17px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 0;
-  color: #a5b4fc;
-  background: transparent;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid rgb(129 140 248 / 0.48);
+  border-radius: 7px;
+  color: #f4f4f5;
+  background: linear-gradient(120deg, rgb(79 70 229 / 0.94), rgb(8 145 178 / 0.9));
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.34), inset 0 1px 0 rgb(255 255 255 / 0.15);
   font: inherit;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 800;
   cursor: pointer;
-  transition: color 160ms ease;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, filter 160ms ease;
 }
 
-.contact-footer-button:hover { color: #67e8f9; }
-.contact-footer-button svg { width: 14px; height: 14px; }
+.contact-floating-button:hover {
+  border-color: rgb(103 232 249 / 0.7);
+  box-shadow: 0 18px 46px rgb(0 0 0 / 0.42), 0 0 0 3px rgb(99 102 241 / 0.12);
+  filter: brightness(1.06);
+  transform: translateY(-2px);
+}
+
+.contact-floating-button:focus-visible {
+  outline: 2px solid #67e8f9;
+  outline-offset: 3px;
+}
+
+.contact-floating-button svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.contact-floating-button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .contact-dialog-backdrop {
   position: fixed;
@@ -4717,6 +4740,14 @@ input {
   .admin-contact-upload { grid-template-columns: 1fr; }
   .admin-contact-upload-preview { width: 120px; }
   .contact-dialog-backdrop { padding: 12px; }
+  .contact-floating-button {
+    right: 16px;
+    bottom: max(72px, calc(env(safe-area-inset-bottom) + 56px));
+    max-width: calc(100vw - 32px);
+    min-height: 44px;
+    padding: 0 14px;
+    font-size: 12px;
+  }
 }
 
 /* Final console, account center and icon refinement. */

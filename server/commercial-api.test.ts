@@ -577,7 +577,8 @@ test("contact settings and QR uploads are configurable, validated and publicly r
   try {
     const initial = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
     assert.equal(initial.contact.enabled, false);
-    assert.equal(initial.contact.buttonLabel, "联系我们");
+    assert.equal(initial.contact.buttonLabel, "立即咨询");
+    assert.equal(initial.contact.title, "联系站长");
     assert.equal(initial.contact.qrCodeUploaded, false);
 
     const unauthorizedUpload = await fetch(`${base}/admin/contact-qr`, {

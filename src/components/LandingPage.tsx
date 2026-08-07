@@ -222,7 +222,8 @@ export const LandingPage: React.FC = () => {
         <span><strong>NEXUS CLOUD</strong><small>网络环境自助搭建服务</small></span>
       </div>
       <p>服务器面板安装、网络节点配置与搭建权益管理</p>
-      <div className="landing-footer-actions"><ContactButton variant="landing" /><a href="/admin">管理入口</a></div>
+      <div className="landing-footer-actions"><a href="/admin">管理入口</a></div>
     </footer>
+    <ContactButton />
   </div>
 };
