@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import Database from "better-sqlite3";
 import { CommercialStore } from "./commercial-store.js";
 import { createEpayUrl, epaySign, verifyEpaySignature } from "./payment-service.js";
 
@@ -647,6 +648,127 @@ test("duplicate payment completion grants one entitlement and rejects another tr
     assert.equal(store.listEntitlements(user.id).length, 1);
     assert.throws(() => store.markOrderPaid(order.id, "manual", "trade-two"), /其他支付交易/);
     assert.equal(store.listEntitlements(user.id).length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("order detail diagnoses payment failures and repairs a missing entitlement once", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("order-detail-user", "strong-password", "user", "order-detail@example.com");
+    const plan = store.listPlans()[0];
+    const order = store.createOrder(user.id, plan.id, "manual");
+    store.createFailedPaymentAttempt(order.id, "manual", { orderNo: order.orderNo }, new Error("gateway unavailable"));
+    store.recordPaymentNotification("manual", "manual", order.orderNo, "rejected", { sign: "secret", orderNo: order.orderNo }, "invalid callback");
+
+    const pendingDetail: any = store.getOrderDetail(order.id);
+    assert.equal(pendingDetail.diagnosis.processingStatus, "payment_attention");
+    assert.equal(pendingDetail.diagnosis.failedAttemptCount, 1);
+    assert.equal(pendingDetail.diagnosis.rejectedNotificationCount, 1);
+    assert.equal(pendingDetail.notifications[0].payload.includes("secret"), false);
+    assert.equal(pendingDetail.notifications[0].payload.includes("[REDACTED]"), true);
+
+    store.db.prepare("UPDATE orders SET status = 'paid', payment_trade_no = ?, paid_at = ?, updated_at = ? WHERE id = ?")
+      .run("missing-entitlement-trade", new Date().toISOString(), new Date().toISOString(), order.id);
+    const brokenDetail: any = store.getOrderDetail(order.id);
+    assert.equal(brokenDetail.diagnosis.processingStatus, "paid_missing_entitlement");
+    assert.equal(brokenDetail.diagnosis.canRepairEntitlement, true);
+    assert.deepEqual(brokenDetail.entitlements, []);
+
+    const repaired: any = store.repairOrderEntitlement(order.id);
+    assert.ok(repaired.entitlementId);
+    assert.equal(repaired.detail.diagnosis.processingStatus, "completed");
+    assert.equal(repaired.detail.diagnosis.canRepairEntitlement, false);
+    assert.equal(store.listEntitlements(user.id).length, 1);
+    assert.throws(() => store.repairOrderEntitlement(order.id), /不能重复补发/);
+    assert.equal(store.getOrderDetail("missing-order"), null);
+  } finally {
+    store.close();
+  }
+});
+
+test("admin order diagnoses and exception aggregation expose actionable records without duplicates", () => {
+  const store = createStore();
+  try {
+    store.bootstrapAdmin("diagnosis-admin", "strong-password");
+    const user = store.createUser("diagnosis-user", "strong-password");
+    const plan = store.listPlans()[0];
+    const pendingOrder = store.createOrder(user.id, plan.id, "manual");
+    const failedOrder = store.createOrder(user.id, plan.id, "manual");
+    store.createFailedPaymentAttempt(failedOrder.id, "manual", { orderNo: failedOrder.orderNo }, new Error("gateway unavailable"));
+    store.recordPaymentNotification("manual", "manual", failedOrder.orderNo, "rejected", { orderNo: failedOrder.orderNo }, "invalid callback");
+
+    const brokenOrder = store.createOrder(user.id, plan.id, "manual");
+    const timestamp = new Date().toISOString();
+    store.db.prepare("UPDATE orders SET status = 'paid', payment_trade_no = ?, paid_at = ?, updated_at = ? WHERE id = ?")
+      .run("missing-entitlement", timestamp, timestamp, brokenOrder.id);
+
+    const completedOrder = store.createOrder(user.id, plan.id, "manual");
+    store.markOrderPaid(completedOrder.id, "manual", "completed-trade");
+    const deployment = store.reserveDeployment(user.id, "panel", "uncertain-request");
+    store.markDeploymentUncertain(deployment.deploymentId, "result needs review");
+
+    const diagnoses = new Map((store.listOrders(undefined, true) as any[]).map(order => [order.id, order.diagnosis.processingStatus]));
+    assert.equal(diagnoses.get(pendingOrder.id), "pending_payment");
+    assert.equal(diagnoses.get(failedOrder.id), "payment_attention");
+    assert.equal(diagnoses.get(brokenOrder.id), "paid_missing_entitlement");
+    assert.equal(diagnoses.get(completedOrder.id), "completed");
+
+    const exceptions = store.listAdminExceptions() as any;
+    assert.equal(exceptions.summary.total, 3);
+    assert.equal(exceptions.summary.critical, 2);
+    assert.equal(exceptions.summary.warning, 1);
+    assert.equal(exceptions.items.filter((item: any) => item.targetId === failedOrder.id).length, 1);
+    assert.equal(exceptions.items.some((item: any) => item.type === "rejected_notification" && item.targetId === failedOrder.id), false);
+    assert.equal(exceptions.items.some((item: any) => item.type === "paid_missing_entitlement" && item.targetId === brokenOrder.id), true);
+    assert.equal(exceptions.items.some((item: any) => item.type === "uncertain_deployment" && item.targetId === deployment.deploymentId), true);
+  } finally {
+    store.close();
+  }
+});
+
+test("database backups validate required data and restore without reviving sessions", () => {
+  const store = createStore();
+  try {
+    const admin = store.bootstrapAdmin("backup-admin", "strong-password")!;
+    const user = store.createUser("backup-user", "strong-password");
+    store.setSetting("backup_test_value", "from-backup");
+    const sessionStoredInBackup = store.createSession(user.id);
+    const backup = store.createDatabaseBackup();
+
+    const validation = store.validateDatabaseBackup(backup) as any;
+    assert.equal(validation.valid, true);
+    assert.equal(validation.counts.users, 2);
+    assert.equal(validation.counts.sessions, 1);
+    assert.equal(validation.counts.system_settings > 0, true);
+
+    store.setSetting("backup_test_value", "changed-after-backup");
+    store.createUser("created-after-backup", "strong-password");
+    const currentAdminSession = store.createSession(admin.id);
+    const restored = store.restoreDatabaseBackup(backup, admin.username) as any;
+
+    assert.equal(restored.success, true);
+    assert.equal(store.getSetting("backup_test_value"), "from-backup");
+    assert.deepEqual(store.listUsers().map((item: any) => item.username).sort(), ["backup-admin", "backup-user"]);
+    assert.equal(store.getSessionUser(sessionStoredInBackup), null);
+    assert.equal(store.getSessionUser(currentAdminSession), null);
+    assert.equal((store.db.prepare("SELECT COUNT(*) AS count FROM sessions").get() as any).count, 0);
+    assert.equal((store.listAdminAuditLogs() as any[]).some(item => item.targetType === "database" && item.targetId === "restore"), true);
+
+    assert.throws(() => store.validateDatabaseBackup(Buffer.from("not a sqlite database")));
+
+    const missingTableDatabase = new Database(backup);
+    missingTableDatabase.exec("DROP TABLE email_delivery_logs");
+    const missingTableBackup = missingTableDatabase.serialize();
+    missingTableDatabase.close();
+    assert.throws(() => store.validateDatabaseBackup(missingTableBackup));
+
+    const noAdminDatabase = new Database(backup);
+    noAdminDatabase.prepare("UPDATE users SET status = 'disabled' WHERE role = 'admin'").run();
+    const noAdminBackup = noAdminDatabase.serialize();
+    noAdminDatabase.close();
+    assert.throws(() => store.validateDatabaseBackup(noAdminBackup));
   } finally {
     store.close();
   }

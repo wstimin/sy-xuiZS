@@ -47,6 +47,56 @@ export interface PaymentMethod {
   sandbox?: boolean;
 }
 
+export type OrderProcessingSeverity = "info" | "success" | "warning" | "danger" | "neutral";
+
+export interface OrderDiagnosis {
+  processingStatus: string;
+  processingLabel: string;
+  severity: OrderProcessingSeverity;
+  recommendedAction: string;
+  canRepairEntitlement: boolean;
+  failedAttemptCount: number;
+  rejectedNotificationCount: number;
+}
+
+const DATABASE_BACKUP_TABLES = [
+  "users",
+  "sessions",
+  "plans",
+  "orders",
+  "payment_events",
+  "entitlements",
+  "redeem_codes",
+  "deployments",
+  "usage_ledger",
+  "admin_audit_logs",
+  "system_settings",
+  "payment_channels",
+  "payment_attempts",
+  "payment_notifications",
+  "email_verification_codes",
+  "email_delivery_logs",
+] as const;
+
+const DATABASE_DELETE_ORDER = [
+  "email_delivery_logs",
+  "email_verification_codes",
+  "payment_notifications",
+  "payment_attempts",
+  "usage_ledger",
+  "deployments",
+  "redeem_codes",
+  "entitlements",
+  "payment_events",
+  "orders",
+  "sessions",
+  "admin_audit_logs",
+  "payment_channels",
+  "plans",
+  "system_settings",
+  "users",
+] as const;
+
 const TOKENPAY_CURRENCIES = new Set(["USDT_TRC20", "TRX", "ETH", "USDT_ERC20", "USDC_ERC20"]);
 const MGATE_CURRENCIES = new Set(["CNY", "USD", "EUR", "HKD", "TWD", "JPY", "KRW", "SGD"]);
 const EPAY_CHANNELS = ["alipay", "wxpay", "qqpay", "paypal", "usdt.trc20"] as const;
@@ -258,12 +308,14 @@ function publicPlan(row: any) {
 export class CommercialStore {
   readonly db: Database.Database;
   private readonly vault: SecretVault;
+  private readonly databasePath: string;
 
   constructor(
     databasePath = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "app.db"),
     options: { recoverInterruptedDeployments?: boolean } = {},
   ) {
     fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+    this.databasePath = databasePath;
     this.db = new Database(databasePath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
@@ -275,6 +327,93 @@ export class CommercialStore {
 
   close() {
     this.db.close();
+  }
+
+  createDatabaseBackup() {
+    return this.db.serialize();
+  }
+
+  validateDatabaseBackup(data: Buffer) {
+    if (!Buffer.isBuffer(data) || data.length < 100) throw new Error("请选择有效的 SQLite 数据库备份文件");
+    if (data.length > 64 * 1024 * 1024) throw new Error("数据库备份文件不能超过 64MB");
+    let source: Database.Database | null = null;
+    try {
+      source = new Database(data);
+      const integrityRows = source.pragma("integrity_check") as Array<Record<string, unknown>>;
+      const integrity = integrityRows.map(row => String(Object.values(row)[0] || "")).filter(Boolean);
+      if (integrity.length !== 1 || integrity[0].toLowerCase() !== "ok") throw new Error(`数据库完整性校验失败：${integrity.slice(0, 3).join("；") || "未知错误"}`);
+
+      const sourceTables = new Set((source.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(row => row.name));
+      const missingTables = DATABASE_BACKUP_TABLES.filter(table => !sourceTables.has(table));
+      if (missingTables.length) throw new Error(`备份缺少必要数据表：${missingTables.join("、")}`);
+
+      for (const table of DATABASE_BACKUP_TABLES) {
+        const currentColumns = (this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name);
+        const sourceColumns = new Set((source.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name));
+        const missingColumns = currentColumns.filter(column => !sourceColumns.has(column));
+        if (missingColumns.length) throw new Error(`备份中的 ${table} 表缺少字段：${missingColumns.join("、")}`);
+      }
+
+      const foreignKeyRows = source.pragma("foreign_key_check") as unknown[];
+      if (foreignKeyRows.length) throw new Error(`数据库外键校验失败，共发现 ${foreignKeyRows.length} 条异常`);
+      const activeAdmins = Number((source.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'").get() as any).count);
+      if (activeAdmins < 1) throw new Error("备份中没有可用的管理员账号，不能恢复");
+
+      for (const row of source.prepare("SELECT merchant_secret_encrypted, private_key_encrypted, api_v3_key_encrypted FROM payment_channels").all() as any[]) {
+        for (const value of [row.merchant_secret_encrypted, row.private_key_encrypted, row.api_v3_key_encrypted]) {
+          if (value) this.vault.decrypt(String(value));
+        }
+      }
+
+      const counts = Object.fromEntries(DATABASE_BACKUP_TABLES.map(table => [
+        table,
+        Number((source!.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as any).count),
+      ]));
+      return { valid: true, sizeBytes: data.length, counts };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("商业配置密钥")) {
+        throw new Error("备份中的支付密钥无法使用当前商业配置密钥解密，请恢复配套的 .key 文件或使用同一 COMMERCIAL_SECRET_KEY");
+      }
+      throw error;
+    } finally {
+      source?.close();
+    }
+  }
+
+  restoreDatabaseBackup(data: Buffer, operatorUsername: string) {
+    const validation = this.validateDatabaseBackup(data);
+    const source = new Database(data);
+    let automaticBackupName = "";
+    try {
+      if (this.databasePath !== ":memory:") {
+        const resolvedDatabase = path.resolve(this.databasePath);
+        const backupDirectory = path.join(path.dirname(resolvedDatabase), "backups");
+        fs.mkdirSync(backupDirectory, { recursive: true });
+        automaticBackupName = `before-restore-${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
+        fs.writeFileSync(path.join(backupDirectory, automaticBackupName), this.createDatabaseBackup(), { mode: 0o600 });
+      }
+
+      const restore = this.db.transaction(() => {
+        for (const table of DATABASE_DELETE_ORDER) this.db.prepare(`DELETE FROM ${table}`).run();
+        for (const table of DATABASE_BACKUP_TABLES) {
+          if (table === "sessions") continue;
+          const columns = (this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name);
+          const quotedColumns = columns.map(column => `"${column}"`).join(", ");
+          const placeholders = columns.map(() => "?").join(", ");
+          const insert = this.db.prepare(`INSERT INTO ${table} (${quotedColumns}) VALUES (${placeholders})`);
+          for (const row of source.prepare(`SELECT ${quotedColumns} FROM ${table}`).iterate() as Iterable<Record<string, unknown>>) {
+            insert.run(...columns.map(column => row[column]));
+          }
+        }
+        this.db.prepare("DELETE FROM sessions").run();
+        const auditAdmin = this.db.prepare("SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1").get() as any;
+        this.recordAdminAction(auditAdmin.id, "恢复数据库备份", "database", "restore", `操作账号：${operatorUsername}；恢复后全部会话已失效；自动备份：${automaticBackupName || "内存数据库未生成文件"}`);
+      });
+      restore.immediate();
+      return { success: true, automaticBackupName, validation };
+    } finally {
+      source.close();
+    }
   }
 
   private migrate() {
@@ -1334,19 +1473,228 @@ export class CommercialStore {
     return row ? this.getOrder(row.id) : null;
   }
 
-  listOrders(userId?: string) {
-    return this.db.prepare(`
+  listOrders(userId?: string, includeDiagnosis = false) {
+    const orders = this.db.prepare(`
       SELECT o.id, o.order_no AS orderNo, o.user_id AS userId, u.username, o.status,
         o.amount_cents AS amountCents, o.plan_snapshot AS planSnapshot, o.payment_provider AS paymentProvider,
         o.payment_channel AS paymentChannel,
         CASE WHEN o.payment_channel <> '' THEN o.payment_provider || '--' || o.payment_channel ELSE o.payment_provider END AS paymentOptionId,
         o.payment_trade_no AS paymentTradeNo, o.created_at AS createdAt, o.paid_at AS paidAt,
         o.expires_at AS expiresAt, o.cancelled_at AS cancelledAt, o.refunded_at AS refundedAt,
-        o.refund_trade_no AS refundTradeNo, o.cancel_reason AS cancelReason, o.refund_reason AS refundReason
+        o.refund_trade_no AS refundTradeNo, o.cancel_reason AS cancelReason, o.refund_reason AS refundReason,
+        (SELECT COUNT(*) FROM entitlements e WHERE e.source_order_id = o.id) AS entitlementCount,
+        (SELECT COUNT(*) FROM entitlements e WHERE e.source_order_id = o.id AND e.status = 'active') AS activeEntitlementCount,
+        (SELECT COUNT(*) FROM payment_attempts pa WHERE pa.order_id = o.id AND pa.status = 'failed') AS failedAttemptCount,
+        (SELECT COUNT(*) FROM payment_notifications pn WHERE pn.order_no = o.order_no AND pn.status = 'rejected') AS rejectedNotificationCount
       FROM orders o JOIN users u ON u.id = o.user_id
       ${userId ? "WHERE o.user_id = ?" : ""}
       ORDER BY o.created_at DESC
-    `).all(...(userId ? [userId] : []));
+    `).all(...(userId ? [userId] : [])) as any[];
+    return orders.map(order => {
+      const { entitlementCount, activeEntitlementCount, failedAttemptCount, rejectedNotificationCount, ...publicOrder } = order;
+      if (!includeDiagnosis) return publicOrder;
+      return {
+        ...publicOrder,
+        diagnosis: this.diagnoseOrder(publicOrder, {
+          entitlementCount,
+          activeEntitlementCount,
+          failedAttemptCount,
+          rejectedNotificationCount,
+        }),
+      };
+    });
+  }
+
+  private diagnoseOrder(order: any, counts: { entitlementCount: number; activeEntitlementCount: number; failedAttemptCount: number; rejectedNotificationCount: number }): OrderDiagnosis {
+    const failedAttemptCount = Number(counts.failedAttemptCount) || 0;
+    const rejectedNotificationCount = Number(counts.rejectedNotificationCount) || 0;
+    const entitlementCount = Number(counts.entitlementCount) || 0;
+    const activeEntitlementCount = Number(counts.activeEntitlementCount) || 0;
+    let processingStatus = "pending_payment";
+    let processingLabel = "等待用户付款";
+    let severity: OrderProcessingSeverity = "info";
+    let recommendedAction = "等待付款，或在核实线下收款后人工确认。";
+
+    if (order.status === "paid" && !entitlementCount) {
+      processingStatus = "paid_missing_entitlement";
+      processingLabel = "已付款但权益未发放";
+      severity = "danger";
+      recommendedAction = "核对交易号和支付记录后，使用补发权益操作。";
+    } else if (order.status === "paid" && activeEntitlementCount > 0) {
+      processingStatus = "completed";
+      processingLabel = "付款与权益发放均已完成";
+      severity = "success";
+      recommendedAction = "无需处理。";
+    } else if (order.status === "paid") {
+      processingStatus = "paid_entitlement_inactive";
+      processingLabel = "已付款但关联权益不可用";
+      severity = "warning";
+      recommendedAction = "前往权益管理核对过期或撤销原因。";
+    } else if (order.status === "pending" && (failedAttemptCount || rejectedNotificationCount)) {
+      processingStatus = "payment_attention";
+      processingLabel = "支付过程存在失败记录";
+      severity = "warning";
+      recommendedAction = "查看最近一次支付请求和回调错误，确认渠道配置或让用户重新支付。";
+    } else if (order.status === "expired") {
+      processingStatus = "expired";
+      processingLabel = "订单已过期";
+      severity = "neutral";
+      recommendedAction = "通常无需处理；用户需要重新下单。";
+    } else if (order.status === "cancelled") {
+      processingStatus = "cancelled";
+      processingLabel = "订单已取消";
+      severity = "neutral";
+      recommendedAction = "无需处理；若已收到款项，应先核对支付平台记录。";
+    } else if (order.status === "refunded") {
+      processingStatus = "refunded";
+      processingLabel = "退款与撤权已登记";
+      severity = "neutral";
+      recommendedAction = "核对外部退款凭证即可。";
+    }
+    return {
+      processingStatus,
+      processingLabel,
+      severity,
+      recommendedAction,
+      canRepairEntitlement: order.status === "paid" && entitlementCount === 0,
+      failedAttemptCount,
+      rejectedNotificationCount,
+    };
+  }
+
+  getOrderDetail(orderId: string) {
+    const order = this.db.prepare(`
+      SELECT o.id, o.order_no AS orderNo, o.user_id AS userId, u.username, u.email,
+        o.plan_id AS planId, o.status, o.amount_cents AS amountCents,
+        o.plan_snapshot AS planSnapshot, o.payment_provider AS paymentProvider,
+        o.payment_channel AS paymentChannel,
+        CASE WHEN o.payment_channel <> '' THEN o.payment_provider || '--' || o.payment_channel ELSE o.payment_provider END AS paymentOptionId,
+        o.payment_trade_no AS paymentTradeNo, o.created_at AS createdAt, o.paid_at AS paidAt,
+        o.expires_at AS expiresAt, o.cancelled_at AS cancelledAt, o.refunded_at AS refundedAt,
+        o.refund_trade_no AS refundTradeNo, o.cancel_reason AS cancelReason, o.refund_reason AS refundReason
+      FROM orders o JOIN users u ON u.id = o.user_id
+      WHERE o.id = ?
+    `).get(orderId) as any;
+    if (!order) return null;
+
+    const attempts = this.listPaymentAttempts(orderId);
+    const notifications = this.db.prepare(`
+      SELECT id, channel_id AS channelId, provider, order_no AS orderNo, status,
+        payload, error_message AS errorMessage, created_at AS createdAt
+      FROM payment_notifications WHERE order_no = ? ORDER BY created_at DESC LIMIT 100
+    `).all(order.orderNo);
+    const paymentEvents = this.db.prepare(`
+      SELECT id, provider, event_key AS eventKey, payload, created_at AS createdAt
+      FROM payment_events WHERE order_id = ? ORDER BY created_at DESC
+    `).all(orderId);
+    const entitlements = this.db.prepare(`
+      SELECT id, user_id AS userId, source_order_id AS sourceOrderId, plan_name AS planName,
+        starts_at AS startsAt, expires_at AS expiresAt, lifetime,
+        panel_mode AS panelMode, panel_total AS panelTotal, panel_remaining AS panelRemaining,
+        panel_reserved AS panelReserved, panel_used AS panelUsed,
+        node_mode AS nodeMode, node_total AS nodeTotal, node_remaining AS nodeRemaining,
+        node_reserved AS nodeReserved, node_used AS nodeUsed,
+        daily_panel_limit AS dailyPanelLimit, daily_node_limit AS dailyNodeLimit,
+        concurrency_limit AS concurrencyLimit, status, created_at AS createdAt
+      FROM entitlements WHERE source_order_id = ? ORDER BY created_at DESC
+    `).all(orderId).map((row: any) => ({ ...row, lifetime: Boolean(row.lifetime) }));
+    const redeemCode = this.db.prepare(`
+      SELECT id, code_masked AS codeMasked, note, redeemed_at AS redeemedAt
+      FROM redeem_codes WHERE order_id = ? LIMIT 1
+    `).get(orderId) as any;
+
+    const diagnosis = this.diagnoseOrder(order, {
+      entitlementCount: entitlements.length,
+      activeEntitlementCount: entitlements.filter((item: any) => item.status === "active").length,
+      failedAttemptCount: (attempts as any[]).filter(item => item.status === "failed").length,
+      rejectedNotificationCount: (notifications as any[]).filter(item => item.status === "rejected").length,
+    });
+
+    return {
+      order,
+      attempts,
+      notifications,
+      paymentEvents,
+      entitlements,
+      redeemCode: redeemCode || null,
+      diagnosis,
+    };
+  }
+
+  listAdminExceptions() {
+    const items: any[] = [];
+    const diagnosedOrderNos = new Set<string>();
+    for (const order of this.listOrders(undefined, true) as any[]) {
+      const diagnosis = order.diagnosis as OrderDiagnosis;
+      if (diagnosis.processingStatus === "paid_missing_entitlement" || diagnosis.processingStatus === "payment_attention" || diagnosis.processingStatus === "paid_entitlement_inactive") {
+        diagnosedOrderNos.add(order.orderNo);
+        items.push({
+          id: `order:${order.id}:${diagnosis.processingStatus}`,
+          type: diagnosis.processingStatus,
+          severity: diagnosis.severity === "danger" ? "danger" : "warning",
+          title: diagnosis.processingLabel,
+          description: `${order.orderNo} · ${order.username || "未知用户"} · ${diagnosis.recommendedAction}`,
+          targetType: "order",
+          targetId: order.id,
+          createdAt: order.paidAt || order.createdAt,
+          order,
+        });
+      }
+    }
+
+    for (const notification of this.listPaymentNotifications() as any[]) {
+      if (notification.status !== "rejected" || diagnosedOrderNos.has(notification.orderNo)) continue;
+      items.push({
+        id: `notification:${notification.id}`,
+        type: "rejected_notification",
+        severity: "warning",
+        title: "支付回调验签或匹配失败",
+        description: `${notification.orderNo || "未识别订单"} · ${notification.errorMessage || "请检查渠道密钥与回调地址"}`,
+        targetType: "order",
+        targetId: (this.getOrderByNo(notification.orderNo) as any)?.id || "",
+        createdAt: notification.createdAt,
+      });
+    }
+
+    const longRunningBefore = Date.now() - 30 * 60_000;
+    for (const deployment of this.listDeployments() as any[]) {
+      const longRunning = (deployment.status === "reserved" || deployment.status === "running") && new Date(deployment.startedAt || deployment.createdAt).getTime() < longRunningBefore;
+      if (deployment.status !== "uncertain" && !longRunning) continue;
+      items.push({
+        id: `deployment:${deployment.id}:${deployment.status === "uncertain" ? "uncertain" : "long_running"}`,
+        type: deployment.status === "uncertain" ? "uncertain_deployment" : "long_running_deployment",
+        severity: deployment.status === "uncertain" ? "danger" : "warning",
+        title: deployment.status === "uncertain" ? "交付结果需要人工核对" : "交付任务运行时间过长",
+        description: `${deployment.username || "未知用户"} · ${deployment.capability === "panel" ? "面板安装" : "节点创建"} · ${deployment.requestId}`,
+        targetType: "deployment",
+        targetId: deployment.id,
+        createdAt: deployment.createdAt,
+        deployment,
+      });
+    }
+    items.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      summary: {
+        total: items.length,
+        critical: items.filter(item => item.severity === "danger").length,
+        warning: items.filter(item => item.severity === "warning").length,
+      },
+      items: items.slice(0, 100),
+    };
+  }
+
+  repairOrderEntitlement(orderId: string) {
+    return this.db.transaction(() => {
+      const order = this.db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as any;
+      if (!order) throw new Error("订单不存在");
+      if (order.status !== "paid") throw new Error("只有已付款订单可以补发权益");
+      const existing = this.db.prepare("SELECT id FROM entitlements WHERE source_order_id = ? LIMIT 1").get(orderId) as any;
+      if (existing) throw new Error("该订单已经存在关联权益，不能重复补发");
+      const plan = JSON.parse(order.plan_snapshot || "{}");
+      if (!plan.name) throw new Error("订单套餐快照无效，无法补发权益");
+      const entitlementId = this.grantPlanEntitlement(order.user_id, plan, order.id, `订单 ${order.order_no} 异常补发`);
+      return { entitlementId, detail: this.getOrderDetail(orderId) };
+    })();
   }
 
   markOrderPaid(orderId: string, provider = "manual", tradeNo = `manual-${randomUUID()}`, allowVerifiedLatePayment = false) {

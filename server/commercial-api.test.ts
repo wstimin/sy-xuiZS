@@ -167,6 +167,188 @@ test("admin management endpoints create users and expose protected operational r
   }
 });
 
+test("admin order detail and entitlement repair endpoints are protected and audited", async () => {
+  const store = new CommercialStore(":memory:");
+  const app = express();
+  app.use(express.json());
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+
+  try {
+    const bootstrap = await fetch(`${base}/auth/bootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "repair-admin", password: "admin-password" }),
+    });
+    const adminCookie = sessionCookie(bootstrap);
+    const registration = await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "repair-user", email: "repair@example.com", password: "user-password" }),
+    });
+    const userCookie = sessionCookie(registration);
+    const user = (await registration.json() as any).user;
+    const order = store.createOrder(user.id, store.listPlans()[0].id, "manual");
+    const timestamp = new Date().toISOString();
+    store.db.prepare("UPDATE orders SET status = 'paid', payment_trade_no = ?, paid_at = ?, updated_at = ? WHERE id = ?")
+      .run("api-missing-entitlement", timestamp, timestamp, order.id);
+
+    const forbiddenDetail = await fetch(`${base}/admin/orders/${order.id}/detail`, { headers: { cookie: userCookie } });
+    assert.equal(forbiddenDetail.status, 401);
+    const forbiddenRepair = await fetch(`${base}/admin/orders/${order.id}/repair-entitlement`, { method: "POST", headers: { cookie: userCookie } });
+    assert.equal(forbiddenRepair.status, 401);
+
+    const detailResponse = await fetch(`${base}/admin/orders/${order.id}/detail`, { headers: { cookie: adminCookie } });
+    assert.equal(detailResponse.status, 200);
+    const detail = await detailResponse.json() as any;
+    assert.equal(detail.order.email, "repair@example.com");
+    assert.equal(detail.diagnosis.processingStatus, "paid_missing_entitlement");
+    assert.equal(detail.diagnosis.canRepairEntitlement, true);
+
+    const repairResponse = await fetch(`${base}/admin/orders/${order.id}/repair-entitlement`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+    });
+    assert.equal(repairResponse.status, 200);
+    const repaired = await repairResponse.json() as any;
+    assert.equal(repaired.success, true);
+    assert.equal(repaired.detail.diagnosis.processingStatus, "completed");
+    assert.equal(store.listEntitlements(user.id).length, 1);
+
+    const duplicateRepair = await fetch(`${base}/admin/orders/${order.id}/repair-entitlement`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+    });
+    assert.equal(duplicateRepair.status, 400);
+    assert.equal(store.listEntitlements(user.id).length, 1);
+    const audit = (store.listAdminAuditLogs() as any[]).find(item => item.targetId === order.id);
+    assert.equal(audit?.action, "补发订单权益");
+
+    const missingDetail = await fetch(`${base}/admin/orders/missing-order/detail`, { headers: { cookie: adminCookie } });
+    assert.equal(missingDetail.status, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});
+
+test("admin operations expose diagnoses, payment checks and guarded database restore", async () => {
+  const store = new CommercialStore(":memory:");
+  const app = express();
+  app.use(express.json());
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+  const sqliteHeaders = { "content-type": "application/vnd.sqlite3" };
+
+  try {
+    const bootstrap = await fetch(`${base}/auth/bootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "operations-admin", password: "admin-password" }),
+    });
+    const adminCookie = sessionCookie(bootstrap);
+    const registration = await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "operations-user", email: "operations@example.com", password: "user-password" }),
+    });
+    const userCookie = sessionCookie(registration);
+    const user = (await registration.json() as any).user;
+
+    const unauthorizedRequests = await Promise.all([
+      fetch(`${base}/admin/exceptions`),
+      fetch(`${base}/admin/payment-methods/manual/check`, { method: "POST", headers: { cookie: userCookie } }),
+      fetch(`${base}/admin/database/backup`, { headers: { cookie: userCookie } }),
+      fetch(`${base}/admin/database/validate`, { method: "POST", headers: { ...sqliteHeaders, cookie: userCookie }, body: Buffer.alloc(128) }),
+    ]);
+    assert.deepEqual(unauthorizedRequests.map(response => response.status), [401, 401, 401, 401]);
+
+    const order = store.createOrder(user.id, store.listPlans()[0].id, "manual");
+    const timestamp = new Date().toISOString();
+    store.db.prepare("UPDATE orders SET status = 'paid', payment_trade_no = ?, paid_at = ?, updated_at = ? WHERE id = ?")
+      .run("api-exception-trade", timestamp, timestamp, order.id);
+
+    const ordersResponse = await fetch(`${base}/admin/orders`, { headers: { cookie: adminCookie } });
+    assert.equal(ordersResponse.status, 200);
+    const orders = (await ordersResponse.json() as any).orders;
+    assert.equal(orders.find((item: any) => item.id === order.id).diagnosis.processingStatus, "paid_missing_entitlement");
+
+    const exceptionsResponse = await fetch(`${base}/admin/exceptions`, { headers: { cookie: adminCookie } });
+    assert.equal(exceptionsResponse.status, 200);
+    const exceptions = await exceptionsResponse.json() as any;
+    assert.equal(exceptions.summary.total, 1);
+    assert.equal(exceptions.items[0].targetId, order.id);
+
+    store.setPaymentMethods([
+      {
+        id: "disabled-manual", name: "Disabled manual", type: "manual", provider: "manual", enabled: false,
+        instructions: "", paymentUrl: "", sortOrder: 10,
+      },
+      {
+        id: "enabled-manual", name: "Enabled manual", type: "manual", provider: "manual", enabled: true,
+        instructions: "Contact support", paymentUrl: "", sortOrder: 20,
+      },
+      {
+        id: "local-epay", name: "Local EPay", type: "epay", provider: "epay", enabled: true,
+        instructions: "Online", paymentUrl: "", gatewayUrl: "http://127.0.0.1/pay", merchantId: "1001",
+        merchantSecret: "secret", enabledChannels: ["alipay"], sortOrder: 30,
+      },
+    ]);
+
+    const disabledCheck = await fetch(`${base}/admin/payment-methods/disabled-manual/check`, { method: "POST", headers: { cookie: adminCookie } }).then(response => response.json()) as any;
+    assert.equal(disabledCheck.result.status, "disabled");
+    const manualCheck = await fetch(`${base}/admin/payment-methods/enabled-manual/check`, { method: "POST", headers: { cookie: adminCookie } }).then(response => response.json()) as any;
+    assert.equal(manualCheck.result.status, "ready");
+    const localCheck = await fetch(`${base}/admin/payment-methods/local-epay/check`, { method: "POST", headers: { cookie: adminCookie } }).then(response => response.json()) as any;
+    assert.equal(localCheck.result.status, "invalid");
+
+    const backupResponse = await fetch(`${base}/admin/database/backup`, { headers: { cookie: adminCookie } });
+    assert.equal(backupResponse.status, 200);
+    assert.equal(backupResponse.headers.get("content-type"), "application/vnd.sqlite3");
+    assert.match(backupResponse.headers.get("content-disposition") || "", /attachment; filename="xui-backup-.*\.db"/);
+    const backup = Buffer.from(await backupResponse.arrayBuffer());
+    assert.equal((store.validateDatabaseBackup(backup) as any).valid, true);
+
+    const validateResponse = await fetch(`${base}/admin/database/validate`, {
+      method: "POST",
+      headers: { ...sqliteHeaders, cookie: adminCookie },
+      body: backup,
+    });
+    assert.equal(validateResponse.status, 200);
+    assert.equal(((await validateResponse.json() as any).validation.valid), true);
+
+    const missingConfirmation = await fetch(`${base}/admin/database/restore`, {
+      method: "POST",
+      headers: { ...sqliteHeaders, cookie: adminCookie },
+      body: backup,
+    });
+    assert.equal(missingConfirmation.status, 400);
+
+    const restoreResponse = await fetch(`${base}/admin/database/restore`, {
+      method: "POST",
+      headers: { ...sqliteHeaders, cookie: adminCookie, "x-restore-confirmation": "RESTORE" },
+      body: backup,
+    });
+    assert.equal(restoreResponse.status, 200);
+    assert.equal((await restoreResponse.json() as any).success, true);
+    const clearedCookies = restoreResponse.headers.get("set-cookie") || "";
+    assert.match(clearedCookies, /xui_admin_session=;.*Expires=Thu, 01 Jan 1970 00:00:00 GMT/);
+    assert.match(clearedCookies, /xui_user_session=;.*Expires=Thu, 01 Jan 1970 00:00:00 GMT/);
+    assert.equal((await fetch(`${base}/admin/exceptions`, { headers: { cookie: adminCookie } })).status, 401);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});
+
 test("administrator can change own username and public management path", async () => {
   const store = new CommercialStore(":memory:");
   const app = express();

@@ -1,4 +1,5 @@
-import { NextFunction, Request, Response, Router } from "express";
+import { NextFunction, Request, Response, Router, raw } from "express";
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { CommercialStore, DurationUnit, EntitlementGrantInput, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
@@ -17,6 +18,8 @@ const RESOURCE_PAGE_MAX_BYTES = 256 * 1024;
 const RESOURCE_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/x-icon"]);
 const RESOURCE_RECOMMENDATION_LIMIT = 20;
 const RESOURCE_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
+const DATABASE_BACKUP_MAX_BYTES = 64 * 1024 * 1024;
+const DATABASE_CONTENT_TYPE = "application/vnd.sqlite3";
 
 type ContactMethodType = "wechat" | "qq" | "telegram" | "whatsapp" | "wecom" | "email" | "phone" | "discord" | "line" | "custom";
 type ContactMethod = {
@@ -319,6 +322,137 @@ async function assertPublicResourceUrl(value: string) {
   const addresses = isIP(hostname) ? [{ address: hostname }] : await lookup(hostname, { all: true, verbatim: true });
   if (!addresses.length || addresses.some(entry => isPrivateAddress(entry.address))) throw new Error("不能从本机或内网地址获取 Logo");
   return url;
+}
+
+async function assertPublicPaymentUrl(value: string, label: string) {
+  let url: URL;
+  try { url = new URL(value); }
+  catch { throw new Error(`${label}格式不正确`); }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) throw new Error(`${label}必须是公开的 HTTP 或 HTTPS 地址`);
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost")) throw new Error(`${label}不能指向本机或内网地址`);
+  const addresses = isIP(hostname) ? [{ address: hostname }] : await lookup(hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(entry => isPrivateAddress(entry.address))) throw new Error(`${label}不能指向本机或内网地址`);
+  return url;
+}
+
+function paymentPem(value: string, kind: "PRIVATE KEY" | "PUBLIC KEY" | "CERTIFICATE") {
+  const trimmed = value.trim().replace(/\\n/g, "\n");
+  if (trimmed.includes("-----BEGIN")) return trimmed;
+  const lines = trimmed.replace(/\s+/g, "").match(/.{1,64}/g)?.join("\n") || trimmed;
+  return `-----BEGIN ${kind}-----\n${lines}\n-----END ${kind}-----`;
+}
+
+function validatePaymentKey(value: string, kind: "private" | "public", label: string) {
+  try {
+    if (kind === "private") createPrivateKey(paymentPem(value, "PRIVATE KEY"));
+    else createPublicKey(paymentPem(value, value.includes("CERTIFICATE") ? "CERTIFICATE" : "PUBLIC KEY"));
+  } catch {
+    throw new Error(`${label}格式无效`);
+  }
+}
+
+type PaymentCheckStatus = "ready" | "disabled" | "incomplete" | "unreachable" | "invalid";
+
+async function checkPaymentMethod(store: CommercialStore, methodId: string) {
+  const method = store.getPaymentMethods(true, true).find(item => item.id === methodId);
+  if (!method) throw new Error("支付方式不存在，请先保存支付设置");
+  const provider = method.provider || "manual";
+  const result = (status: PaymentCheckStatus, messageText: string, details: string[] = []) => ({
+    methodId: method.id,
+    provider,
+    status,
+    message: messageText,
+    details,
+    checkedAt: new Date().toISOString(),
+  });
+  if (!method.enabled) return result("disabled", "支付方式当前已停用，配置未进行联网检测");
+  if (provider === "manual") return result("ready", "人工收款方式已启用，无需检测支付网关");
+
+  const missing: string[] = [];
+  const requireValue = (value: unknown, label: string) => { if (!String(value || "").trim()) missing.push(label); };
+  if (provider === "epay") {
+    requireValue(method.gatewayUrl, "支付平台网关地址");
+    requireValue(method.merchantId, "商户 PID");
+    requireValue(method.merchantSecret, "商户密钥");
+    if (!method.enabledChannels?.length) missing.push("至少一种用户支付方式");
+  } else if (provider === "mgate") {
+    requireValue(method.gatewayUrl, "MGate API 地址");
+    requireValue(method.merchantId, "APP ID");
+    requireValue(method.merchantSecret, "App Secret");
+  } else if (provider === "tokenpay" || provider === "epusdt") {
+    requireValue(method.gatewayUrl, provider === "tokenpay" ? "TokenPay API 地址" : "Epusdt API 地址");
+    requireValue(method.merchantSecret, provider === "tokenpay" ? "API 密钥" : "签名 Token");
+  } else if (provider === "paypal") {
+    requireValue(method.merchantId, "Client ID");
+    requireValue(method.merchantSecret, "Client Secret");
+    requireValue(method.appId, "Webhook ID");
+  } else if (provider === "alipay_official") {
+    requireValue(method.merchantId, "应用 APPID");
+    requireValue(method.privateKey, "应用私钥");
+    requireValue(method.publicKey, "支付宝公钥");
+  } else if (provider === "wechat_official") {
+    requireValue(method.appId, "应用 AppID");
+    requireValue(method.merchantId, "商户号");
+    requireValue(method.certificateSerial, "商户证书序列号");
+    requireValue(method.privateKey, "商户 API 私钥");
+    requireValue(method.publicKey, "微信支付平台证书或公钥");
+    requireValue(method.apiV3Key, "API v3 密钥");
+  }
+  if (missing.length) return result("incomplete", `缺少 ${missing.join("、")}`, missing);
+
+  try {
+    if (provider === "alipay_official" || provider === "wechat_official") {
+      validatePaymentKey(method.privateKey || "", "private", provider === "alipay_official" ? "支付宝应用私钥" : "微信商户私钥");
+      validatePaymentKey(method.publicKey || "", "public", provider === "alipay_official" ? "支付宝公钥" : "微信支付平台证书或公钥");
+    }
+    if (provider === "wechat_official" && Buffer.byteLength(method.apiV3Key || "") !== 32) {
+      return result("invalid", "微信支付 API v3 密钥必须正好为 32 字节");
+    }
+  } catch (error) {
+    return result("invalid", message(error));
+  }
+
+  const defaultGateways: Partial<Record<PaymentProvider, string>> = {
+    paypal: method.sandbox ? "https://api-m.sandbox.paypal.com" : "https://api-m.paypal.com",
+    alipay_official: "https://openapi.alipay.com/gateway.do",
+    wechat_official: "https://api.mch.weixin.qq.com",
+  };
+  const gatewayValue = method.gatewayUrl || defaultGateways[provider as PaymentProvider] || "";
+  try {
+    const gateway = await assertPublicPaymentUrl(gatewayValue, "支付网关地址");
+    if (method.callbackBaseUrl) await assertPublicPaymentUrl(method.callbackBaseUrl, "自定义回调域名");
+    if (provider === "paypal") {
+      const tokenUrl = new URL("/v1/oauth2/token", gateway);
+      const response = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Basic ${Buffer.from(`${method.merchantId}:${method.merchantSecret}`).toString("base64")}`,
+          "content-type": "application/x-www-form-urlencoded",
+          accept: "application/json",
+        },
+        body: "grant_type=client_credentials",
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (response.status === 400 || response.status === 401 || response.status === 403) return result("invalid", "PayPal Client ID 或 Client Secret 验证失败");
+      if (!response.ok) return result("unreachable", `PayPal API 返回 HTTP ${response.status}`);
+      const payload = await response.json().catch(() => ({})) as any;
+      if (!payload?.access_token) return result("invalid", "PayPal API 未返回有效访问令牌");
+      return result("ready", "PayPal 凭据验证通过，API 可以正常访问", [gateway.origin]);
+    }
+    const response = await fetch(gateway, {
+      method: "HEAD",
+      redirect: "manual",
+      signal: AbortSignal.timeout(8_000),
+      headers: { "user-agent": "xui-payment-config-check/1.0" },
+    });
+    if (response.status >= 500) return result("unreachable", `支付网关返回 HTTP ${response.status}`);
+    return result("ready", "必填配置与密钥格式正确，支付网关可以访问", [`HTTP ${response.status}`, gateway.origin]);
+  } catch (error) {
+    const errorMessage = message(error);
+    const invalid = /格式|必须|不能指向|内网|本机/.test(errorMessage);
+    return result(invalid ? "invalid" : "unreachable", invalid ? errorMessage : `无法访问支付网关：${errorMessage}`);
+  }
 }
 
 async function readLimitedResponse(response: globalThis.Response, maxBytes: number) {
@@ -653,6 +787,8 @@ async function createCheckout(req: Request, store: CommercialStore, order: any) 
 export function createCommercialRouter(store: CommercialStore) {
   const router = Router();
 
+  router.use(["/admin/database/validate", "/admin/database/restore"], raw({ type: DATABASE_CONTENT_TYPE, limit: DATABASE_BACKUP_MAX_BYTES }));
+
   router.get("/runtime-config", (_req, res) => {
     res.json({ adminPath: store.getAdminPath() });
   });
@@ -911,9 +1047,15 @@ export function createCommercialRouter(store: CommercialStore) {
   }));
 
   router.get("/admin/stats", requireAdmin, (_req, res) => res.json({ stats: store.getDashboardStats() }));
+  router.get("/admin/exceptions", requireAdmin, (_req, res) => res.json(store.listAdminExceptions()));
   router.get("/admin/users", requireAdmin, (_req, res) => res.json({ users: store.listUsers() }));
   router.get("/admin/plans", requireAdmin, (_req, res) => res.json({ plans: store.listPlans(true) }));
-  router.get("/admin/orders", requireAdmin, (_req, res) => res.json({ orders: store.listOrders() }));
+  router.get("/admin/orders", requireAdmin, (_req, res) => res.json({ orders: store.listOrders(undefined, true) }));
+  router.get("/admin/orders/:id/detail", requireAdmin, route((req, res) => {
+    const detail = store.getOrderDetail(req.params.id);
+    if (!detail) return res.status(404).json({ success: false, error: "订单不存在" });
+    res.json(detail);
+  }));
   router.get("/admin/entitlements", requireAdmin, (_req, res) => res.json({ entitlements: store.listAllEntitlements() }));
   router.get("/admin/deployments", requireAdmin, (_req, res) => res.json({ deployments: store.listDeployments() }));
   router.get("/admin/payment-attempts", requireAdmin, (_req, res) => res.json({ attempts: store.listPaymentAttempts() }));
@@ -925,6 +1067,32 @@ export function createCommercialRouter(store: CommercialStore) {
     const detail = store.getUserDetail(req.params.id);
     if (!detail) return res.status(404).json({ success: false, error: "用户不存在" });
     res.json(detail);
+  }));
+  router.post("/admin/payment-methods/:id/check", requireAdmin, route(async (req, res) => {
+    const result = await checkPaymentMethod(store, req.params.id);
+    store.recordAdminAction(adminUser(res).id, "检测支付渠道配置", "settings", req.params.id, `${result.status} / ${result.message}`);
+    res.json({ success: true, result });
+  }));
+  router.get("/admin/database/backup", requireAdmin, route((_req, res) => {
+    const backup = store.createDatabaseBackup();
+    const filename = `xui-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
+    store.recordAdminAction(adminUser(res).id, "下载数据库备份", "database", "backup", `${backup.length} bytes`);
+    res.setHeader("Content-Type", DATABASE_CONTENT_TYPE);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", String(backup.length));
+    res.send(backup);
+  }));
+  router.post("/admin/database/validate", requireAdmin, route((req, res) => {
+    if (!Buffer.isBuffer(req.body)) throw new Error(`请使用 ${DATABASE_CONTENT_TYPE} 上传 SQLite 备份文件`);
+    res.json({ success: true, validation: store.validateDatabaseBackup(req.body) });
+  }));
+  router.post("/admin/database/restore", requireAdmin, route((req, res) => {
+    if (req.header("x-restore-confirmation") !== "RESTORE") throw new Error("恢复确认词不正确，请输入 RESTORE");
+    if (!Buffer.isBuffer(req.body)) throw new Error(`请使用 ${DATABASE_CONTENT_TYPE} 上传 SQLite 备份文件`);
+    const result = store.restoreDatabaseBackup(req.body, adminUser(res).username);
+    clearSessionCookie(req, res, ADMIN_COOKIE_NAME);
+    clearSessionCookie(req, res, USER_COOKIE_NAME);
+    res.json(result);
   }));
   router.get("/admin/settings", requireAdmin, (_req, res) => res.json({
     settings: {
@@ -1032,6 +1200,12 @@ export function createCommercialRouter(store: CommercialStore) {
     const order = store.refundOrder(req.params.id, reason, refundTradeNo);
     store.recordAdminAction(adminUser(res).id, "确认外部退款并撤权", "order", req.params.id, `${order.orderNo} / ${refundTradeNo} / ${reason}`);
     res.json({ success: true, order });
+  }));
+  router.post("/admin/orders/:id/repair-entitlement", requireAdmin, route((req, res) => {
+    const result = store.repairOrderEntitlement(req.params.id);
+    const order = result.detail?.order;
+    store.recordAdminAction(adminUser(res).id, "补发订单权益", "order", req.params.id, `${order?.orderNo || req.params.id} / ${result.entitlementId}`);
+    res.json({ success: true, ...result });
   }));
   router.post("/admin/entitlements", requireAdmin, route((req, res) => {
     const userId = String(req.body?.userId || "");

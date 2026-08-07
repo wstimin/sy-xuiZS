@@ -69,6 +69,14 @@ export interface PaymentNotification {
   createdAt: string;
 }
 
+export interface PaymentEvent {
+  id: string;
+  provider: string;
+  eventKey: string;
+  payload: string;
+  createdAt: string;
+}
+
 export interface PaymentCheckout {
   attemptId: string;
   checkoutType: 'redirect' | 'qrcode';
@@ -202,6 +210,63 @@ export interface Order {
   refundTradeNo?: string;
   cancelReason?: string;
   refundReason?: string;
+  diagnosis?: OrderDetail['diagnosis'];
+}
+
+export interface OrderDetail {
+  order: Order & { email?: string | null };
+  attempts: PaymentAttempt[];
+  notifications: PaymentNotification[];
+  paymentEvents: PaymentEvent[];
+  entitlements: Entitlement[];
+  redeemCode: null | {
+    id: string;
+    codeMasked: string;
+    note: string;
+    redeemedAt: string;
+  };
+  diagnosis: {
+    processingStatus: string;
+    processingLabel: string;
+    severity: 'info' | 'success' | 'warning' | 'danger' | 'neutral';
+    recommendedAction: string;
+    canRepairEntitlement: boolean;
+    failedAttemptCount: number;
+    rejectedNotificationCount: number;
+  };
+}
+
+export interface AdminExceptionItem {
+  id: string;
+  type: string;
+  severity: 'warning' | 'danger';
+  title: string;
+  description: string;
+  targetType: 'order' | 'deployment';
+  targetId: string;
+  createdAt: string;
+  order?: Order;
+  deployment?: DeploymentRecord;
+}
+
+export interface AdminExceptions {
+  summary: { total: number; critical: number; warning: number };
+  items: AdminExceptionItem[];
+}
+
+export interface PaymentCheckResult {
+  methodId: string;
+  provider: string;
+  status: 'ready' | 'disabled' | 'incomplete' | 'unreachable' | 'invalid';
+  message: string;
+  details: string[];
+  checkedAt: string;
+}
+
+export interface DatabaseBackupValidation {
+  valid: true;
+  sizeBytes: number;
+  counts: Record<string, number>;
 }
 
 export interface DeploymentRecord {

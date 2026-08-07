@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
+  ArchiveRestore,
   BadgeCheck,
   Boxes,
   Building2,
@@ -10,7 +12,9 @@ import {
   Clock3,
   ClipboardCheck,
   ClipboardCopy,
+  CheckCircle2,
   CreditCard,
+  Database,
   Download,
   Eye,
   ExternalLink,
@@ -39,19 +43,24 @@ import {
   Upload,
   UserPlus,
   Users,
+  Wrench,
   X,
 } from 'lucide-react';
 import {
   api,
+  AdminExceptions,
   ContactMethod,
   ContactSettings,
   CurrentUser,
+  DatabaseBackupValidation,
   DeploymentRecord,
   Entitlement,
   formatDate,
   formatMoney,
   Order,
+  OrderDetail,
   PaymentAttempt,
+  PaymentCheckResult,
   PaymentMethod,
   PaymentNotification,
   PaymentProvider,
@@ -175,20 +184,36 @@ const TOKENPAY_CURRENCIES = [
 ] as const;
 const LEGACY_TOKENPAY_CURRENCIES = ['TRX', 'ETH', 'USDC_ERC20'] as const;
 const MGATE_CURRENCIES = ['CNY', 'USD', 'EUR', 'HKD', 'TWD', 'JPY', 'KRW', 'SGD'] as const;
+const emptyAdminExceptions: AdminExceptions = { summary: { total: 0, critical: 0, warning: 0 }, items: [] };
+const DATABASE_CONTENT_TYPE = 'application/vnd.sqlite3';
 
 const navigation: Array<{ id: AdminTab; label: string; icon: React.ElementType; tone: string; section?: string }> = [
-  { id: 'dashboard', label: '运营概览', icon: LayoutDashboard, tone: 'cyan' },
-  { id: 'orders', label: '订单管理', icon: CreditCard, tone: 'green', section: '业务管理' },
+  { id: 'dashboard', label: '运营概览', icon: LayoutDashboard, tone: 'cyan', section: '总览' },
+  { id: 'orders', label: '订单管理', icon: CreditCard, tone: 'green', section: '交易与商品' },
   { id: 'plans', label: '套餐管理', icon: Boxes, tone: 'violet' },
   { id: 'redeem-codes', label: '卡密管理', icon: KeyRound, tone: 'amber' },
-  { id: 'users', label: '用户管理', icon: Users, tone: 'blue' },
+  { id: 'users', label: '用户管理', icon: Users, tone: 'blue', section: '客户与权益' },
   { id: 'entitlements', label: '权益管理', icon: BadgeCheck, tone: 'emerald' },
   { id: 'ledger', label: '额度流水', icon: FileText, tone: 'sky' },
-  { id: 'deployments', label: '交付任务', icon: Activity, tone: 'amber' },
-  { id: 'audit', label: '操作审计', icon: ClipboardCheck, tone: 'slate', section: '安全与系统' },
-  { id: 'settings', label: '系统设置', icon: Settings, tone: 'indigo' },
+  { id: 'deployments', label: '交付任务', icon: Activity, tone: 'amber', section: '交付与记录' },
+  { id: 'audit', label: '操作审计', icon: ClipboardCheck, tone: 'slate' },
+  { id: 'settings', label: '系统设置', icon: Settings, tone: 'indigo', section: '系统管理' },
   { id: 'security', label: '账号安全', icon: KeyRound, tone: 'rose' },
 ];
+
+const adminTabMeta: Record<AdminTab, { area: string; description: string }> = {
+  dashboard: { area: '运营总览', description: '业务指标、异常和待处理事项' },
+  orders: { area: '交易与商品', description: '订单状态、支付链路和权益发放' },
+  plans: { area: '交易与商品', description: '套餐价格、有效期和使用额度' },
+  'redeem-codes': { area: '交易与商品', description: '卡密生成、兑换和停用记录' },
+  users: { area: '客户与权益', description: '用户身份、状态和关联业务数据' },
+  entitlements: { area: '客户与权益', description: '用户权益、剩余额度和有效期' },
+  ledger: { area: '客户与权益', description: '额度发放、冻结、核销和返还流水' },
+  deployments: { area: '交付与记录', description: '面板安装和节点创建任务' },
+  audit: { area: '交付与记录', description: '管理员关键操作与变更记录' },
+  settings: { area: '系统管理', description: '业务、推荐、邮箱和支付配置' },
+  security: { area: '系统管理', description: '管理员身份、入口和数据安全' },
+};
 
 interface AdminViewProps {
   currentUser: CurrentUser;
@@ -204,6 +229,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [exceptions, setExceptions] = useState<AdminExceptions>(emptyAdminExceptions);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -215,6 +241,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
   const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', contact: emptyContactSettings, recommendations: emptyRecommendationSettings });
+  const [savedPaymentMethodIds, setSavedPaymentMethodIds] = useState<string[]>([]);
+  const [paymentChecks, setPaymentChecks] = useState<Record<string, PaymentCheckResult>>({});
+  const [paymentCheckBusy, setPaymentCheckBusy] = useState('');
+  const [databaseFile, setDatabaseFile] = useState<File | null>(null);
+  const [databaseValidation, setDatabaseValidation] = useState<DatabaseBackupValidation | null>(null);
+  const [restoreConfirmation, setRestoreConfirmation] = useState('');
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [savedContactMethodIds, setSavedContactMethodIds] = useState<string[]>([]);
   const [accountUsername, setAccountUsername] = useState(currentUser.username);
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
@@ -247,6 +280,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [deploymentAction, setDeploymentAction] = useState<{ item: DeploymentRecord; resolution: 'succeeded' | 'failed' } | null>(null);
   const [creatingUser, setCreatingUser] = useState<null | typeof emptyUser>(null);
   const [viewOrder, setViewOrder] = useState<Order | null>(null);
+  const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null);
+  const [orderDetailLoading, setOrderDetailLoading] = useState(false);
+  const [repairOrder, setRepairOrder] = useState<Order | null>(null);
   const [viewDeployment, setViewDeployment] = useState<DeploymentRecord | null>(null);
   const [userDetail, setUserDetail] = useState<UserDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -257,8 +293,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const load = async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      const [statsResult, plansResult, ordersResult, usersResult, entitlementResult, deploymentResult, ledgerResult, auditResult, settingsResult, attemptResult, notificationResult, redeemCodeResult] = await Promise.all([
+      const [statsResult, exceptionResult, plansResult, ordersResult, usersResult, entitlementResult, deploymentResult, ledgerResult, auditResult, settingsResult, attemptResult, notificationResult, redeemCodeResult] = await Promise.all([
         api<{ stats: Stats }>('/api/admin/stats'),
+        api<AdminExceptions>('/api/admin/exceptions'),
         api<{ plans: Plan[] }>('/api/admin/plans'),
         api<{ orders: Order[] }>('/api/admin/orders'),
         api<{ users: AdminUser[] }>('/api/admin/users'),
@@ -272,6 +309,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         api<{ redeemCodes: RedeemCode[] }>('/api/admin/redeem-codes'),
       ]);
       setStats(statsResult.stats);
+      setExceptions(exceptionResult);
       setPlans(plansResult.plans);
       setOrders(ordersResult.orders);
       setUsers(usersResult.users);
@@ -283,6 +321,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       setPaymentNotifications(notificationResult.notifications);
       setRedeemCodes(redeemCodeResult.redeemCodes);
       setSettingsData(settingsResult.settings);
+      setSavedPaymentMethodIds(settingsResult.settings.paymentMethods.map(method => method.id));
+      setPaymentChecks(current => Object.fromEntries(Object.entries(current).filter(([id]) => settingsResult.settings.paymentMethods.some(method => method.id === id))));
       setSavedContactMethodIds(settingsResult.settings.contact.methods.map(method => method.id));
       setAdminPathDraft(settingsResult.settings.adminPath);
       if (!grant.userId && usersResult.users.length) {
@@ -321,8 +361,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   const normalizedQuery = query.trim().toLowerCase();
   const filteredOrders = useMemo(() => orders.filter(order => {
-    const matchesQuery = !normalizedQuery || `${order.orderNo} ${order.username || ''} ${order.paymentTradeNo || ''}`.toLowerCase().includes(normalizedQuery);
-    return matchesQuery && (statusFilter === 'all' || order.status === statusFilter);
+    const diagnosis = order.diagnosis;
+    const matchesQuery = !normalizedQuery || `${order.orderNo} ${order.username || ''} ${order.paymentTradeNo || ''} ${diagnosis?.processingLabel || ''}`.toLowerCase().includes(normalizedQuery);
+    return matchesQuery && (statusFilter === 'all' || diagnosis?.processingStatus === statusFilter || order.status === statusFilter);
   }), [normalizedQuery, orders, statusFilter]);
   const filteredPlans = useMemo(() => plans.filter(plan => {
     const matchesQuery = !normalizedQuery || `${plan.name} ${plan.description}`.toLowerCase().includes(normalizedQuery);
@@ -359,6 +400,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const safePage = Math.min(page, pageCount);
   const pageStart = (safePage - 1) * PAGE_SIZE;
   const currentTitle = navigation.find(item => item.id === tab)?.label || '管理后台';
+  const currentMeta = adminTabMeta[tab];
+  const currentContext = tab === 'dashboard'
+    ? `${exceptions.summary.total} 项业务异常`
+    : activeList.length > 0
+      ? `${activeList.length} 条当前结果`
+      : tab === 'settings'
+        ? `${settingsData.paymentMethods.filter(method => method.enabled).length} 个支付渠道启用`
+        : tab === 'security'
+          ? `管理员 ${currentUser.username}`
+          : '当前无匹配记录';
 
   const savePlan = async () => {
     if (!editingPlan) return;
@@ -616,6 +667,104 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     setEditingPaymentMethod(null);
   };
 
+  const checkPaymentMethod = async (method: PaymentMethod) => {
+    if (!savedPaymentMethodIds.includes(method.id)) return showToast('请先保存支付方式', '检测只读取数据库中已保存的配置', 'warning');
+    setPaymentCheckBusy(method.id);
+    try {
+      const response = await api<{ result: PaymentCheckResult }>(`/api/admin/payment-methods/${encodeURIComponent(method.id)}/check`, { method: 'POST' });
+      setPaymentChecks(current => ({ ...current, [method.id]: response.result }));
+      const toastType = response.result.status === 'ready' ? 'success' : response.result.status === 'disabled' ? 'info' : 'warning';
+      showToast('支付渠道检测完成', response.result.message, toastType);
+    } catch (error) {
+      showToast('支付渠道检测失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setPaymentCheckBusy('');
+    }
+  };
+
+  const downloadDatabaseBackup = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch('/api/admin/database/backup');
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error || `备份下载失败（HTTP ${response.status}）`);
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition') || '';
+      const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] || `xui-backup-${new Date().toISOString().slice(0, 10)}.db`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      showToast('数据库备份已下载', `${Math.max(1, Math.round(blob.size / 1024))} KB`, 'success');
+    } catch (error) {
+      showToast('数据库备份失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectDatabaseFile = (file?: File) => {
+    setDatabaseValidation(null);
+    setRestoreConfirmation('');
+    if (!file) return setDatabaseFile(null);
+    if (!file.name.toLowerCase().endsWith('.db')) {
+      setDatabaseFile(null);
+      return showToast('备份文件格式不正确', '请选择扩展名为 .db 的 SQLite 数据库备份', 'warning');
+    }
+    if (file.size > 64 * 1024 * 1024) {
+      setDatabaseFile(null);
+      return showToast('备份文件过大', '数据库备份不能超过 64MB', 'warning');
+    }
+    setDatabaseFile(file);
+  };
+
+  const validateDatabaseFile = async () => {
+    if (!databaseFile) return showToast('请选择数据库备份', '上传 .db 文件后再进行校验', 'warning');
+    setBusy(true);
+    setDatabaseValidation(null);
+    try {
+      const response = await fetch('/api/admin/database/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': DATABASE_CONTENT_TYPE },
+        body: databaseFile,
+      });
+      const data = await response.json().catch(() => ({})) as { validation?: DatabaseBackupValidation; error?: string };
+      if (!response.ok || !data.validation) throw new Error(data.error || `备份校验失败（HTTP ${response.status}）`);
+      setDatabaseValidation(data.validation);
+      showToast('数据库备份校验通过', '可以进入恢复确认步骤', 'success');
+    } catch (error) {
+      showToast('数据库备份不可用', error instanceof Error ? error.message : '请选择其他备份文件', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restoreDatabase = async () => {
+    if (!databaseFile || !databaseValidation || restoreConfirmation !== 'RESTORE') return;
+    setBusy(true);
+    try {
+      const response = await fetch('/api/admin/database/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': DATABASE_CONTENT_TYPE, 'x-restore-confirmation': restoreConfirmation },
+        body: databaseFile,
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(data.error || `数据库恢复失败（HTTP ${response.status}）`);
+      setRestoreDialogOpen(false);
+      showToast('数据库已恢复', '全部登录会话已失效，请重新登录', 'success');
+      window.setTimeout(onSessionEnded, 300);
+    } catch (error) {
+      showToast('数据库恢复失败', error instanceof Error ? error.message : '当前数据库未被替换', 'error');
+      setBusy(false);
+    }
+  };
+
   const updateRecommendation = (index: number, patch: Partial<ResourceRecommendation>) => {
     setSettingsData(value => ({
       ...value,
@@ -720,6 +869,37 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     }
   };
 
+  const openOrderDetail = async (order: Order) => {
+    setViewOrder(order);
+    setOrderDetail(null);
+    setOrderDetailLoading(true);
+    try {
+      setOrderDetail(await api<OrderDetail>(`/api/admin/orders/${order.id}/detail`));
+    } catch (error) {
+      setViewOrder(null);
+      showToast('订单详情加载失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setOrderDetailLoading(false);
+    }
+  };
+
+  const confirmRepairEntitlement = async () => {
+    if (!repairOrder) return;
+    setBusy(true);
+    try {
+      const result = await api<{ detail: OrderDetail }>(`/api/admin/orders/${repairOrder.id}/repair-entitlement`, { method: 'POST' });
+      await load(true);
+      setRepairOrder(null);
+      setViewOrder(result.detail.order);
+      setOrderDetail(result.detail);
+      showToast('订单权益已补发', '异常订单已恢复为付款与权益均完成', 'success');
+    } catch (error) {
+      showToast('补发权益失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const exportCurrent = () => {
     const rows = activeList as unknown as Array<Record<string, unknown>>;
     if (!rows.length) return showToast('没有可导出的数据', '请先调整筛选条件', 'warning');
@@ -746,8 +926,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
       <div className="admin-main">
         <header className="admin-topbar">
-          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div><span>运营管理后台</span><h1>{currentTitle}</h1></div></div>
+          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div><span>NEXUS CONTROL / {currentMeta.area}</span><h1>{currentTitle}</h1><p>{currentMeta.description}</p></div></div>
           <div className="admin-topbar-actions">
+            <span className="admin-topbar-context"><i />{currentContext}</span>
             {activeList.length > 0 && <button type="button" className="admin-button secondary admin-export-button" onClick={exportCurrent}><Download /> 导出当前列表</button>}
             <a href="/" target="_blank" rel="noreferrer">打开用户端 <ExternalLink /></a>
             <button type="button" className="admin-icon-button" onClick={() => void load()} disabled={loading} title="刷新全部数据"><RefreshCw className={loading ? 'spinning' : ''} /></button>
@@ -756,17 +937,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
         <main className="admin-content">
           {loading ? <AdminPageLoading /> : <>
-            {tab === 'dashboard' && <Dashboard stats={stats} orders={orders} deployments={deployments} onNavigate={setTab} />}
+            {tab === 'dashboard' && <Dashboard stats={stats} exceptions={exceptions} orders={orders} deployments={deployments} onNavigate={setTab} onOpenOrder={order => void openOrderDetail(order)} onOpenDeployment={setViewDeployment} />}
 
             {tab === 'orders' && <AdminSection title="订单管理" description="核对用户订单、人工收款、取消待付订单与退款撤权。">
-              <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索订单号、用户或交易号" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部状态'], ['pending', '待确认'], ['paid', '已付款'], ['refunded', '已退款'], ['cancelled', '已取消']]} />
-              <AdminTable columns={['订单信息', '用户', '金额', '状态', '支付信息', '创建时间', '操作']} empty="没有符合条件的订单">
+              <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索订单号、用户、交易号或处理状态" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部处理状态'], ['paid_missing_entitlement', '已付款但缺少权益'], ['payment_attention', '支付链路需核对'], ['completed', '付款与权益完成'], ['paid_entitlement_inactive', '已付款但权益不可用'], ['pending_payment', '等待用户付款'], ['expired', '订单已过期'], ['cancelled', '订单已取消'], ['refunded', '订单已退款']]} />
+              <AdminTable columns={['订单信息', '用户', '金额', '订单状态', '处理状态', '支付信息', '创建时间', '操作']} empty="没有符合条件的订单">
                 {filteredOrders.slice(pageStart, pageStart + PAGE_SIZE).map(order => <tr key={order.id}>
                   <td><strong className="admin-primary-text">{order.orderNo}</strong><small className="admin-cell-sub">{planSnapshotName(order)}</small></td>
-                  <td>{order.username || '-'}</td><td className="admin-money">{formatMoney(order.amountCents)}</td><td><StatusBadge status={order.status} /></td>
+                  <td>{order.username || '-'}</td><td className="admin-money">{formatMoney(order.amountCents)}</td><td><StatusBadge status={order.status} /></td><td>{order.diagnosis ? <DiagnosisBadge diagnosis={order.diagnosis} /> : <span className="admin-muted">-</span>}</td>
                   <td>{order.paymentTradeNo ? <><span>{paymentProviderName(order.paymentProvider || 'manual')}</span><small className="admin-cell-sub">{order.paymentTradeNo}</small></> : <span className="admin-muted">未支付</span>}</td>
                   <td>{formatDate(order.createdAt)}</td>
-                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" onClick={() => setViewOrder(order)}><Eye /></button>{order.status === 'pending' && <><button className="admin-link success" onClick={() => { setPaymentOrder(order); setTradeNo(''); }}>确认收款</button><button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button></>}{order.status === 'paid' && order.paymentProvider !== 'redeem_code' && <button className="admin-link warning" onClick={() => { setRefundOrder(order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}</div></td>
+                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" disabled={orderDetailLoading} onClick={() => void openOrderDetail(order)}><Eye /></button>{order.status === 'pending' && <><button className="admin-link success" onClick={() => { setPaymentOrder(order); setTradeNo(''); }}>确认收款</button><button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button></>}{order.status === 'paid' && order.paymentProvider !== 'redeem_code' && <button className="admin-link warning" onClick={() => { setRefundOrder(order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}</div></td>
                 </tr>)}
               </AdminTable>
               <Pagination total={filteredOrders.length} page={safePage} pageCount={pageCount} onPage={setPage} />
@@ -855,7 +1036,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               <Pagination total={filteredAudit.length} page={safePage} pageCount={pageCount} onPage={setPage} />
             </AdminSection>}
 
-            {tab === 'settings' && <AdminSection title="系统设置" description="集中管理业务开放状态、邮箱服务与支付渠道，修改后统一保存生效。" action={<button className="admin-button primary" disabled={busy} onClick={() => void saveSettings()}><Save /> 保存全部设置</button>}>
+            {tab === 'settings' && <AdminSection title="系统设置" description="集中管理业务开放状态、邮箱服务与支付渠道，修改后统一保存生效。">
               <div className="admin-settings-shell">
                 <aside className="admin-settings-nav" aria-label="设置分类">
                   <button type="button" className={settingsSection === 'general' ? 'active' : ''} onClick={() => setSettingsSection('general')}><Settings /><span><strong>业务设置</strong><small>注册、交付与订单规则</small></span><ChevronRight /></button>
@@ -974,12 +1155,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                     <section className="admin-settings-section flush">
                       <div className="admin-payment-table-wrap">
                         <table className="admin-payment-table">
-                          <thead><tr><th>支付方式</th><th>收款类型</th><th>支付通道</th><th>回调地址</th><th>排序</th><th>状态</th><th>操作</th></tr></thead>
+                          <thead><tr><th>支付方式</th><th>收款类型</th><th>支付通道</th><th>回调地址</th><th>配置检测</th><th>排序</th><th>状态</th><th>操作</th></tr></thead>
                           <tbody>{settingsData.paymentMethods.map((method, index) => <tr key={`${method.id}-${index}`}>
                             <td><div className="admin-payment-name"><span><CreditCard /></span><div><strong>{method.name || '未命名支付方式'}</strong><small>{method.id || '未设置标识'}</small></div></div></td>
                             <td>{paymentProviderText(method)}</td>
                             <td>{paymentChannelText(method)}</td>
                             <td>{method.callbackUrl ? <button type="button" className="admin-callback-copy" title={method.callbackUrl} onClick={() => void copyToClipboard(method.callbackUrl || '').then(success => showToast(success ? '回调地址已复制' : '复制失败', success ? method.callbackUrl : '请手动复制回调地址', success ? 'success' : 'error'))}><ClipboardCopy /><span>复制回调</span></button> : <span className="admin-muted">无需回调</span>}</td>
+                            <td><div className="admin-payment-check"><button type="button" className="admin-button secondary compact" disabled={paymentCheckBusy === method.id || !savedPaymentMethodIds.includes(method.id)} title={savedPaymentMethodIds.includes(method.id) ? '检测已保存的支付配置' : '请先保存全部设置'} onClick={() => void checkPaymentMethod(method)}><RefreshCw className={paymentCheckBusy === method.id ? 'spinning' : ''} /> 检测</button>{paymentChecks[method.id] && <div className={`admin-payment-check-result ${paymentChecks[method.id].status}`}><strong>{paymentCheckLabel(paymentChecks[method.id].status)}</strong><span>{paymentChecks[method.id].message}</span></div>}{!savedPaymentMethodIds.includes(method.id) && <small>保存后可检测</small>}</div></td>
                             <td>{method.sortOrder}</td>
                             <td><div className="admin-payment-state"><StatusBadge status={method.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-label={`${method.enabled ? '停用' : '启用'} ${method.name}`} aria-checked={method.enabled} className={`admin-switch ${method.enabled ? 'on' : ''}`} onClick={() => updatePaymentMethod(index, { enabled: !method.enabled })}><span /></button></div></td>
                             <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑支付方式" onClick={() => setEditingPaymentMethod({ index, method: { ...method } })}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除支付方式" onClick={() => setDeletingPaymentMethod({ index, method })}><X /></button></div></td>
@@ -996,6 +1178,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                       </div>
                     </section>
                   </>}
+                  <footer className="admin-settings-savebar"><div><Save /><span><strong>统一保存系统设置</strong><small>当前分类与其他分类的修改会一并提交。</small></span></div><button className="admin-button primary" disabled={busy} onClick={() => void saveSettings()}><Save /> {busy ? '正在保存' : '保存全部设置'}</button></footer>
                 </div>
               </div>
             </AdminSection>}
@@ -1021,6 +1204,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                 <section className="admin-security-card admin-security-password">
                   <header><span><ShieldCheck /></span><div><h2>登录密码</h2><p>修改密码后所有已登录会话会立即失效，需要重新登录。</p></div></header>
                   <ChangePasswordForm endpoint="/api/admin/auth/change-password" onChanged={onSessionEnded} showToast={showToast} variant="admin" />
+                </section>
+
+                <section className="admin-security-card admin-database-maintenance">
+                  <header><span><Database /></span><div><h2>数据库备份与恢复</h2><p>下载完整业务数据库，或校验并恢复同一系统生成的 SQLite 备份。</p></div></header>
+                  <div className="admin-database-actions">
+                    <button type="button" className="admin-button secondary" disabled={busy} onClick={() => void downloadDatabaseBackup()}><Download /> 下载当前备份</button>
+                    <label className="admin-database-file"><Upload /><span><strong>{databaseFile?.name || '选择 .db 备份文件'}</strong><small>{databaseFile ? `${Math.max(1, Math.round(databaseFile.size / 1024))} KB` : '最大 64MB，选择后需要先校验'}</small></span><input type="file" accept=".db,application/vnd.sqlite3,application/x-sqlite3" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; selectDatabaseFile(file); }} /></label>
+                    <button type="button" className="admin-button secondary" disabled={busy || !databaseFile} onClick={() => void validateDatabaseFile()}><ShieldCheck /> 校验备份</button>
+                  </div>
+                  {databaseValidation && <div className="admin-database-validation"><CheckCircle2 /><div><strong>备份校验通过</strong><span>文件大小 {Math.max(1, Math.round(databaseValidation.sizeBytes / 1024))} KB · 管理员 {databaseValidation.counts.users || 0} · 订单 {databaseValidation.counts.orders || 0} · 权益 {databaseValidation.counts.entitlements || 0}</span></div><button type="button" className="admin-button danger" disabled={busy} onClick={() => { setRestoreConfirmation(''); setRestoreDialogOpen(true); }}><ArchiveRestore /> 恢复此备份</button></div>}
+                  <p className="admin-database-note"><AlertTriangle /> 恢复前系统会自动备份当前数据库；恢复完成后所有账号都需要重新登录。支付密钥必须使用相同的 `.key` 文件或 `COMMERCIAL_SECRET_KEY`。</p>
                 </section>
               </div>
             </AdminSection>}
@@ -1115,14 +1309,47 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <label className="admin-field"><span>账号角色</span><select value={creatingUser.role} onChange={event => setCreatingUser({ ...creatingUser, role: event.target.value as 'user' | 'admin' })}><option value="user">普通用户</option><option value="admin">管理员</option></select></label>
         </div>}
       </AdminDialog>
-      <AdminDialog open={Boolean(viewOrder)} title="订单详情" description="订单金额、支付信息和下单时套餐快照的完整记录。" cancelLabel="关闭" onClose={() => setViewOrder(null)}>
-        {viewOrder && <div className="admin-detail-layout">
-          <div className="admin-detail-summary"><DetailItem label="订单号" value={viewOrder.orderNo} mono /><DetailItem label="用户" value={viewOrder.username || '-'} /><DetailItem label="订单金额" value={formatMoney(viewOrder.amountCents)} accent /><DetailItem label="订单状态" value={<StatusBadge status={viewOrder.status} />} /></div>
+      <AdminDialog open={Boolean(viewOrder)} size="wide" title="订单详情" description="集中核对订单、支付链路、卡密来源和权益发放结果。" cancelLabel="关闭" onClose={() => { setViewOrder(null); setOrderDetail(null); }}>
+        {viewOrder && orderDetailLoading && <div className="admin-order-detail-loading"><RefreshCw className="spinning" /><span>正在汇总订单处理记录...</span></div>}
+        {orderDetail && <div className="admin-detail-layout">
+          <div className={`admin-order-diagnosis ${orderDetail.diagnosis.severity}`}>
+            <span>{orderDetail.diagnosis.severity === 'success' ? <CheckCircle2 /> : <AlertTriangle />}</span>
+            <div><strong>{orderDetail.diagnosis.processingLabel}</strong><p>{orderDetail.diagnosis.recommendedAction}</p></div>
+            {(orderDetail.diagnosis.failedAttemptCount > 0 || orderDetail.diagnosis.rejectedNotificationCount > 0) && <small>{orderDetail.diagnosis.failedAttemptCount} 次支付请求失败 · {orderDetail.diagnosis.rejectedNotificationCount} 次回调被拒绝</small>}
+          </div>
+          <div className="admin-detail-summary"><DetailItem label="订单号" value={orderDetail.order.orderNo} mono /><DetailItem label="用户" value={<>{orderDetail.order.username || '-'}{orderDetail.order.email && <small className="admin-detail-subvalue">{orderDetail.order.email}</small>}</>} /><DetailItem label="订单金额" value={formatMoney(orderDetail.order.amountCents)} accent /><DetailItem label="订单状态" value={<StatusBadge status={orderDetail.order.status} />} /></div>
+          <div className="admin-order-detail-actions">
+            {orderDetail.order.status === 'pending' && <><button className="admin-button success" onClick={() => { setViewOrder(null); setOrderDetail(null); setPaymentOrder(orderDetail.order); setTradeNo(''); }}><CheckCircle2 /> 确认人工收款</button><button className="admin-button danger" onClick={() => { setViewOrder(null); setOrderDetail(null); setCancelOrder(orderDetail.order); }}>取消订单</button></>}
+            {orderDetail.order.status === 'paid' && orderDetail.order.paymentProvider !== 'redeem_code' && <button className="admin-button warning" onClick={() => { setViewOrder(null); setOrderDetail(null); setRefundOrder(orderDetail.order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}
+            {orderDetail.diagnosis.canRepairEntitlement && <button className="admin-button danger" onClick={() => { setViewOrder(null); setOrderDetail(null); setRepairOrder(orderDetail.order); }}><Wrench /> 补发缺失权益</button>}
+          </div>
           <DetailBlock title="支付与时间">
-            <div className="admin-detail-grid"><DetailItem label="支付渠道" value={paymentProviderName(viewOrder.paymentProvider || 'manual')} /><DetailItem label="交易号" value={viewOrder.paymentTradeNo || '未支付'} mono /><DetailItem label="创建时间" value={formatDate(viewOrder.createdAt)} /><DetailItem label="付款时间" value={viewOrder.paidAt ? formatDate(viewOrder.paidAt) : '未付款'} /></div>
+            <div className="admin-detail-grid"><DetailItem label="支付渠道" value={paymentProviderName(orderDetail.order.paymentProvider || 'manual')} /><DetailItem label="支付子渠道" value={orderDetail.order.paymentChannel || '-'} /><DetailItem label="交易号" value={orderDetail.order.paymentTradeNo || '未支付'} mono /><DetailItem label="创建时间" value={formatDate(orderDetail.order.createdAt)} /><DetailItem label="到期时间" value={orderDetail.order.expiresAt ? formatDate(orderDetail.order.expiresAt) : '-'} /><DetailItem label="付款时间" value={orderDetail.order.paidAt ? formatDate(orderDetail.order.paidAt) : '未付款'} />{orderDetail.order.cancelledAt && <DetailItem label="取消时间" value={formatDate(orderDetail.order.cancelledAt)} />}{orderDetail.order.refundedAt && <DetailItem label="退款时间" value={formatDate(orderDetail.order.refundedAt)} />}{orderDetail.order.refundTradeNo && <DetailItem label="退款凭证" value={orderDetail.order.refundTradeNo} mono />}{(orderDetail.order.cancelReason || orderDetail.order.refundReason) && <DetailItem label="处理原因" value={orderDetail.order.refundReason || orderDetail.order.cancelReason || '-'} />}</div>
           </DetailBlock>
-          <DetailBlock title="套餐快照"><PlanSnapshotDetails order={viewOrder} /></DetailBlock>
+          {orderDetail.redeemCode && <DetailBlock title="卡密兑换来源"><div className="admin-detail-grid"><DetailItem label="卡密" value={orderDetail.redeemCode.codeMasked} mono /><DetailItem label="兑换时间" value={formatDate(orderDetail.redeemCode.redeemedAt)} /><DetailItem label="卡密备注" value={orderDetail.redeemCode.note || '-'} /></div></DetailBlock>}
+          <DetailBlock title={`关联权益 · ${orderDetail.entitlements.length}`}>
+            <div className="admin-order-record-list">{orderDetail.entitlements.map(item => <article key={item.id}><div><strong>{item.planName}</strong><small>{item.lifetime ? '永久有效' : `有效期至 ${formatDate(item.expiresAt)}`} · 创建于 {formatDate(item.createdAt)}</small><p>面板 {quotaText(item.panelMode, item.panelRemaining)} · 节点 {quotaText(item.nodeMode, item.nodeRemaining)} · 并发 {item.concurrencyLimit}</p></div><StatusBadge status={entitlementStatus(item)} /></article>)}{!orderDetail.entitlements.length && <EmptyInline text="该订单尚未生成关联权益" />}</div>
+          </DetailBlock>
+          <DetailBlock title={`支付请求 · ${orderDetail.attempts.length}`}>
+            <div className="admin-order-record-list">{orderDetail.attempts.map(item => <article key={item.id}><span className={`admin-payment-dot ${item.status}`} /><div><strong>{paymentProviderName(item.provider)} · {item.providerOrderId || item.id.slice(0, 12)}</strong><small>创建 {formatDate(item.createdAt)}{item.updatedAt ? ` · 更新 ${formatDate(item.updatedAt)}` : ''}</small>{item.providerTradeNo && <p>交易号：{item.providerTradeNo}</p>}{item.errorMessage && <p className="danger">{item.errorMessage}</p>}{item.checkoutUrl && <a href={item.checkoutUrl} target="_blank" rel="noreferrer">查看支付地址 <ExternalLink /></a>}</div><StatusBadge status={item.status} /></article>)}{!orderDetail.attempts.length && <EmptyInline text="该订单没有在线支付请求记录" />}</div>
+          </DetailBlock>
+          <DetailBlock title={`异步回调 · ${orderDetail.notifications.length}`}>
+            <div className="admin-order-record-list">{orderDetail.notifications.map(item => <article key={item.id}><span className={`admin-payment-dot ${item.status}`} /><div><strong>{paymentProviderName(item.provider)} · {item.channelId || '未知渠道'}</strong><small>{formatDate(item.createdAt)}</small>{item.errorMessage && <p className="danger">{item.errorMessage}</p>}<PayloadDetails payload={item.payload} label="查看已脱敏回调数据" /></div><StatusBadge status={item.status} /></article>)}{!orderDetail.notifications.length && <EmptyInline text="该订单没有异步回调记录" />}</div>
+          </DetailBlock>
+          <DetailBlock title={`支付事件 · ${orderDetail.paymentEvents.length}`}>
+            <div className="admin-order-record-list">{orderDetail.paymentEvents.map(item => <article key={item.id}><div><strong>{paymentProviderName(item.provider)}</strong><small>{item.eventKey} · {formatDate(item.createdAt)}</small><PayloadDetails payload={item.payload} label="查看事件数据" /></div></article>)}{!orderDetail.paymentEvents.length && <EmptyInline text="该订单没有支付完成事件" />}</div>
+          </DetailBlock>
+          <DetailBlock title="套餐快照"><PlanSnapshotDetails order={orderDetail.order} /></DetailBlock>
         </div>}
+      </AdminDialog>
+      <AdminDialog open={Boolean(repairOrder)} title="补发订单权益" description="仅用于已确认付款但没有任何关联权益的异常订单。系统会严格按照下单时的套餐快照补发，并记录管理员审计日志。" confirmLabel="确认补发权益" tone="danger" busy={busy} onClose={() => setRepairOrder(null)} onConfirm={() => void confirmRepairEntitlement()}>
+        {repairOrder && <div className="admin-dialog-summary"><div><span>订单号</span><strong>{repairOrder.orderNo}</strong></div><div><span>用户</span><strong>{repairOrder.username || '-'}</strong></div><div><span>补发套餐</span><strong>{planSnapshotName(repairOrder)}</strong></div></div>}
+      </AdminDialog>
+      <AdminDialog open={restoreDialogOpen} title="恢复数据库备份" description="此操作会用已校验的备份替换当前业务数据，并立即清除全部登录会话。" confirmLabel="确认恢复数据库" tone="danger" busy={busy} confirmDisabled={!databaseValidation || restoreConfirmation !== 'RESTORE'} onClose={() => { setRestoreDialogOpen(false); setRestoreConfirmation(''); }} onConfirm={() => void restoreDatabase()}>
+        <div className="admin-restore-confirmation">
+          <div><AlertTriangle /><p><strong>恢复后当前页面会退出登录。</strong><span>系统会先在数据目录的 backups 文件夹保存恢复前数据库，随后导入所选备份。</span></p></div>
+          <label className="admin-field"><span>输入 RESTORE 确认</span><input value={restoreConfirmation} onChange={event => setRestoreConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="RESTORE" /></label>
+        </div>
       </AdminDialog>
       <AdminDialog open={Boolean(viewDeployment)} title="交付任务详情" description="任务从额度预约到执行完成的真实状态和结果记录。" cancelLabel="关闭" onClose={() => setViewDeployment(null)}>
         {viewDeployment && <div className="admin-detail-layout">
@@ -1144,7 +1371,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   );
 };
 
-const Dashboard: React.FC<{ stats: Stats | null; orders: Order[]; deployments: DeploymentRecord[]; onNavigate: (tab: AdminTab) => void }> = ({ stats, orders, deployments, onNavigate }) => {
+const Dashboard: React.FC<{
+  stats: Stats | null;
+  exceptions: AdminExceptions;
+  orders: Order[];
+  deployments: DeploymentRecord[];
+  onNavigate: (tab: AdminTab) => void;
+  onOpenOrder: (order: Order) => void;
+  onOpenDeployment: (deployment: DeploymentRecord) => void;
+}> = ({ stats, exceptions, orders, deployments, onNavigate, onOpenOrder, onOpenDeployment }) => {
   const successRate = stats?.deployments ? Math.round((stats.succeeded / stats.deployments) * 100) : 0;
   const recentOrders = orders.slice(0, 5);
   const recentDeployments = deployments.slice(0, 5);
@@ -1161,12 +1396,23 @@ const Dashboard: React.FC<{ stats: Stats | null; orders: Order[]; deployments: D
       <button type="button" onClick={() => onNavigate('deployments')}><span className="rose"><ClipboardCheck /></span><div><strong>{stats?.uncertain || 0}</strong><small>待人工核对任务</small></div><ChevronRight /></button>
       <button type="button" onClick={() => onNavigate('deployments')}><span className="cyan"><Activity /></span><div><strong>{stats?.running || 0}</strong><small>正在执行的任务</small></div><ChevronRight /></button>
     </div>
+    <section className={`admin-exception-center ${exceptions.summary.total ? 'has-exceptions' : 'clear'}`}>
+      <header><div><span><AlertTriangle /></span><div><h3>业务异常中心</h3><p>自动汇总支付、权益发放和交付任务中需要人工处理的问题。</p></div></div><div className="admin-exception-summary"><b>{exceptions.summary.total}</b><span><strong>{exceptions.summary.critical}</strong> 紧急 · <strong>{exceptions.summary.warning}</strong> 提醒</span></div></header>
+      <div className="admin-exception-list">
+        {exceptions.items.slice(0, 8).map(item => <button type="button" key={item.id} className={item.severity} onClick={() => item.order ? onOpenOrder(item.order) : item.deployment ? onOpenDeployment(item.deployment) : onNavigate(item.targetType === 'order' ? 'orders' : 'deployments')}>
+          <span>{item.severity === 'danger' ? <AlertTriangle /> : <Clock3 />}</span><div><strong>{item.title}</strong><p>{item.description}</p><small>{formatDate(item.createdAt)}</small></div><ChevronRight />
+        </button>)}
+        {!exceptions.items.length && <div className="admin-exception-empty"><CheckCircle2 /><div><strong>当前没有业务异常</strong><span>支付、权益和交付任务状态均未发现需要人工处理的问题。</span></div></div>}
+      </div>
+    </section>
     <div className="admin-dashboard-columns">
       <section className="admin-dashboard-panel"><header><div><h3>最近订单</h3><p>按创建时间倒序</p></div><button onClick={() => onNavigate('orders')}>查看全部</button></header><div className="admin-activity-list">{recentOrders.map(order => <div key={order.id}><span className="admin-activity-icon"><CreditCard /></span><div><strong>{order.username || '-'}</strong><small>{order.orderNo}</small></div><div className="right"><strong>{formatMoney(order.amountCents)}</strong><StatusBadge status={order.status} /></div></div>)}{!recentOrders.length && <EmptyInline text="暂无订单" />}</div></section>
       <section className="admin-dashboard-panel"><header><div><h3>最近交付任务</h3><p>面板安装与节点创建记录</p></div><button onClick={() => onNavigate('deployments')}>查看全部</button></header><div className="admin-activity-list">{recentDeployments.map(item => <div key={item.id}><span className="admin-activity-icon"><Network /></span><div><strong>{item.username || '-'}</strong><small>{item.capability === 'panel' ? '面板安装' : '节点创建'} · {item.targetHostMasked || '-'}</small></div><div className="right"><StatusBadge status={item.status} /><small>{formatDate(item.createdAt)}</small></div></div>)}{!recentDeployments.length && <EmptyInline text="暂无交付任务" />}</div></section>
     </div>
   </div>;
 };
+
+const DiagnosisBadge: React.FC<{ diagnosis: OrderDetail['diagnosis'] }> = ({ diagnosis }) => <span className={`admin-diagnosis-badge ${diagnosis.severity}`} title={diagnosis.recommendedAction}><i />{diagnosis.processingLabel}</span>;
 
 const AdminSection: React.FC<{ title: string; description: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => <div className="admin-section"><div className="admin-page-heading"><div><h2>{title}</h2><p>{description}</p></div>{action}</div>{children}</div>;
 const AdminToolbar: React.FC<{ query: string; onQuery: (value: string) => void; placeholder: string; filter: string; onFilter: (value: string) => void; options: Array<[string, string]> }> = ({ query, onQuery, placeholder, filter, onFilter, options }) => <div className="admin-toolbar"><label className="admin-search"><Search /><input value={query} onChange={event => onQuery(event.target.value)} placeholder={placeholder} /></label><label className="admin-filter"><SlidersHorizontal /><select value={filter} onChange={event => onFilter(event.target.value)}>{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>;
@@ -1177,6 +1423,11 @@ const EmptyInline: React.FC<{ text: string }> = ({ text }) => <div className="ad
 const AdminPageLoading = () => <div className="admin-page-loading"><RefreshCw /><p>正在读取管理数据...</p></div>;
 const DetailBlock: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => <section className="admin-detail-block"><header><FileText /><h3>{title}</h3></header>{children}</section>;
 const DetailItem: React.FC<{ label: string; value: React.ReactNode; mono?: boolean; accent?: boolean }> = ({ label, value, mono, accent }) => <div className={`admin-detail-item ${mono ? 'mono' : ''} ${accent ? 'accent' : ''}`}><span>{label}</span><strong>{value}</strong></div>;
+const PayloadDetails: React.FC<{ payload: string; label: string }> = ({ payload, label }) => {
+  let formatted = payload || '{}';
+  try { formatted = JSON.stringify(JSON.parse(formatted), null, 2); } catch { /* Preserve non-JSON gateway responses. */ }
+  return <details className="admin-payload-details"><summary>{label}</summary><pre>{formatted}</pre></details>;
+};
 const PlanSnapshotDetails: React.FC<{ order: Order }> = ({ order }) => {
   const snapshot = parsePlanSnapshot(order);
   return <div className="admin-detail-grid"><DetailItem label="套餐名称" value={String(snapshot.name || '套餐快照')} /><DetailItem label="套餐说明" value={String(snapshot.description || '无')} /><DetailItem label="面板额度" value={snapshot.panelMode === 'unlimited' ? '不限次数' : snapshot.panelMode === 'none' ? '不包含' : `${Number(snapshot.panelLimit || 0)} 次`} /><DetailItem label="节点额度" value={snapshot.nodeMode === 'unlimited' ? '不限次数' : snapshot.nodeMode === 'none' ? '不包含' : `${Number(snapshot.nodeLimit || 0)} 次`} /><DetailItem label="每日面板上限" value={Number(snapshot.dailyPanelLimit || 0) || '不限'} /><DetailItem label="每日节点上限" value={Number(snapshot.dailyNodeLimit || 0) || '不限'} /><DetailItem label="并发任务上限" value={Number(snapshot.concurrencyLimit || 1)} /><DetailItem label="有效期" value={snapshot.durationUnit === 'lifetime' ? '永久有效' : `${Number(snapshot.durationValue || 0)} ${snapshot.durationUnit === 'years' ? '年' : snapshot.durationUnit === 'months' ? '个月' : '天'}`} /></div>;
@@ -1363,6 +1614,16 @@ function entitlementStatus(item: Entitlement) {
   if (item.status === 'revoked') return 'revoked';
   if (!item.lifetime && item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) return 'expired';
   return 'active';
+}
+
+function paymentCheckLabel(status: PaymentCheckResult['status']) {
+  return {
+    ready: '检测通过',
+    disabled: '渠道已停用',
+    incomplete: '配置不完整',
+    unreachable: '网关不可达',
+    invalid: '配置无效',
+  }[status];
 }
 
 function durationText(plan: Plan) {

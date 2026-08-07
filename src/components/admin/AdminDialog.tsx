@@ -6,6 +6,7 @@ interface AdminDialogProps {
   title: string;
   description?: string;
   children?: React.ReactNode;
+  size?: 'default' | 'wide';
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: 'primary' | 'danger' | 'warning' | 'success';
@@ -20,6 +21,7 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
   title,
   description,
   children,
+  size = 'default',
   confirmLabel = '确认',
   cancelLabel = '取消',
   tone = 'primary',
@@ -41,7 +43,7 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
 
   return (
     <div className="admin-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-      <section className="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title">
+      <section className={`admin-dialog ${size === 'wide' ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title">
         <header>
           <div className="admin-dialog-heading">
             {tone === 'danger' || tone === 'warning' ? <span className={`admin-dialog-alert ${tone}`}><AlertTriangle /></span> : null}
