@@ -78,7 +78,7 @@ import { AdminDialog } from './admin/AdminDialog';
 
 type AdminTab = 'dashboard' | 'orders' | 'plans' | 'redeem-codes' | 'users' | 'entitlements' | 'ledger' | 'deployments' | 'audit' | 'settings' | 'security';
 type SettingsSection = 'general' | 'recommendations' | 'email' | 'payments';
-type SettingsDialog = 'order' | 'smtp' | 'sender' | 'verification' | 'test-email' | null;
+type SettingsDialog = 'order' | 'redeem' | 'contact' | 'smtp' | 'sender' | 'verification' | 'test-email' | null;
 type AdminUser = { id: string; username: string; email: string | null; emailVerified: boolean; role: 'user' | 'admin'; status: 'active' | 'disabled'; createdAt: string; lastLoginAt?: string };
 type UsageLedgerEntry = { id: string; userId: string; username: string; entitlementId: string; planName: string; deploymentId?: string; capability: 'panel' | 'node'; action: 'grant' | 'reserve' | 'consume' | 'release' | 'adjust'; amount: number; note: string; createdAt: string };
 type AuditLog = { id: string; adminUserId: string; adminUsername: string; action: string; targetType: string; targetId: string; detail: string; createdAt: string };
@@ -239,9 +239,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [paymentAttempts, setPaymentAttempts] = useState<PaymentAttempt[]>([]);
   const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
+  const [paymentRuntimeOpen, setPaymentRuntimeOpen] = useState(false);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
   const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', contact: emptyContactSettings, recommendations: emptyRecommendationSettings });
+  const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState('');
+  const [settingsSaveBusy, setSettingsSaveBusy] = useState(false);
   const [savedPaymentMethodIds, setSavedPaymentMethodIds] = useState<string[]>([]);
+  const [savedRecommendationIds, setSavedRecommendationIds] = useState<string[]>([]);
   const [paymentChecks, setPaymentChecks] = useState<Record<string, PaymentCheckResult>>({});
   const [paymentCheckBusy, setPaymentCheckBusy] = useState('');
   const [databaseFile, setDatabaseFile] = useState<File | null>(null);
@@ -321,7 +325,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       setPaymentNotifications(notificationResult.notifications);
       setRedeemCodes(redeemCodeResult.redeemCodes);
       setSettingsData(settingsResult.settings);
+      setSavedSettingsSnapshot(JSON.stringify(settingsResult.settings));
       setSavedPaymentMethodIds(settingsResult.settings.paymentMethods.map(method => method.id));
+      setSavedRecommendationIds(settingsResult.settings.recommendations.items.map(item => item.id));
       setPaymentChecks(current => Object.fromEntries(Object.entries(current).filter(([id]) => settingsResult.settings.paymentMethods.some(method => method.id === id))));
       setSavedContactMethodIds(settingsResult.settings.contact.methods.map(method => method.id));
       setAdminPathDraft(settingsResult.settings.adminPath);
@@ -401,6 +407,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const pageStart = (safePage - 1) * PAGE_SIZE;
   const currentTitle = navigation.find(item => item.id === tab)?.label || '管理后台';
   const currentMeta = adminTabMeta[tab];
+  const settingsDirty = Boolean(savedSettingsSnapshot) && JSON.stringify(settingsData) !== savedSettingsSnapshot;
   const currentContext = tab === 'dashboard'
     ? `${exceptions.summary.total} 项业务异常`
     : activeList.length > 0
@@ -423,8 +430,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   };
 
   const saveSettings = async () => {
-    await runAction('系统设置已保存', '/api/admin/settings', { method: 'PUT', body: JSON.stringify(settingsData) });
+    setSettingsSaveBusy(true);
+    try {
+      await runAction('系统设置已保存', '/api/admin/settings', { method: 'PUT', body: JSON.stringify(settingsData) });
+    } finally {
+      setSettingsSaveBusy(false);
+    }
   };
+
+  const settingsSaveAction = (
+    <button type="button" className={`admin-button primary ${settingsDirty ? '' : 'quiet'}`} disabled={busy || !settingsDirty} onClick={() => void saveSettings()}>
+      <Save /> {settingsSaveBusy ? '正在保存' : settingsDirty ? '保存更改' : '已保存'}
+    </button>
+  );
 
   const updateContactMethod = (index: number, patch: Partial<ContactMethod>) => {
     setSettingsData(value => ({
@@ -438,7 +456,24 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   const openNewContactMethod = () => {
     if (settingsData.contact.methods.length >= 10) return showToast('已达到联系方式上限', '最多可以配置 10 种联系方式', 'warning');
+    setSettingsDialog(null);
     setEditingContactMethod({ index: -1, method: emptyContactMethod() });
+  };
+
+  const openContactMethodEditor = (index: number, method: ContactMethod) => {
+    setSettingsDialog(null);
+    setEditingContactMethod({ index, method: { ...method } });
+  };
+
+  const openContactMethodDelete = (index: number, method: ContactMethod) => {
+    setSettingsDialog(null);
+    setDeletingContactMethod({ index, method });
+  };
+
+  const returnToContactSettings = () => {
+    setEditingContactMethod(null);
+    setDeletingContactMethod(null);
+    setSettingsDialog('contact');
   };
 
   const saveContactMethodDraft = () => {
@@ -463,6 +498,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       },
     }));
     setEditingContactMethod(null);
+    setSettingsDialog('contact');
   };
 
   const removeContactMethod = (index: number) => {
@@ -473,7 +509,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     if (!file) return;
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return showToast('图片格式不支持', '请选择 PNG、JPEG 或 WebP 图片', 'warning');
     if (file.size > 1024 * 1024) return showToast('图片过大', '咨询二维码不能超过 1MB', 'warning');
-    if (!savedContactMethodIds.includes(method.id)) return showToast('请先保存联系方式', '点击右上角“保存全部设置”后再上传二维码', 'warning');
+    if (!savedContactMethodIds.includes(method.id)) return showToast('请先保存联系方式', '点击右上角“保存更改”后再上传二维码', 'warning');
     setBusy(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -580,7 +616,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   const testEmail = async () => {
     if (!testEmailRecipient.trim()) return showToast('请输入测试收件邮箱', '', 'warning');
-    await runAction('测试邮件已发送', '/api/admin/settings/test-email', { method: 'POST', body: JSON.stringify({ recipient: testEmailRecipient }) }, () => setSettingsDialog(null));
+    setBusy(true);
+    try {
+      await api('/api/admin/settings/test-email', { method: 'POST', body: JSON.stringify({ recipient: testEmailRecipient }) });
+      setSettingsDialog(null);
+      showToast('测试邮件已发送', '请检查收件箱和垃圾邮件目录', 'success');
+    } catch (error) {
+      showToast('测试邮件发送失败', error instanceof Error ? error.message : '请检查已保存的 SMTP 配置', 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const confirmPayment = async () => {
@@ -642,7 +687,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       ...value,
       paymentMethods: value.paymentMethods.map(method => ({ ...method, enabled: false })),
     }));
-    showToast('已切换为仅卡密模式', '所有在线支付渠道已在草稿中停用，请点击“保存全部设置”生效', 'success');
+    showToast('已切换为仅卡密模式', '所有在线支付渠道已在草稿中停用，请点击“保存更改”生效', 'success');
   };
 
   const openNewPaymentMethod = () => {
@@ -811,7 +856,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     if (!file) return;
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return showToast('图片格式不支持', '请选择 PNG、JPEG 或 WebP 图片', 'warning');
     if (file.size > 512 * 1024) return showToast('图片过大', '推荐 Logo 不能超过 512KB', 'warning');
-    if (!settingsData.recommendations.items.some(saved => saved.id === item.id)) return showToast('请先保存推荐项', '点击右上角“保存全部设置”后再上传 Logo', 'warning');
+    if (!savedRecommendationIds.includes(item.id)) return showToast('请先保存推荐项', '点击右上角“保存更改”后再上传 Logo', 'warning');
     setBusy(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -822,6 +867,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       });
       await api(`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
       updateRecommendation(index, { logoUploaded: true });
+      setEditingRecommendation(current => current && current.index === index ? { ...current, item: { ...current.item, logoUploaded: true } } : current);
       showToast('推荐 Logo 已上传', '前台会优先显示上传的图片', 'success');
     } catch (error) {
       showToast('Logo 上传失败', error instanceof Error ? error.message : '请稍后重试', 'error');
@@ -835,6 +881,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     try {
       await api(`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo`, { method: 'DELETE' });
       updateRecommendation(index, { logoUploaded: false });
+      setEditingRecommendation(current => current && current.index === index ? { ...current, item: { ...current.item, logoUploaded: false } } : current);
       showToast('推荐 Logo 已删除', item.logoUrl ? '前台将改用填写的 Logo 图片地址' : '前台将显示默认图标', 'success');
     } catch (error) {
       showToast('Logo 删除失败', error instanceof Error ? error.message : '请稍后重试', 'error');
@@ -845,11 +892,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   const fetchRecommendationLogo = async (index: number, item: ResourceRecommendation) => {
     if (!item.purchaseUrl.trim()) return showToast('请先填写跳转链接', '系统会从厂商网站查找站点图标', 'warning');
-    if (!settingsData.recommendations.items.some(saved => saved.id === item.id)) return showToast('请先保存推荐项', '点击右上角“保存全部设置”后再自动获取 Logo', 'warning');
+    if (!savedRecommendationIds.includes(item.id)) return showToast('请先保存推荐项', '点击右上角“保存更改”后再自动获取 Logo', 'warning');
     setBusy(true);
     try {
       await api(`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo/fetch`, { method: 'POST', body: JSON.stringify({ websiteUrl: item.purchaseUrl }) });
       updateRecommendation(index, { logoUploaded: true });
+      setEditingRecommendation(current => current && current.index === index ? { ...current, item: { ...current.item, logoUploaded: true } } : current);
       showToast('Logo 获取成功', '已从厂商网站获取并保存到本站', 'success');
     } catch (error) {
       showToast('自动获取失败', error instanceof Error ? error.message : '可改用手动上传或填写 Logo 地址', 'error');
@@ -939,7 +987,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           {loading ? <AdminPageLoading /> : <>
             {tab === 'dashboard' && <Dashboard stats={stats} exceptions={exceptions} orders={orders} deployments={deployments} onNavigate={setTab} onOpenOrder={order => void openOrderDetail(order)} onOpenDeployment={setViewDeployment} />}
 
-            {tab === 'orders' && <AdminSection title="订单管理" description="核对用户订单、人工收款、取消待付订单与退款撤权。">
+            {tab === 'orders' && <AdminSection title="订单管理" description="核对用户订单、人工收款、取消待付订单与退款撤权。" action={<button type="button" className="admin-button secondary" onClick={() => setPaymentRuntimeOpen(true)}><Activity /> 支付记录</button>}>
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索订单号、用户、交易号或处理状态" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部处理状态'], ['paid_missing_entitlement', '已付款但缺少权益'], ['payment_attention', '支付链路需核对'], ['completed', '付款与权益完成'], ['paid_entitlement_inactive', '已付款但权益不可用'], ['pending_payment', '等待用户付款'], ['expired', '订单已过期'], ['cancelled', '订单已取消'], ['refunded', '订单已退款']]} />
               <AdminTable columns={['订单信息', '用户', '金额', '订单状态', '处理状态', '支付信息', '创建时间', '操作']} empty="没有符合条件的订单">
                 {filteredOrders.slice(pageStart, pageStart + PAGE_SIZE).map(order => <tr key={order.id}>
@@ -1047,64 +1095,28 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
                 <div className="admin-settings-content">
                   {settingsSection === 'general' && <>
-                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Settings /></span><div><h2>业务设置</h2><p>控制用户入口和交付接口的开放状态，并设置订单基础规则。</p></div></div></header>
+                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Settings /></span><div><h2>业务设置</h2><p>控制用户入口和交付接口，复杂参数通过弹窗集中编辑。</p></div></div><div className="admin-settings-head-actions">{settingsSaveAction}</div></header>
                     <section className="admin-settings-section">
                       <div className="admin-settings-section-title"><h3>业务开关</h3><p>保存后立即作用于用户端对应接口。</p></div>
                       <div className="admin-setting-list">
                         <SettingSwitch label="开放用户注册" description="关闭后，新用户注册接口将拒绝请求。" checked={settingsData.registrationEnabled} onChange={value => setSettingsData({ ...settingsData, registrationEnabled: value })} />
                         <SettingSwitch label="允许面板安装" description="关闭后，用户不能提交新的面板安装任务。" checked={settingsData.panelDeployEnabled} onChange={value => setSettingsData({ ...settingsData, panelDeployEnabled: value })} />
                         <SettingSwitch label="允许节点创建" description="关闭后，用户不能提交新的节点创建任务。" checked={settingsData.nodeDeployEnabled} onChange={value => setSettingsData({ ...settingsData, nodeDeployEnabled: value })} />
+                        <SettingSwitch label="显示悬浮咨询按钮" description="至少配置一种启用的联系方式后，用户端才会显示咨询入口。" checked={settingsData.contact.enabled} onChange={enabled => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, enabled } })} />
                       </div>
                     </section>
                     <section className="admin-settings-section">
-                      <div className="admin-settings-section-title"><h3>订单规则</h3><p>低频规则收纳在弹窗中，主页面只保留当前生效摘要。</p></div>
-                      <div className="admin-setting-summary">
-                        <span className="admin-setting-summary-icon amber"><Clock3 /></span>
-                        <div><strong>待付款订单保留 {settingsData.orderExpiryMinutes} 分钟</strong><p>{settingsData.paymentInstructions.trim() ? '已配置用户付款与联系说明' : '尚未填写用户付款与联系说明'}</p></div>
-                        <button type="button" className="admin-button secondary" onClick={() => setSettingsDialog('order')}><Pencil /> 编辑订单规则</button>
-                      </div>
-                    </section>
-                    <section className="admin-settings-section">
-                      <div className="admin-settings-section-title"><h3>卡密购买</h3><p>配置后用户账户页会显示购买卡密入口。</p></div>
-                      <div className="admin-settings-form">
-                        <label className="admin-field"><span>卡密购买链接</span><input type="url" value={settingsData.redeemCodePurchaseUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, redeemCodePurchaseUrl: event.target.value })} placeholder="https://example.com/buy" /><small>留空则不显示购买按钮，仅支持 HTTP 或 HTTPS。</small></label>
-                      </div>
-                    </section>
-                    <section className="admin-settings-section">
-                      <div className="admin-settings-section-title"><h3>咨询入口</h3><p>在公开首页和用户工作台右下角显示悬浮按钮，具体联系方式在下方独立管理。</p></div>
-                      <div className="admin-setting-list compact">
-                        <SettingSwitch label="显示悬浮咨询按钮" description="关闭后前台不显示咨询入口，已保存的内容和二维码仍会保留。至少填写一种联系方式后按钮才会出现。" checked={settingsData.contact.enabled} onChange={enabled => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, enabled } })} />
-                      </div>
-                      <div className="admin-settings-form contact-settings-form">
-                        <div className="admin-form-grid">
-                          <label className="admin-field"><span>悬浮按钮名称</span><input value={settingsData.contact.buttonLabel} maxLength={40} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, buttonLabel: event.target.value } })} placeholder="立即咨询" /><small>建议填写 2 到 10 个字符，例如“联系站长”或“技术支持”。</small></label>
-                          <label className="admin-field"><span>咨询弹窗标题</span><input value={settingsData.contact.title} maxLength={100} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, title: event.target.value } })} placeholder="联系站长" /></label>
-                          <label className="admin-field span-2"><span>咨询说明</span><textarea value={settingsData.contact.description} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, description: event.target.value } })} placeholder="例如：遇到搭建、支付或使用问题，可以联系站长处理。" /><small>{settingsData.contact.description.length} / 1000</small></label>
-                        </div>
-                      </div>
-                    </section>
-                    <section className="admin-settings-section flush">
-                      <div className="admin-contact-method-head"><div><h3>联系方式</h3><p>账号、联系链接和二维码按条绑定，最多配置 10 种。</p></div><div className="admin-settings-head-actions"><span className="admin-resource-count">{settingsData.contact.methods.length} / 10</span><button type="button" className="admin-button secondary" disabled={settingsData.contact.methods.length >= 10} onClick={openNewContactMethod}><PackagePlus /> 新增联系方式</button></div></div>
-                      <div className="admin-resource-table-wrap">
-                        <table className="admin-payment-table admin-contact-method-table">
-                          <thead><tr><th>名称</th><th>类型</th><th>账号或说明</th><th>排序</th><th>状态</th><th>二维码</th><th>操作</th></tr></thead>
-                          <tbody>{settingsData.contact.methods.map((method, index) => <tr key={`${method.id}-${index}`}>
-                            <td><div className="admin-payment-name"><span><Headphones /></span><div><strong>{method.name || '未命名联系方式'}</strong><small>{method.id}</small></div></div></td>
-                            <td>{contactTypeLabels[method.type]}</td>
-                            <td><span className="admin-result-text">{method.value || '-'}</span></td>
-                            <td>{method.sortOrder}</td>
-                            <td><div className="admin-payment-state"><StatusBadge status={method.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-checked={method.enabled} className={`admin-switch ${method.enabled ? 'on' : ''}`} onClick={() => updateContactMethod(index, { enabled: !method.enabled })}><span /></button></div></td>
-                            <td><div className="admin-contact-qr-actions"><span className={`admin-contact-qr-preview ${method.qrCodeUploaded || method.qrCodeUrl ? 'has-image' : ''}`}>{method.qrCodeUploaded ? <img src={`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`} alt="" /> : method.qrCodeUrl ? <img src={method.qrCodeUrl} alt="" /> : <QrCode />}</span><label className={`admin-icon-button small ${busy ? 'disabled' : ''}`} title="上传二维码"><Upload /><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(index, method, file); }} /></label>{method.qrCodeUploaded && <button type="button" className="admin-icon-button small danger" title="删除已上传二维码" disabled={busy} onClick={() => void deleteContactQr(index, method)}><Trash2 /></button>}</div></td>
-                            <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑联系方式" onClick={() => setEditingContactMethod({ index, method: { ...method } })}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除联系方式" onClick={() => setDeletingContactMethod({ index, method })}><X /></button></div></td>
-                          </tr>)}</tbody>
-                        </table>
-                        {!settingsData.contact.methods.length && <div className="admin-table-empty compact"><Headphones /><strong>暂无联系方式</strong><span>新增至少一种联系方式后，悬浮咨询按钮才会在前台显示。</span></div>}
+                      <div className="admin-settings-section-title"><h3>配置摘要</h3><p>点击设置后在弹窗中维护详细内容。</p></div>
+                      <div className="admin-settings-summary-list">
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('order')}><span className="admin-setting-summary-icon"><Clock3 /></span><span><strong>订单规则</strong><small>待付款订单保留 {settingsData.orderExpiryMinutes} 分钟 · {settingsData.paymentInstructions.trim() ? '已配置付款说明' : '未配置付款说明'}</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('redeem')}><span className="admin-setting-summary-icon"><KeyRound /></span><span><strong>卡密购买</strong><small>{settingsData.redeemCodePurchaseUrl.trim() ? '已配置购买链接' : '未配置购买链接'}</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('contact')}><span className="admin-setting-summary-icon"><Headphones /></span><span><strong>咨询窗口</strong><small>{settingsData.contact.methods.length} 种联系方式 · 按钮名称“{settingsData.contact.buttonLabel || '立即咨询'}”</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
                       </div>
                     </section>
                   </>}
 
                   {settingsSection === 'recommendations' && <>
-                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Building2 /></span><div><h2>资源推荐</h2><p>为用户提供简洁的服务器和住宅 IP 厂商入口，两类推荐合计最多配置 20 项。</p></div></div><div className="admin-settings-head-actions"><span className="admin-resource-count">{settingsData.recommendations.items.length} / 20</span><button type="button" className="admin-button secondary" disabled={settingsData.recommendations.items.length >= 20} onClick={openNewRecommendation}><PackagePlus /> 新增推荐</button></div></header>
+                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Building2 /></span><div><h2>资源推荐</h2><p>管理服务器与住宅 IP 厂商入口，详细资料在编辑弹窗中维护。</p></div></div><div className="admin-settings-head-actions"><span className="admin-resource-count">{settingsData.recommendations.items.length} / 20</span><button type="button" className="admin-button secondary" disabled={settingsData.recommendations.items.length >= 20} onClick={openNewRecommendation}><PackagePlus /> 新增推荐</button>{settingsSaveAction}</div></header>
                     <section className="admin-settings-section">
                       <div className="admin-settings-section-title"><h3>分类展示</h3><p>关闭分类后，该分类的全部推荐会从用户端隐藏，数据仍然保留。</p></div>
                       <div className="admin-setting-list compact">
@@ -1115,14 +1127,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                     <section className="admin-settings-section flush">
                       <div className="admin-resource-table-wrap">
                         <table className="admin-payment-table admin-resource-table">
-                          <thead><tr><th>厂商</th><th>分类</th><th>推荐简介</th><th>排序</th><th>状态</th><th>Logo</th><th>操作</th></tr></thead>
+                          <thead><tr><th>厂商</th><th>分类</th><th>状态</th><th>排序</th><th>操作</th></tr></thead>
                           <tbody>{settingsData.recommendations.items.map((item, index) => <tr key={`${item.id}-${index}`}>
                             <td><div className="admin-payment-name"><span>{item.logoUploaded ? <img src={`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo`} alt="" /> : item.logoUrl ? <img src={item.logoUrl} alt="" /> : <Building2 />}</span><div><strong>{item.name || '未命名厂商'}</strong><small>{item.id}</small></div></div></td>
                             <td>{item.category === 'server' ? '服务器' : '住宅 IP'}</td>
-                            <td><span className="admin-result-text">{item.description || '-'}</span></td>
-                            <td>{item.sortOrder}</td>
                             <td><div className="admin-payment-state"><StatusBadge status={item.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-checked={item.enabled} className={`admin-switch ${item.enabled ? 'on' : ''}`} onClick={() => updateRecommendation(index, { enabled: !item.enabled })}><span /></button></div></td>
-                            <td><div className="admin-resource-logo-actions"><button type="button" className="admin-icon-button small" title="从跳转链接自动获取 Logo" disabled={busy} onClick={() => void fetchRecommendationLogo(index, item)}><RefreshCw /></button><label className={`admin-icon-button small ${busy ? 'disabled' : ''}`} title="上传 Logo"><Upload /><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadRecommendationLogo(index, item, file); }} /></label>{item.logoUploaded && <button type="button" className="admin-icon-button small danger" title="删除已保存 Logo" disabled={busy} onClick={() => void deleteRecommendationLogo(index, item)}><Trash2 /></button>}</div></td>
+                            <td>{item.sortOrder}</td>
                             <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑推荐" onClick={() => setEditingRecommendation({ index, item: { ...item } })}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除推荐" onClick={() => setDeletingRecommendation({ index, item })}><X /></button></div></td>
                           </tr>)}</tbody>
                         </table>
@@ -1132,7 +1142,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                   </>}
 
                   {settingsSection === 'email' && <>
-                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Mail /></span><div><h2>邮箱服务</h2><p>用于注册验证码、密码找回和系统邮件，密码仅加密存储。</p></div></div></header>
+                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Mail /></span><div><h2>邮箱服务</h2><p>查看当前邮件配置状态，需要修改时进入对应弹窗。</p></div></div><div className="admin-settings-head-actions">{settingsSaveAction}</div></header>
                     <section className="admin-settings-section">
                       <div className="admin-setting-list compact">
                         <SettingSwitch label="启用 SMTP 邮件服务" description="启用后才可发送验证码、找回密码邮件和测试邮件。" checked={settingsData.email.emailEnabled} onChange={value => setSettingsData({ ...settingsData, email: { ...settingsData.email, emailEnabled: value } })} />
@@ -1140,18 +1150,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                       </div>
                     </section>
                     <section className="admin-settings-section">
-                      <div className="admin-settings-section-title"><h3>邮件配置</h3><p>按职责分别维护连接、发件身份和验证码策略。</p></div>
-                      <div className="admin-config-grid">
-                        <button type="button" className="admin-config-card cyan" onClick={() => setSettingsDialog('smtp')}><span><Network /></span><div><strong>SMTP 连接</strong><p>{settingsData.email.smtpHost ? `${settingsData.email.smtpHost}:${settingsData.email.smtpPort}` : '尚未配置邮件服务器'}</p><small>{settingsData.email.smtpPasswordConfigured || settingsData.email.smtpPassword ? '授权凭据已配置' : '需要填写授权凭据'}</small></div><ChevronRight /></button>
-                        <button type="button" className="admin-config-card emerald" onClick={() => setSettingsDialog('sender')}><span><Mail /></span><div><strong>发件身份</strong><p>{settingsData.email.smtpFromEmail || '尚未配置发件邮箱'}</p><small>{settingsData.email.smtpFromName || settingsData.email.siteName}</small></div><ChevronRight /></button>
-                        <button type="button" className="admin-config-card amber" onClick={() => setSettingsDialog('verification')}><span><Clock3 /></span><div><strong>验证码规则</strong><p>有效 {settingsData.email.verificationCodeTtlMinutes} 分钟，{settingsData.email.verificationResendSeconds} 秒后可重发</p><small>{settingsData.email.emailVerificationRequired ? '注册必须完成邮箱验证' : '注册邮箱验证未强制'}</small></div><ChevronRight /></button>
-                        <button type="button" className="admin-config-card violet" onClick={() => setSettingsDialog('test-email')}><span><Send /></span><div><strong>发送测试邮件</strong><p>验证当前已保存的 SMTP 配置</p><small>建议修改设置并保存后再测试</small></div><ChevronRight /></button>
+                      <div className="admin-settings-section-title"><h3>配置状态</h3><p>配置项按职责拆分，避免在主页面铺开表单。</p></div>
+                      <div className="admin-settings-summary-list">
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('smtp')}><span className="admin-setting-summary-icon"><Network /></span><span><strong>SMTP 连接</strong><small>{settingsData.email.smtpHost ? `${settingsData.email.smtpHost}:${settingsData.email.smtpPort}` : '尚未配置邮件服务器'} · {settingsData.email.smtpPasswordConfigured || settingsData.email.smtpPassword ? '凭据已配置' : '缺少凭据'}</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('sender')}><span className="admin-setting-summary-icon"><Mail /></span><span><strong>发件身份</strong><small>{settingsData.email.smtpFromEmail || '尚未配置发件邮箱'} · {settingsData.email.smtpFromName || settingsData.email.siteName}</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('verification')}><span className="admin-setting-summary-icon"><Clock3 /></span><span><strong>验证码规则</strong><small>有效 {settingsData.email.verificationCodeTtlMinutes} 分钟 · {settingsData.email.verificationResendSeconds} 秒后可重发</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('test-email')}><span className="admin-setting-summary-icon"><Send /></span><span><strong>邮件检测</strong><small>使用当前已保存的 SMTP 配置发送测试邮件</small></span><span className="admin-settings-row-action">发送测试 <ChevronRight /></span></button>
                       </div>
                     </section>
                   </>}
 
                   {settingsSection === 'payments' && <>
-                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><CreditCard /></span><div><h2>支付渠道</h2><p>{settingsData.paymentMethods.some(method => method.enabled) ? '启用后的渠道会显示在用户下单流程中；也可以全部停用，仅保留卡密购买与兑换。' : '当前为仅卡密模式，用户端不会显示在线支付渠道。'}</p></div></div><div className="admin-settings-head-actions"><button type="button" className="admin-button secondary" disabled={!settingsData.paymentMethods.some(method => method.enabled)} onClick={disableAllPaymentMethods}><PowerOff /> 仅使用卡密</button><button type="button" className="admin-button secondary" onClick={openNewPaymentMethod}><PackagePlus /> 新增支付方式</button></div></header>
+                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><CreditCard /></span><div><h2>支付渠道</h2><p>{settingsData.paymentMethods.some(method => method.enabled) ? '已启用的渠道会显示在用户下单流程中。' : '当前为仅卡密模式，用户端不会显示在线支付渠道。'}</p></div></div><div className="admin-settings-head-actions"><button type="button" className="admin-button secondary" disabled={!settingsData.paymentMethods.some(method => method.enabled)} onClick={disableAllPaymentMethods}><PowerOff /> 仅使用卡密</button><button type="button" className="admin-button secondary" onClick={openNewPaymentMethod}><PackagePlus /> 新增支付方式</button>{settingsSaveAction}</div></header>
                     <section className="admin-settings-section flush">
                       <div className="admin-payment-table-wrap">
                         <table className="admin-payment-table">
@@ -1161,7 +1171,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                             <td>{paymentProviderText(method)}</td>
                             <td>{paymentChannelText(method)}</td>
                             <td>{method.callbackUrl ? <button type="button" className="admin-callback-copy" title={method.callbackUrl} onClick={() => void copyToClipboard(method.callbackUrl || '').then(success => showToast(success ? '回调地址已复制' : '复制失败', success ? method.callbackUrl : '请手动复制回调地址', success ? 'success' : 'error'))}><ClipboardCopy /><span>复制回调</span></button> : <span className="admin-muted">无需回调</span>}</td>
-                            <td><div className="admin-payment-check"><button type="button" className="admin-button secondary compact" disabled={paymentCheckBusy === method.id || !savedPaymentMethodIds.includes(method.id)} title={savedPaymentMethodIds.includes(method.id) ? '检测已保存的支付配置' : '请先保存全部设置'} onClick={() => void checkPaymentMethod(method)}><RefreshCw className={paymentCheckBusy === method.id ? 'spinning' : ''} /> 检测</button>{paymentChecks[method.id] && <div className={`admin-payment-check-result ${paymentChecks[method.id].status}`}><strong>{paymentCheckLabel(paymentChecks[method.id].status)}</strong><span>{paymentChecks[method.id].message}</span></div>}{!savedPaymentMethodIds.includes(method.id) && <small>保存后可检测</small>}</div></td>
+                            <td><div className="admin-payment-check"><button type="button" className="admin-button secondary compact" disabled={paymentCheckBusy === method.id || !savedPaymentMethodIds.includes(method.id)} title={savedPaymentMethodIds.includes(method.id) ? '检测已保存的支付配置' : '请先保存更改'} onClick={() => void checkPaymentMethod(method)}><RefreshCw className={paymentCheckBusy === method.id ? 'spinning' : ''} /> 检测</button>{paymentChecks[method.id] && <div className={`admin-payment-check-result ${paymentChecks[method.id].status}`}><strong>{paymentCheckLabel(paymentChecks[method.id].status)}</strong><span>{paymentChecks[method.id].message}</span></div>}{!savedPaymentMethodIds.includes(method.id) && <small>保存后可检测</small>}</div></td>
                             <td>{method.sortOrder}</td>
                             <td><div className="admin-payment-state"><StatusBadge status={method.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-label={`${method.enabled ? '停用' : '启用'} ${method.name}`} aria-checked={method.enabled} className={`admin-switch ${method.enabled ? 'on' : ''}`} onClick={() => updatePaymentMethod(index, { enabled: !method.enabled })}><span /></button></div></td>
                             <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑支付方式" onClick={() => setEditingPaymentMethod({ index, method: { ...method } })}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除支付方式" onClick={() => setDeletingPaymentMethod({ index, method })}><X /></button></div></td>
@@ -1170,15 +1180,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                         {!settingsData.paymentMethods.length && <div className="admin-table-empty compact"><CreditCard /><strong>暂无支付方式</strong><span>新增并启用支付方式后，用户才能在下单时选择付款渠道。</span></div>}
                       </div>
                     </section>
-                    <section className="admin-settings-section">
-                      <div className="admin-settings-section-title"><h3>支付运行记录</h3><p>用于核对下单请求、异步通知验签和自动发放结果，敏感字段已脱敏。</p></div>
-                      <div className="admin-payment-runtime-grid">
-                        <div className="admin-payment-runtime-panel"><header><div><strong>最近支付请求</strong><small>{paymentAttempts.length} 条记录</small></div><RefreshCw /></header><div className="admin-payment-runtime-list">{paymentAttempts.slice(0, 8).map(item => <article key={item.id}><span className={`admin-payment-dot ${item.status}`} /><div><strong>{item.orderNo}</strong><small>{paymentChannelName(item.provider, settingsData.paymentMethods)} · {formatDate(item.createdAt)}</small>{item.errorMessage && <p>{item.errorMessage}</p>}</div><StatusBadge status={item.status} /></article>)}{!paymentAttempts.length && <EmptyInline text="暂无支付请求记录" />}</div></div>
-                        <div className="admin-payment-runtime-panel"><header><div><strong>最近异步通知</strong><small>{paymentNotifications.length} 条记录</small></div><ShieldCheck /></header><div className="admin-payment-runtime-list">{paymentNotifications.slice(0, 8).map(item => <article key={item.id}><span className={`admin-payment-dot ${item.status}`} /><div><strong>{item.orderNo || '未识别订单号'}</strong><small>{paymentProviderName(item.provider)} · {formatDate(item.createdAt)}</small>{item.errorMessage && <p>{item.errorMessage}</p>}</div><StatusBadge status={item.status} /></article>)}{!paymentNotifications.length && <EmptyInline text="暂无支付回调记录" />}</div></div>
-                      </div>
-                    </section>
                   </>}
-                  <footer className="admin-settings-savebar"><div><Save /><span><strong>统一保存系统设置</strong><small>当前分类与其他分类的修改会一并提交。</small></span></div><button className="admin-button primary" disabled={busy} onClick={() => void saveSettings()}><Save /> {busy ? '正在保存' : '保存全部设置'}</button></footer>
                 </div>
               </div>
             </AdminSection>}
@@ -1235,13 +1237,38 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         <div className="admin-redeem-result-actions"><button type="button" className="admin-button secondary" onClick={() => void copyCreatedRedeemCodes()}><ClipboardCopy /> 复制全部</button><button type="button" className="admin-button secondary" onClick={downloadCreatedRedeemCodes}><Download /> 下载 TXT</button></div>
         <div className="admin-redeem-result-list">{createdRedeemCodes.map(item => <code key={item.id}>{item.code}</code>)}</div>
       </AdminDialog>
-      <AdminDialog open={settingsDialog === 'order'} title="编辑订单规则" description="设置待付款订单的保留时间和用户付款引导，确认后仍需保存全部设置才会生效。" confirmLabel="完成编辑" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+      <AdminDialog open={settingsDialog === 'order'} title="编辑订单规则" description="设置待付款订单的保留时间和用户付款引导，确认后仍需保存更改才会生效。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid one">
           <label className="admin-field"><span>订单有效期（分钟）</span><NumberInput min="5" max="1440" value={settingsData.orderExpiryMinutes} onValueChange={orderExpiryMinutes => setSettingsData({ ...settingsData, orderExpiryMinutes })} /><small>超过有效期的未支付订单将不能继续付款。</small></label>
           <label className="admin-field"><span>支付与联系说明</span><textarea value={settingsData.paymentInstructions} maxLength={2000} onChange={event => setSettingsData({ ...settingsData, paymentInstructions: event.target.value })} placeholder="填写收款方式、联系渠道和订单备注要求" /><small>{settingsData.paymentInstructions.length} / 2000</small></label>
         </div>
       </AdminDialog>
-      <AdminDialog open={settingsDialog === 'smtp'} title="配置 SMTP 连接" description="填写邮件服务商提供的服务器、账号和授权码，密码保存后不会回传明文。" confirmLabel="完成编辑" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+      <AdminDialog open={settingsDialog === 'redeem'} title="设置卡密购买入口" description="配置后，用户可以从订单和账户相关页面前往指定链接购买卡密。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+        <label className="admin-field"><span>卡密购买链接</span><input type="url" value={settingsData.redeemCodePurchaseUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, redeemCodePurchaseUrl: event.target.value })} placeholder="https://example.com/buy" /><small>留空则不显示购买按钮，仅支持 HTTP 或 HTTPS。</small></label>
+      </AdminDialog>
+      <AdminDialog open={settingsDialog === 'contact'} size="wide" title="设置咨询窗口" description="统一管理悬浮按钮文案、咨询说明和各联系方式对应的账号、链接与二维码。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+        <div className="admin-form-grid contact-settings-form">
+          <label className="admin-field"><span>悬浮按钮名称</span><input value={settingsData.contact.buttonLabel} maxLength={40} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, buttonLabel: event.target.value } })} placeholder="立即咨询" /></label>
+          <label className="admin-field"><span>咨询弹窗标题</span><input value={settingsData.contact.title} maxLength={100} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, title: event.target.value } })} placeholder="联系站长" /></label>
+          <label className="admin-field span-2"><span>咨询说明</span><textarea value={settingsData.contact.description} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, description: event.target.value } })} placeholder="例如：遇到搭建、支付或使用问题，可以联系站长处理。" /><small>{settingsData.contact.description.length} / 1000</small></label>
+        </div>
+        <div className="admin-dialog-subsection-head"><div><strong>联系方式</strong><small>每条联系方式独立绑定账号、链接和二维码，最多 10 种。</small></div><button type="button" className="admin-button secondary" disabled={settingsData.contact.methods.length >= 10} onClick={openNewContactMethod}><PackagePlus /> 新增联系方式</button></div>
+        <div className="admin-resource-table-wrap">
+          <table className="admin-payment-table admin-contact-method-table compact-columns">
+            <thead><tr><th>名称</th><th>类型</th><th>账号或说明</th><th>状态</th><th>二维码</th><th>操作</th></tr></thead>
+            <tbody>{settingsData.contact.methods.map((method, index) => <tr key={`${method.id}-${index}`}>
+              <td><div className="admin-payment-name"><span><Headphones /></span><div><strong>{method.name || '未命名联系方式'}</strong><small>{method.id}</small></div></div></td>
+              <td>{contactTypeLabels[method.type]}</td>
+              <td><span className="admin-result-text">{method.value || '-'}</span></td>
+              <td><div className="admin-payment-state"><StatusBadge status={method.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-checked={method.enabled} className={`admin-switch ${method.enabled ? 'on' : ''}`} onClick={() => updateContactMethod(index, { enabled: !method.enabled })}><span /></button></div></td>
+              <td><div className="admin-contact-qr-actions"><span className={`admin-contact-qr-preview ${method.qrCodeUploaded || method.qrCodeUrl ? 'has-image' : ''}`}>{method.qrCodeUploaded ? <img src={`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`} alt="" /> : method.qrCodeUrl ? <img src={method.qrCodeUrl} alt="" /> : <QrCode />}</span><label className={`admin-icon-button small ${busy ? 'disabled' : ''}`} title="上传二维码"><Upload /><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(index, method, file); }} /></label>{method.qrCodeUploaded && <button type="button" className="admin-icon-button small danger" title="删除已上传二维码" disabled={busy} onClick={() => void deleteContactQr(index, method)}><Trash2 /></button>}</div></td>
+              <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑联系方式" onClick={() => openContactMethodEditor(index, method)}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除联系方式" onClick={() => openContactMethodDelete(index, method)}><X /></button></div></td>
+            </tr>)}</tbody>
+          </table>
+          {!settingsData.contact.methods.length && <div className="admin-table-empty compact"><Headphones /><strong>暂无联系方式</strong><span>新增至少一种联系方式后，悬浮咨询按钮才会在前台显示。</span></div>}
+        </div>
+      </AdminDialog>
+      <AdminDialog open={settingsDialog === 'smtp'} title="配置 SMTP 连接" description="填写邮件服务商提供的服务器、账号和授权码，密码保存后不会回传明文。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid">
           <label className="admin-field"><span>SMTP 主机</span><input value={settingsData.email.smtpHost} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpHost: event.target.value } })} placeholder="smtp.example.com" /></label>
           <label className="admin-field"><span>SMTP 端口</span><NumberInput min="1" max="65535" value={settingsData.email.smtpPort} onValueChange={smtpPort => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpPort } })} /></label>
@@ -1250,7 +1277,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <label className="admin-field span-2"><span>SMTP 密码或授权码</span><input type="password" value={settingsData.email.smtpPassword || ''} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpPassword: event.target.value } })} placeholder={settingsData.email.smtpPasswordConfigured ? '已配置，留空保持不变' : '填写密码或授权码'} /><small>保存后不会再向前端回传明文。</small></label>
         </div>
       </AdminDialog>
-      <AdminDialog open={settingsDialog === 'sender'} title="配置发件身份" description="这些信息会显示在验证码、密码找回和系统通知邮件中。" confirmLabel="完成编辑" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+      <AdminDialog open={settingsDialog === 'sender'} title="配置发件身份" description="这些信息会显示在验证码、密码找回和系统通知邮件中。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid">
           <label className="admin-field"><span>发件人名称</span><input value={settingsData.email.smtpFromName} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpFromName: event.target.value } })} /></label>
           <label className="admin-field"><span>发件邮箱</span><input type="email" value={settingsData.email.smtpFromEmail} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpFromEmail: event.target.value } })} /></label>
@@ -1259,27 +1286,36 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <label className="admin-field span-2"><span>公网访问地址</span><input type="url" value={settingsData.email.publicBaseUrl} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, publicBaseUrl: event.target.value } })} placeholder="https://your-domain.com，用于邮件链接和支付异步回调" /></label>
         </div>
       </AdminDialog>
-      <AdminDialog open={settingsDialog === 'verification'} title="配置验证码规则" description="设置邮箱验证码的有效时间与重复发送间隔。" confirmLabel="完成编辑" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+      <AdminDialog open={settingsDialog === 'verification'} title="配置验证码规则" description="设置邮箱验证码的有效时间与重复发送间隔。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid">
           <label className="admin-field"><span>验证码有效期（分钟）</span><NumberInput min="3" max="60" value={settingsData.email.verificationCodeTtlMinutes} onValueChange={verificationCodeTtlMinutes => setSettingsData({ ...settingsData, email: { ...settingsData.email, verificationCodeTtlMinutes } })} /></label>
           <label className="admin-field"><span>重发间隔（秒）</span><NumberInput min="30" max="600" value={settingsData.email.verificationResendSeconds} onValueChange={verificationResendSeconds => setSettingsData({ ...settingsData, email: { ...settingsData.email, verificationResendSeconds } })} /></label>
         </div>
       </AdminDialog>
-      <AdminDialog open={settingsDialog === 'test-email'} title="发送测试邮件" description="测试接口使用已经保存到后端的 SMTP 设置，请先保存全部设置。" confirmLabel="发送测试邮件" busy={busy} confirmDisabled={!testEmailRecipient.trim()} onClose={() => setSettingsDialog(null)} onConfirm={() => void testEmail()}>
+      <AdminDialog open={settingsDialog === 'test-email'} title="发送测试邮件" description="测试接口使用已经保存到后端的 SMTP 设置，请先保存更改。" confirmLabel="发送测试邮件" busy={busy} confirmDisabled={!testEmailRecipient.trim()} onClose={() => setSettingsDialog(null)} onConfirm={() => void testEmail()}>
         <label className="admin-field"><span>测试收件邮箱</span><input type="email" value={testEmailRecipient} onChange={event => setTestEmailRecipient(event.target.value)} placeholder="name@example.com" /></label>
       </AdminDialog>
-      <AdminDialog open={Boolean(editingPaymentMethod)} title={editingPaymentMethod?.index === -1 ? '新增支付方式' : '编辑支付方式'} description="支付方式会先保存在当前设置草稿中，点击页面右上角“保存全部设置”后正式生效。" confirmLabel="保存支付方式" busy={busy} confirmDisabled={!editingPaymentMethod?.method.name.trim() || !editingPaymentMethod?.method.id.trim()} onClose={() => setEditingPaymentMethod(null)} onConfirm={savePaymentMethodDraft}>
-        {editingPaymentMethod && <PaymentMethodEditor method={editingPaymentMethod.method} onChange={method => setEditingPaymentMethod({ ...editingPaymentMethod, method })} />}
+      <AdminDialog open={paymentRuntimeOpen} size="wide" title="支付运行记录" description="核对最近的支付请求、异步通知验签与自动发放结果，敏感字段已脱敏。" cancelLabel="关闭" onClose={() => setPaymentRuntimeOpen(false)}>
+        <div className="admin-payment-runtime-grid">
+          <div className="admin-payment-runtime-panel"><header><div><strong>最近支付请求</strong><small>{paymentAttempts.length} 条记录</small></div><RefreshCw /></header><div className="admin-payment-runtime-list">{paymentAttempts.slice(0, 20).map(item => <article key={item.id}><span className={`admin-payment-dot ${item.status}`} /><div><strong>{item.orderNo}</strong><small>{paymentChannelName(item.provider, settingsData.paymentMethods)} · {formatDate(item.createdAt)}</small>{item.errorMessage && <p>{item.errorMessage}</p>}</div><StatusBadge status={item.status} /></article>)}{!paymentAttempts.length && <EmptyInline text="暂无支付请求记录" />}</div></div>
+          <div className="admin-payment-runtime-panel"><header><div><strong>最近异步通知</strong><small>{paymentNotifications.length} 条记录</small></div><ShieldCheck /></header><div className="admin-payment-runtime-list">{paymentNotifications.slice(0, 20).map(item => <article key={item.id}><span className={`admin-payment-dot ${item.status}`} /><div><strong>{item.orderNo || '未识别订单号'}</strong><small>{paymentProviderName(item.provider)} · {formatDate(item.createdAt)}</small>{item.errorMessage && <p>{item.errorMessage}</p>}</div><StatusBadge status={item.status} /></article>)}{!paymentNotifications.length && <EmptyInline text="暂无支付回调记录" />}</div></div>
+        </div>
       </AdminDialog>
-      <AdminDialog open={Boolean(deletingPaymentMethod)} title="删除支付方式" description={`将从设置草稿中删除“${deletingPaymentMethod?.method.name || '未命名支付方式'}”，保存全部设置后正式生效。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingPaymentMethod(null)} onConfirm={() => { if (deletingPaymentMethod) removePaymentMethod(deletingPaymentMethod.index); setDeletingPaymentMethod(null); }} />
-      <AdminDialog open={Boolean(editingRecommendation)} title={editingRecommendation?.index === -1 ? '新增资源推荐' : '编辑资源推荐'} description="推荐项先保存在当前设置草稿中，点击页面右上角“保存全部设置”后正式生效。" confirmLabel="保存推荐项" busy={busy} confirmDisabled={!editingRecommendation?.item.name.trim() || !editingRecommendation?.item.id.trim() || !editingRecommendation?.item.purchaseUrl.trim()} onClose={() => setEditingRecommendation(null)} onConfirm={saveRecommendationDraft}>
-        {editingRecommendation && <ResourceRecommendationEditor item={editingRecommendation.item} onChange={item => setEditingRecommendation({ ...editingRecommendation, item })} />}
+      <AdminDialog open={Boolean(editingPaymentMethod)} title={editingPaymentMethod?.index === -1 ? '新增支付方式' : '编辑支付方式'} description="支付方式会先保存在当前设置草稿中，点击页面右上角“保存更改”后正式生效。" confirmLabel="保存支付方式" busy={busy} confirmDisabled={!editingPaymentMethod?.method.name.trim() || !editingPaymentMethod?.method.id.trim()} onClose={() => setEditingPaymentMethod(null)} onConfirm={savePaymentMethodDraft}>
+        {editingPaymentMethod && <PaymentMethodEditor method={editingPaymentMethod.method} idLocked={editingPaymentMethod.index >= 0} onChange={method => setEditingPaymentMethod({ ...editingPaymentMethod, method })} />}
+      </AdminDialog>
+      <AdminDialog open={Boolean(deletingPaymentMethod)} title="删除支付方式" description={`将从设置草稿中删除“${deletingPaymentMethod?.method.name || '未命名支付方式'}”，保存更改后正式生效。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingPaymentMethod(null)} onConfirm={() => { if (deletingPaymentMethod) removePaymentMethod(deletingPaymentMethod.index); setDeletingPaymentMethod(null); }} />
+      <AdminDialog open={Boolean(editingRecommendation)} size="wide" title={editingRecommendation?.index === -1 ? '新增资源推荐' : '编辑资源推荐'} description="推荐项先保存在当前设置草稿中，点击页面右上角“保存更改”后正式生效。" confirmLabel="保存推荐项" busy={busy} confirmDisabled={!editingRecommendation?.item.name.trim() || !editingRecommendation?.item.id.trim() || !editingRecommendation?.item.purchaseUrl.trim()} onClose={() => setEditingRecommendation(null)} onConfirm={saveRecommendationDraft}>
+        {editingRecommendation && <>
+          <ResourceRecommendationEditor item={editingRecommendation.item} idLocked={editingRecommendation.index >= 0} onChange={item => setEditingRecommendation({ ...editingRecommendation, item })} />
+          {editingRecommendation.index >= 0 && <div className="admin-dialog-subsection-head"><div><strong>Logo 管理</strong><small>可以从厂商链接自动获取，也可以上传本地图片。</small></div><div className="admin-resource-logo-actions"><button type="button" className="admin-button secondary" disabled={busy} onClick={() => void fetchRecommendationLogo(editingRecommendation.index, editingRecommendation.item)}><RefreshCw /> 自动获取</button><label className={`admin-button secondary ${busy ? 'disabled' : ''}`}><Upload /> 上传 Logo<input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadRecommendationLogo(editingRecommendation.index, editingRecommendation.item, file); }} /></label>{editingRecommendation.item.logoUploaded && <button type="button" className="admin-button danger" disabled={busy} onClick={() => void deleteRecommendationLogo(editingRecommendation.index, editingRecommendation.item)}><Trash2 /> 删除 Logo</button>}</div></div>}
+        </>}
       </AdminDialog>
       <AdminDialog open={Boolean(deletingRecommendation)} title="删除资源推荐" description={`将从设置草稿中删除“${deletingRecommendation?.item.name || '未命名厂商'}”。已上传的 Logo 可继续保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingRecommendation(null)} onConfirm={() => { if (deletingRecommendation) removeRecommendation(deletingRecommendation.index); setDeletingRecommendation(null); }} />
-      <AdminDialog open={Boolean(editingContactMethod)} title={editingContactMethod?.index === -1 ? '新增联系方式' : '编辑联系方式'} description="账号、链接和二维码会绑定在同一条联系方式中；完成编辑后仍需保存全部设置才会生效。" confirmLabel="保存联系方式" busy={busy} confirmDisabled={!editingContactMethod?.method.name.trim() || !editingContactMethod?.method.id.trim()} onClose={() => setEditingContactMethod(null)} onConfirm={saveContactMethodDraft}>
-        {editingContactMethod && <ContactMethodEditor method={editingContactMethod.method} onChange={method => setEditingContactMethod({ ...editingContactMethod, method })} />}
+      <AdminDialog open={Boolean(editingContactMethod)} title={editingContactMethod?.index === -1 ? '新增联系方式' : '编辑联系方式'} description="账号、链接和二维码会绑定在同一条联系方式中；完成编辑后仍需保存更改才会生效。" confirmLabel="保存联系方式" busy={busy} confirmDisabled={!editingContactMethod?.method.name.trim() || !editingContactMethod?.method.id.trim()} onClose={returnToContactSettings} onConfirm={saveContactMethodDraft}>
+        {editingContactMethod && <ContactMethodEditor method={editingContactMethod.method} idLocked={editingContactMethod.index >= 0} onChange={method => setEditingContactMethod({ ...editingContactMethod, method })} />}
       </AdminDialog>
-      <AdminDialog open={Boolean(deletingContactMethod)} title="删除联系方式" description={`将从设置草稿中删除“${deletingContactMethod?.method.name || '未命名联系方式'}”。已上传的二维码会保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingContactMethod(null)} onConfirm={() => { if (deletingContactMethod) removeContactMethod(deletingContactMethod.index); setDeletingContactMethod(null); }} />
+      <AdminDialog open={Boolean(deletingContactMethod)} title="删除联系方式" description={`将从设置草稿中删除“${deletingContactMethod?.method.name || '未命名联系方式'}”。已上传的二维码会保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={returnToContactSettings} onConfirm={() => { if (deletingContactMethod) removeContactMethod(deletingContactMethod.index); returnToContactSettings(); }} />
       <AdminDialog open={Boolean(paymentOrder)} title="确认人工收款" description="确认后将按照下单时的套餐快照发放权益，此操作会直接改变用户可用次数。" confirmLabel="确认收款并发放权益" tone="success" busy={busy} confirmDisabled={!tradeNo.trim()} onClose={() => { setPaymentOrder(null); setTradeNo(''); }} onConfirm={() => void confirmPayment()}>
         {paymentOrder && <div className="admin-dialog-summary"><div><span>订单号</span><strong>{paymentOrder.orderNo}</strong></div><div><span>用户</span><strong>{paymentOrder.username || '-'}</strong></div><div><span>金额</span><strong>{formatMoney(paymentOrder.amountCents)}</strong></div></div>}
         <label className="admin-field"><span>支付交易号或收款凭证号</span><input value={tradeNo} onChange={event => setTradeNo(event.target.value)} maxLength={128} placeholder="请输入唯一的交易号，便于后续核对" /><small>该编号会写入订单和支付事件记录。</small></label>
@@ -1480,25 +1516,25 @@ const QuotaDialog: React.FC<{ value: Entitlement | null; busy: boolean; onChange
   <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={value.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...value, concurrencyLimit })} /></label>
 </div>}</AdminDialog>;
 
-const ContactMethodEditor: React.FC<{ method: ContactMethod; onChange: (method: ContactMethod) => void }> = ({ method, onChange }) => {
+const ContactMethodEditor: React.FC<{ method: ContactMethod; idLocked: boolean; onChange: (method: ContactMethod) => void }> = ({ method, idLocked, onChange }) => {
   const patch = (value: Partial<ContactMethod>) => onChange({ ...method, ...value });
   return <div className="admin-form-grid">
     <label className="admin-field"><span>联系方式类型</span><select value={method.type} onChange={event => { const type = event.target.value as ContactMethod['type']; patch({ type, name: method.name === contactTypeLabels[method.type] ? contactTypeLabels[type] : method.name }); }}>{Object.entries(contactTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-    <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={40} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>用于独立保存二维码，保存后不建议修改。</small></label>
+    <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={40} disabled={idLocked} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>{idLocked ? '已用于绑定二维码，创建后不可修改。' : '用于独立保存二维码，创建后不可修改。'}</small></label>
     <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={80} onChange={event => patch({ name: event.target.value })} placeholder={contactTypeLabels[method.type]} /></label>
     <label className="admin-field"><span>显示排序</span><NumberInput min="-9999" max="9999" value={method.sortOrder} onValueChange={sortOrder => patch({ sortOrder })} /></label>
     <label className="admin-field span-2"><span>账号或联系信息</span><textarea value={method.value} maxLength={1000} onChange={event => patch({ value: event.target.value })} placeholder="例如：example、@example、support@example.com" /><small>这里填写的内容会和本条二维码一起显示。</small></label>
     <label className="admin-field span-2"><span>联系链接</span><input value={method.contactUrl} maxLength={1000} onChange={event => patch({ contactUrl: event.target.value })} placeholder="https://t.me/example、mailto:support@example.com 或 tel:+8613800000000" /><small>可选，支持 HTTP、HTTPS、mailto 和 tel。</small></label>
-    <label className="admin-field span-2"><span>二维码图片地址</span><input type="url" value={method.qrCodeUrl} maxLength={1000} onChange={event => patch({ qrCodeUrl: event.target.value })} placeholder="https://example.com/contact.png" /><small>可选。保存全部设置后也可在列表中上传图片，上传图片优先显示。</small></label>
+    <label className="admin-field span-2"><span>二维码图片地址</span><input type="url" value={method.qrCodeUrl} maxLength={1000} onChange={event => patch({ qrCodeUrl: event.target.value })} placeholder="https://example.com/contact.png" /><small>可选。保存更改后也可在列表中上传图片，上传图片优先显示。</small></label>
     <label className="admin-checkbox span-2"><input type="checkbox" checked={method.enabled} onChange={event => patch({ enabled: event.target.checked })} /><span><strong>启用此联系方式</strong><small>关闭后该方式从用户咨询弹窗隐藏，配置和二维码仍然保留。</small></span></label>
   </div>;
 };
 
-const ResourceRecommendationEditor: React.FC<{ item: ResourceRecommendation; onChange: (item: ResourceRecommendation) => void }> = ({ item, onChange }) => {
+const ResourceRecommendationEditor: React.FC<{ item: ResourceRecommendation; idLocked: boolean; onChange: (item: ResourceRecommendation) => void }> = ({ item, idLocked, onChange }) => {
   const patch = (value: Partial<ResourceRecommendation>) => onChange({ ...item, ...value });
   return <div className="admin-form-grid">
     <label className="admin-field"><span>推荐分类</span><select value={item.category} onChange={event => patch({ category: event.target.value as ResourceRecommendation['category'] })}><option value="server">服务器厂商</option><option value="residential_ip">住宅 IP 厂商</option></select></label>
-    <label className="admin-field"><span>唯一标识</span><input value={item.id} maxLength={40} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>用于 Logo 存储，保存后不建议修改。</small></label>
+    <label className="admin-field"><span>唯一标识</span><input value={item.id} maxLength={40} disabled={idLocked} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>{idLocked ? '已用于绑定 Logo，创建后不可修改。' : '用于 Logo 存储，创建后不可修改。'}</small></label>
     <label className="admin-field"><span>厂商名称</span><input value={item.name} maxLength={80} onChange={event => patch({ name: event.target.value })} /></label>
     <label className="admin-field"><span>推荐标签</span><input value={item.badge} maxLength={30} onChange={event => patch({ badge: event.target.value })} placeholder="例如：新手推荐" /></label>
     <label className="admin-field span-2"><span>简短介绍</span><textarea value={item.description} maxLength={500} onChange={event => patch({ description: event.target.value })} placeholder="简要说明厂商特点和适用场景" /><small>{item.description.length} / 500</small></label>
@@ -1511,7 +1547,7 @@ const ResourceRecommendationEditor: React.FC<{ item: ResourceRecommendation; onC
   </div>;
 };
 
-const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: PaymentMethod) => void }> = ({ method, onChange }) => {
+const PaymentMethodEditor: React.FC<{ method: PaymentMethod; idLocked: boolean; onChange: (method: PaymentMethod) => void }> = ({ method, idLocked, onChange }) => {
   const provider = paymentProvider(method);
   const patch = (value: Partial<PaymentMethod>) => onChange({ ...method, ...value });
   const secretPlaceholder = method.merchantSecretConfigured ? '已配置，留空保持不变' : '请输入密钥';
@@ -1519,7 +1555,7 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
   const apiV3Placeholder = method.apiV3KeyConfigured ? '已配置，留空保持不变' : '输入 32 位 API v3 密钥';
   return <div className="admin-form-grid">
     <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={40} onChange={event => patch({ name: event.target.value })} /></label>
-    <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={32} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>订单创建后不建议修改已有标识。</small></label>
+    <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={32} disabled={idLocked} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>{idLocked ? '已用于订单和回调匹配，创建后不可修改。' : '用于订单和回调匹配，创建后不可修改。'}</small></label>
     <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, enabledChannels: next === 'epay' ? method.enabledChannels || [method.channel || 'alipay'] : method.enabledChannels, currency: defaultPaymentCurrency(next, method) }); }}>
       {provider === 'manual' && <option value="manual">人工收款（历史配置）</option>}
       {provider === 'mgate' && <option value="mgate">MGate（历史配置）</option>}

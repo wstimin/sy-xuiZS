@@ -50,17 +50,26 @@ export default function App() {
         timestamp: item.timestamp,
         type: 'panel',
         title: item.title,
-        summary: item.summary
+        summary: item.summary || item.panelData.accessUrl,
+        panelData: { ...item.panelData }
+      };
+    }
+    if (item.type === 'node' && item.nodeData) {
+      return {
+        id: item.id,
+        timestamp: item.timestamp,
+        type: 'node',
+        title: item.title,
+        summary: item.summary || `${item.nodeData.protocol} + ${item.nodeData.transport} · 入站 #${item.nodeData.inboundId}`,
+        nodeData: { ...item.nodeData }
       };
     }
     return {
       id: item.id,
       timestamp: item.timestamp,
-      type: 'node',
+      type: item.type,
       title: item.title,
-      summary: item.nodeData
-        ? `${item.nodeData.protocol} + ${item.nodeData.transport} · 入站 #${item.nodeData.inboundId}`
-        : item.summary.replace(/(?:vless|vmess|trojan|ss):\/\/\S+/gi, '[敏感链接已清理]')
+      summary: item.summary || '旧版历史记录未保存详细信息'
     };
   };
 
@@ -224,7 +233,8 @@ export default function App() {
       timestamp: result.createdAt,
       type: 'node',
       title: `${result.nodeName} (${result.protocol} + ${result.transport})`,
-      summary: `${result.protocol} + ${result.transport} · 入站 #${result.inboundId}`
+      summary: `${result.protocol} + ${result.transport} · 入站 #${result.inboundId}`,
+      nodeData: { ...result }
     };
     saveHistory(historyItem);
     void refreshAccount();
