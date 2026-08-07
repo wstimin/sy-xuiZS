@@ -82,8 +82,13 @@ function noStore(_req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+function isPaymentNotificationPath(pathname: string) {
+  return /^\/payment\/(epay|mgate|tokenpay|epusdt|paypal|alipay_official|wechat_official)\/[^/]+\/notify\/?$/.test(pathname);
+}
+
 function requireAppAuth(req: Request, res: Response, next: NextFunction) {
-  if (/^\/payment\/(epay|mgate|tokenpay|epusdt|alipay_official|wechat_official)\/[^/]+\/notify\/?$/.test(req.path)) return next();
+  if (isPaymentNotificationPath(req.path)) return next();
+  if (/^\/payment\/paypal\/[^/]+\/return\/?$/.test(req.path)) return next();
   if (req.path === "/runtime-config") return next();
   const expected = process.env.APP_AUTH_TOKEN;
   if (!expected) return next();
@@ -147,10 +152,17 @@ async function startServer() {
   app.use(express.urlencoded({ extended: false, limit: "64kb" }));
   app.use("/api", rateLimit({
     windowMs: 60_000,
+    limit: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: req => !isPaymentNotificationPath(req.path),
+  }));
+  app.use("/api", rateLimit({
+    windowMs: 60_000,
     limit: 60,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: req => /^\/payment\/(epay|mgate|tokenpay|epusdt|alipay_official|wechat_official)\/[^/]+\/notify\/?$/.test(req.path),
+    skip: req => isPaymentNotificationPath(req.path),
   }));
   app.use("/api", noStore);
 

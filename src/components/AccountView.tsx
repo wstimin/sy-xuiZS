@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   CheckCircle2,
   Clock3,
+  ExternalLink,
   KeyRound,
   LogOut,
   Mail,
@@ -45,6 +46,8 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
   const [tab, setTab] = useState<AccountTab>('overview');
   const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
   const [payingOrderId, setPayingOrderId] = useState('');
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
   const activeEntitlements = useMemo(() => account?.entitlements.filter(item => item.status === 'active' && (!item.expiresAt || new Date(item.expiresAt).getTime() > Date.now())) || [], [account]);
   const panelQuota = activeEntitlements.some(item => item.panelMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.panelMode === 'limited' ? item.panelRemaining : 0), 0)} 次`;
   const nodeQuota = activeEntitlements.some(item => item.nodeMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.nodeMode === 'limited' ? item.nodeRemaining : 0), 0)} 次`;
@@ -80,6 +83,22 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
     }
   };
 
+  const redeem = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!redeemCode.trim()) return;
+    setRedeeming(true);
+    try {
+      const result = await api<{ planName: string }>('/api/redeem-codes/redeem', { method: 'POST', body: JSON.stringify({ code: redeemCode }) });
+      setRedeemCode('');
+      await onRefresh();
+      showToast('卡密兑换成功', `${result.planName} 权益已经发放到账户`, 'success');
+    } catch (error) {
+      showToast('卡密兑换失败', error instanceof Error ? error.message : '请检查卡密后重试', 'error');
+    } finally {
+      setRedeeming(false);
+    }
+  };
+
   return (
     <div className="account-shell">
       <section className="account-hero">
@@ -110,6 +129,15 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
           <div><strong>待付款订单说明</strong><p>{account.paymentInstructions || '请按订单中选择的支付方式完成付款。'}</p></div>
         </div>
       )}
+
+      <section className="account-redeem">
+        <div className="account-redeem-heading"><span><KeyRound /></span><div><strong>兑换卡密</strong><p>输入卡密后立即发放对应套餐权益。</p></div></div>
+        <form onSubmit={redeem}>
+          <input value={redeemCode} onChange={event => setRedeemCode(event.target.value.toUpperCase())} maxLength={40} autoComplete="off" placeholder="XUI-XXXX-XXXX-XXXX-XXXX" aria-label="卡密" />
+          <button type="submit" disabled={redeeming || !redeemCode.trim()}><KeyRound /> {redeeming ? '兑换中' : '兑换'}</button>
+          {account?.redeemCodePurchaseUrl && <a href={account.redeemCodePurchaseUrl} target="_blank" rel="noreferrer"><ExternalLink /> 购买卡密</a>}
+        </form>
+      </section>
 
       <nav className="account-tabs" aria-label="账户内容">
         <button type="button" className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><BadgeCheck /> 权益概览</button>

@@ -58,6 +58,17 @@ function durationUnit(value: unknown): DurationUnit {
   return value === "months" || value === "years" || value === "lifetime" ? value : "days";
 }
 
+function optionalHttpUrl(value: unknown, label: string) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "";
+  if (normalized.length > 1000) throw new Error(`${label}不能超过 1000 个字符`);
+  let parsed: URL;
+  try { parsed = new URL(normalized); }
+  catch { throw new Error(`${label}格式不正确`); }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`${label}必须使用 HTTP 或 HTTPS`);
+  return normalized;
+}
+
 function planInput(body: Record<string, unknown>): PlanInput {
   return {
     name: String(body.name || ""),
@@ -187,6 +198,7 @@ function channelConfig(method: ReturnType<CommercialStore["getPaymentMethods"]>[
     publicKey: method.publicKey,
     certificateSerial: method.certificateSerial,
     apiV3Key: method.apiV3Key,
+    sandbox: method.sandbox,
   };
 }
 
@@ -207,16 +219,19 @@ async function createCheckout(req: Request, store: CommercialStore, order: any) 
   try {
     const config = channelConfig(method);
     if (provider === "epay" && order.paymentChannel) config.channel = order.paymentChannel;
+    const paypalReturnUrl = `${baseUrl}/api/payment/paypal/${encodeURIComponent(method.id)}/return`;
     const result = await driver.createCheckout(config, {
       orderNo: order.orderNo,
       amountCents: order.amountCents,
       name: String(snapshot.name || "网络搭建服务"),
       userKey: user?.email || user?.username || order.userId,
       notifyUrl: `${baseUrl}/api/payment/${provider}/${encodeURIComponent(method.id)}/notify`,
-      returnUrl: `${baseUrl}/console?payment=return&order=${encodeURIComponent(order.id)}`,
+      returnUrl: provider === "paypal" ? paypalReturnUrl : `${baseUrl}/console?payment=return&order=${encodeURIComponent(order.id)}`,
+      cancelUrl: `${baseUrl}/console?payment=cancel&order=${encodeURIComponent(order.id)}`,
+      expiresAt: order.expiresAt,
     });
     store.closeOpenPaymentAttempts(order.id);
-    const attempt = store.createPaymentAttempt(order.id, method.id, result.checkoutUrl, result.requestPayload, order.expiresAt);
+    const attempt = store.createPaymentAttempt(order.id, method.id, result.checkoutUrl, result.requestPayload, order.expiresAt, result.providerOrderId);
     return { attemptId: attempt.id, checkoutType: result.type, checkoutUrl: result.checkoutUrl };
   } catch (error) {
     store.createFailedPaymentAttempt(order.id, method.id, requestContext, error, order.expiresAt);
@@ -355,6 +370,29 @@ export function createCommercialRouter(store: CommercialStore) {
   router.get("/plans", (_req, res) => res.json({ plans: store.listPlans() }));
   router.get("/payment-methods", (_req, res) => res.json({ paymentMethods: store.getPaymentMethods() }));
 
+  router.get("/payment/paypal/:channelId/return", async (req, res) => {
+    const channel = store.getPaymentMethods(true, true, true).find(item => item.id === req.params.channelId && item.provider === "paypal");
+    const token = String(req.query.token || "").trim();
+    const baseUrl = publicBaseUrl(req, store);
+    if (!channel || !token) return res.redirect(`${baseUrl}/console?payment=error`);
+    try {
+      const attempt = store.getPaymentAttemptByProviderOrder(channel.id, token);
+      if (!attempt) throw new Error("PayPal 支付订单不存在");
+      const order = store.getOrder(attempt.orderId);
+      if (!order || order.paymentProvider !== channel.id) throw new Error("PayPal 支付订单或通道不匹配");
+      const driver = getPaymentDriver("paypal");
+      if (!driver.captureCheckout) throw new Error("PayPal 扣款功能不可用");
+      const verified = await driver.captureCheckout(channelConfig(channel), token, attempt.id);
+      if (verified.orderNo !== order.orderNo || verified.amountCents !== order.amountCents) throw new Error("PayPal 扣款订单或金额不匹配");
+      store.completePaymentAttempt(order.id, channel.id, verified.tradeNo, verified.payload);
+      store.recordPaymentNotification(channel.id, "paypal", verified.orderNo, "accepted", verified.payload);
+      return res.redirect(`${baseUrl}/console?payment=success&order=${encodeURIComponent(order.id)}`);
+    } catch (error) {
+      store.recordPaymentNotification(channel.id, "paypal", "", "rejected", { token }, message(error));
+      return res.redirect(`${baseUrl}/console?payment=error`);
+    }
+  });
+
   router.all("/payment/:provider/:channelId/notify", async (req, res) => {
     const provider = req.params.provider as PaymentProvider;
     let driver;
@@ -366,7 +404,7 @@ export function createCommercialRouter(store: CommercialStore) {
       return res.status(200).type("text/plain; charset=utf-8").send("该地址是支付平台异步通知接口，不能直接在浏览器中测试。请将此地址填写到支付平台后台的异步通知地址。");
     }
     const rawBody = (req as Request & { rawBody?: string }).rawBody;
-    const body = provider === "wechat_official" ? rawBody || JSON.stringify(req.body || {}) : req.body;
+    const body = provider === "wechat_official" || provider === "paypal" ? rawBody || JSON.stringify(req.body || {}) : req.body;
     try {
       const verified = await driver.verifyNotification(channelConfig(channel), {
         params, body, headers: paymentHeaders(req),
@@ -392,8 +430,14 @@ export function createCommercialRouter(store: CommercialStore) {
       deployments: store.listDeployments(user.id),
       paymentInstructions: store.getSetting("payment_instructions", "下单后请联系管理员完成支付确认。"),
       paymentMethods: store.getPaymentMethods(),
+      redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
     });
   });
+
+  router.post("/redeem-codes/redeem", requireCommercialUser, route((req, res) => {
+    const result = store.redeemCode(commercialUser(res).id, String(req.body?.code || ""));
+    res.json({ success: true, ...result });
+  }));
 
   router.post("/orders", requireCommercialUser, route(async (req, res) => {
     const order = store.createOrder(
@@ -401,8 +445,12 @@ export function createCommercialRouter(store: CommercialStore) {
       String(req.body?.planId || ""),
       String(req.body?.paymentProvider || "manual"),
     );
-    const payment = await createCheckout(req, store, order);
-    res.status(201).json({ success: true, order, payment });
+    try {
+      const payment = await createCheckout(req, store, order);
+      res.status(201).json({ success: true, order, payment });
+    } catch (error) {
+      res.status(201).json({ success: true, order, payment: null, paymentError: message(error) });
+    }
   }));
 
   router.post("/orders/:id/checkout", requireCommercialUser, route(async (req, res) => {
@@ -433,6 +481,7 @@ export function createCommercialRouter(store: CommercialStore) {
   router.get("/admin/deployments", requireAdmin, (_req, res) => res.json({ deployments: store.listDeployments() }));
   router.get("/admin/payment-attempts", requireAdmin, (_req, res) => res.json({ attempts: store.listPaymentAttempts() }));
   router.get("/admin/payment-notifications", requireAdmin, (_req, res) => res.json({ notifications: store.listPaymentNotifications() }));
+  router.get("/admin/redeem-codes", requireAdmin, (_req, res) => res.json({ redeemCodes: store.listRedeemCodes() }));
   router.get("/admin/usage-ledger", requireAdmin, (_req, res) => res.json({ entries: store.listUsageLedger() }));
   router.get("/admin/audit-logs", requireAdmin, (_req, res) => res.json({ logs: store.listAdminAuditLogs() }));
   router.get("/admin/users/:id/detail", requireAdmin, route((req, res) => {
@@ -455,6 +504,7 @@ export function createCommercialRouter(store: CommercialStore) {
       email: store.getEmailSettings(),
       orderExpiryMinutes: Number(store.getSetting("order_expiry_minutes", "30")) || 30,
       adminPath: store.getAdminPath(),
+      redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
     },
   }));
 
@@ -468,6 +518,27 @@ export function createCommercialRouter(store: CommercialStore) {
     if (!plan) return res.status(404).json({ success: false, error: "套餐不存在" });
     store.recordAdminAction(adminUser(res).id, "更新套餐", "plan", plan.id, plan.name);
     res.json({ success: true, plan });
+  }));
+  router.post("/admin/redeem-codes", requireAdmin, route((req, res) => {
+    const redeemCodes = store.createRedeemCodes({
+      planId: String(req.body?.planId || ""),
+      quantity: intValue(req.body?.quantity),
+      note: String(req.body?.note || ""),
+      expiresAt: req.body?.expiresAt ? String(req.body.expiresAt) : null,
+    });
+    store.recordAdminAction(adminUser(res).id, "生成卡密", "redeem_code", "batch", JSON.stringify({
+      planId: req.body?.planId,
+      quantity: redeemCodes.length,
+      note: String(req.body?.note || "").slice(0, 300),
+    }));
+    res.status(201).json({ success: true, redeemCodes });
+  }));
+  router.patch("/admin/redeem-codes/:id", requireAdmin, route((req, res) => {
+    const status = req.body?.status;
+    if (status !== "active" && status !== "disabled") throw new Error("卡密状态无效");
+    store.updateRedeemCodeStatus(req.params.id, status);
+    store.recordAdminAction(adminUser(res).id, status === "active" ? "启用卡密" : "停用卡密", "redeem_code", req.params.id);
+    res.json({ success: true });
   }));
   router.post("/admin/users", requireAdmin, route((req, res) => {
     const roleValue = req.body?.role === "admin" ? "admin" : "user";
@@ -516,8 +587,11 @@ export function createCommercialRouter(store: CommercialStore) {
     res.json({ success: true, order });
   }));
   router.post("/admin/orders/:id/refund", requireAdmin, route((req, res) => {
-    const order = store.refundOrder(req.params.id);
-    store.recordAdminAction(adminUser(res).id, "订单退款撤权", "order", req.params.id, order.orderNo);
+    const reason = String(req.body?.reason || "").trim();
+    const refundTradeNo = String(req.body?.refundTradeNo || "").trim();
+    if (!reason || !refundTradeNo) throw new Error("请填写外部退款凭证号和退款原因");
+    const order = store.refundOrder(req.params.id, reason, refundTradeNo);
+    store.recordAdminAction(adminUser(res).id, "确认外部退款并撤权", "order", req.params.id, `${order.orderNo} / ${refundTradeNo} / ${reason}`);
     res.json({ success: true, order });
   }));
   router.post("/admin/entitlements", requireAdmin, route((req, res) => {
@@ -564,12 +638,16 @@ export function createCommercialRouter(store: CommercialStore) {
       if (minutes < 5 || minutes > 1440) throw new Error("订单有效期必须为 5 到 1440 分钟");
       store.setSetting("order_expiry_minutes", String(minutes));
     }
+    if (req.body?.redeemCodePurchaseUrl !== undefined) {
+      store.setSetting("redeem_code_purchase_url", optionalHttpUrl(req.body.redeemCodePurchaseUrl, "卡密购买链接"));
+    }
     let adminPath: string | undefined;
     if (req.body?.adminPath !== undefined) adminPath = store.setAdminPath(String(req.body.adminPath));
     store.recordAdminAction(adminUser(res).id, "更新系统设置", "settings", "commercial", JSON.stringify({
       registrationEnabled: req.body?.registrationEnabled,
       panelDeployEnabled: req.body?.panelDeployEnabled,
       nodeDeployEnabled: req.body?.nodeDeployEnabled,
+      redeemCodePurchaseUrl: req.body?.redeemCodePurchaseUrl === undefined ? undefined : "[updated]",
       adminPath,
     }));
     res.json({ success: true, adminPath: adminPath || store.getAdminPath() });

@@ -10,7 +10,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 
-export type PaymentProvider = "manual" | "epay" | "mgate" | "tokenpay" | "epusdt" | "alipay_official" | "wechat_official";
+export type PaymentProvider = "manual" | "epay" | "mgate" | "tokenpay" | "epusdt" | "paypal" | "alipay_official" | "wechat_official";
 
 export interface PaymentChannelConfig {
   id: string;
@@ -26,6 +26,7 @@ export interface PaymentChannelConfig {
   publicKey?: string;
   certificateSerial?: string;
   apiV3Key?: string;
+  sandbox?: boolean;
 }
 
 export interface CheckoutInput {
@@ -35,6 +36,8 @@ export interface CheckoutInput {
   userKey?: string;
   notifyUrl: string;
   returnUrl: string;
+  cancelUrl?: string;
+  expiresAt?: string;
 }
 
 export interface CheckoutResult {
@@ -42,6 +45,7 @@ export interface CheckoutResult {
   checkoutUrl: string;
   requestPayload: Record<string, unknown>;
   responsePayload?: unknown;
+  providerOrderId?: string;
 }
 
 export interface VerifiedPayment {
@@ -60,6 +64,7 @@ export interface NotificationInput {
 export interface PaymentDriver {
   createCheckout(config: PaymentChannelConfig, input: CheckoutInput): Promise<CheckoutResult>;
   verifyNotification(config: PaymentChannelConfig, input: NotificationInput): Promise<VerifiedPayment>;
+  captureCheckout?(config: PaymentChannelConfig, providerOrderId: string, requestId: string): Promise<VerifiedPayment>;
   successResponse: string;
   failureResponse: string;
 }
@@ -80,7 +85,7 @@ function sortedText(params: Record<string, string>, excluded: string[], encode =
     .replace(/%20/g, "+");
   return Object.entries(params)
     .filter(([key, value]) => !excluded.includes(key) && value !== "")
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([key, value]) => encode ? `${formEncode(key)}=${formEncode(value)}` : `${key}=${value}`)
     .join("&");
 }
@@ -102,6 +107,14 @@ function amountCents(value: unknown) {
   const amount = Math.round(Number(value) * 100);
   if (!Number.isFinite(amount) || amount < 0) throw new Error("支付通知金额无效");
   return amount;
+}
+
+function verifiedPayment(orderNo: unknown, tradeNo: unknown, amount: unknown, payload: unknown): VerifiedPayment {
+  const normalizedOrderNo = String(orderNo || "").trim();
+  const normalizedTradeNo = String(tradeNo || "").trim();
+  if (!normalizedOrderNo) throw new Error("支付通知缺少商户订单号");
+  if (!normalizedTradeNo) throw new Error("支付通知缺少平台交易号");
+  return { orderNo: normalizedOrderNo, tradeNo: normalizedTradeNo, amountCents: amountCents(amount), payload };
 }
 
 async function postJson(url: string, body: unknown, headers: Record<string, string> = {}) {
@@ -181,12 +194,8 @@ const epayDriver: PaymentDriver = {
   async verifyNotification(config, input) {
     if (!config.merchantSecret || !verifyEpaySignature(input.params, config.merchantSecret)) throw new Error("支付平台通知签名无效");
     if (input.params.trade_status && !["TRADE_SUCCESS", "TRADE_FINISHED"].includes(input.params.trade_status)) throw new Error("支付订单尚未成功");
-    return {
-      orderNo: input.params.out_trade_no || "",
-      tradeNo: input.params.trade_no || input.params.out_trade_no || "",
-      amountCents: amountCents(input.params.money),
-      payload: input.params,
-    };
+    if (config.merchantId && input.params.pid !== config.merchantId) throw new Error("支付平台通知商户 PID 不匹配");
+    return verifiedPayment(input.params.out_trade_no, input.params.trade_no, input.params.money, input.params);
   },
 };
 
@@ -213,12 +222,7 @@ const mgateDriver: PaymentDriver = {
     if (!config.merchantSecret || !genericMd5Verify(input.params, config.merchantSecret, "sign", true)) throw new Error("MGate 通知签名无效");
     const status = input.params.trade_status || input.params.status;
     if (status && !["SUCCESS", "TRADE_SUCCESS", "PAID", "2"].includes(status.toUpperCase())) throw new Error("MGate 订单尚未成功");
-    return {
-      orderNo: input.params.out_trade_no || "",
-      tradeNo: input.params.trade_no || input.params.out_trade_no || "",
-      amountCents: amountCents(input.params.total_amount || input.params.amount),
-      payload: input.params,
-    };
+    return verifiedPayment(input.params.out_trade_no, input.params.trade_no, input.params.total_amount || input.params.amount, input.params);
   },
 };
 
@@ -245,12 +249,7 @@ const tokenpayDriver: PaymentDriver = {
   async verifyNotification(config, input) {
     if (!config.merchantSecret || !genericMd5Verify(input.params, config.merchantSecret, "Signature")) throw new Error("TokenPay 通知签名无效");
     if (String(input.params.Status || input.params.status).toUpperCase() !== "TRADE_SUCCESS") throw new Error("TokenPay 订单尚未成功");
-    return {
-      orderNo: input.params.OutOrderId || "",
-      tradeNo: input.params.TradeId || input.params.TradeNo || input.params.OutOrderId || "",
-      amountCents: amountCents(input.params.ActualAmount),
-      payload: input.params,
-    };
+    return verifiedPayment(input.params.OutOrderId, input.params.TradeId || input.params.TradeNo, input.params.ActualAmount, input.params);
   },
 };
 
@@ -272,12 +271,156 @@ const epusdtDriver: PaymentDriver = {
   async verifyNotification(config, input) {
     if (!config.merchantSecret || !genericMd5Verify(input.params, config.merchantSecret, "signature")) throw new Error("Epusdt 通知签名无效");
     if (Number(input.params.status) !== 2) throw new Error("Epusdt 订单尚未成功");
-    return {
-      orderNo: input.params.order_id || "",
-      tradeNo: input.params.trade_id || input.params.order_id || "",
-      amountCents: amountCents(input.params.amount),
-      payload: input.params,
+    return verifiedPayment(input.params.order_id, input.params.trade_id, input.params.amount, input.params);
+  },
+};
+
+function paypalBaseUrl(config: PaymentChannelConfig) {
+  return normalizedHttpUrl(config.gatewayUrl || (config.sandbox ? "https://api-m.sandbox.paypal.com" : "https://api-m.paypal.com"), "PayPal API 地址");
+}
+
+async function paypalAccessToken(config: PaymentChannelConfig) {
+  if (!config.merchantId || !config.merchantSecret) throw new Error("PayPal Client ID 或 Client Secret 未配置");
+  const url = new URL("/v1/oauth2/token", paypalBaseUrl(config));
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: `Basic ${Buffer.from(`${config.merchantId}:${config.merchantSecret}`).toString("base64")}`,
+      "content-type": "application/x-www-form-urlencoded",
+      accept: "application/json",
+    },
+    body: "grant_type=client_credentials",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = await response.json().catch(() => ({})) as any;
+  if (!response.ok || !data?.access_token) throw new Error(`PayPal 身份验证失败：${String(data?.error_description || data?.error || response.status).slice(0, 300)}`);
+  return String(data.access_token);
+}
+
+async function paypalApi(config: PaymentChannelConfig, path: string, init: RequestInit = {}) {
+  const accessToken = await paypalAccessToken(config);
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${accessToken}`);
+  headers.set("accept", "application/json");
+  if (init.body) headers.set("content-type", "application/json");
+  const response = await fetch(new URL(path, paypalBaseUrl(config)), {
+    ...init,
+    headers,
+    signal: AbortSignal.timeout(15_000),
+  });
+  const text = await response.text();
+  let data: any;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  return { response, data };
+}
+
+function paypalPaymentFromOrder(data: any): VerifiedPayment {
+  const purchaseUnit = Array.isArray(data?.purchase_units) ? data.purchase_units[0] : undefined;
+  const captures = purchaseUnit?.payments?.captures;
+  const capture = Array.isArray(captures) ? captures.find((item: any) => item?.status === "COMPLETED") || captures[0] : undefined;
+  if (data?.status !== "COMPLETED" || !capture || capture.status !== "COMPLETED") throw new Error("PayPal 订单尚未完成扣款");
+  return verifiedPayment(
+    purchaseUnit.invoice_id || purchaseUnit.custom_id,
+    capture.id,
+    capture.amount?.value,
+    data,
+  );
+}
+
+const paypalDriver: PaymentDriver = {
+  successResponse: "success",
+  failureResponse: "fail",
+  async createCheckout(config, input) {
+    const currency = String(config.currency || "CNY").toUpperCase();
+    const payload = {
+      intent: "CAPTURE",
+      purchase_units: [{
+        reference_id: input.orderNo,
+        invoice_id: input.orderNo,
+        custom_id: input.orderNo,
+        description: input.name.slice(0, 127),
+        amount: { currency_code: currency, value: (input.amountCents / 100).toFixed(2) },
+      }],
+      payment_source: {
+        paypal: {
+          experience_context: {
+            user_action: "PAY_NOW",
+            shipping_preference: "NO_SHIPPING",
+            return_url: input.returnUrl,
+            cancel_url: input.cancelUrl || input.returnUrl,
+          },
+        },
+      },
     };
+    const { response, data } = await paypalApi(config, "/v2/checkout/orders", {
+      method: "POST",
+      headers: { "paypal-request-id": input.orderNo, prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    const checkoutUrl = data?.links?.find((link: any) => link?.rel === "payer-action" || link?.rel === "approve")?.href;
+    if (!response.ok || !data?.id || !checkoutUrl) throw new Error(`PayPal 下单失败：${String(data?.details?.[0]?.description || data?.message || response.status).slice(0, 300)}`);
+    return { type: "redirect", checkoutUrl, providerOrderId: data.id, requestPayload: payload, responsePayload: data };
+  },
+  async captureCheckout(config, providerOrderId, requestId) {
+    const encodedId = encodeURIComponent(providerOrderId);
+    const captured = await paypalApi(config, `/v2/checkout/orders/${encodedId}/capture`, {
+      method: "POST",
+      headers: { "paypal-request-id": `capture-${requestId}` },
+      body: "{}",
+    });
+    if (captured.response.ok) {
+      const payment = paypalPaymentFromOrder(captured.data);
+      const currency = captured.data?.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.currency_code;
+      if (currency !== String(config.currency || "CNY").toUpperCase()) throw new Error("PayPal 扣款币种不匹配");
+      return payment;
+    }
+    if (captured.response.status === 422) {
+      const existing = await paypalApi(config, `/v2/checkout/orders/${encodedId}`, { method: "GET" });
+      if (existing.response.ok) {
+        const payment = paypalPaymentFromOrder(existing.data);
+        const currency = existing.data?.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.currency_code;
+        if (currency !== String(config.currency || "CNY").toUpperCase()) throw new Error("PayPal 扣款币种不匹配");
+        return payment;
+      }
+    }
+    throw new Error(`PayPal 扣款失败：${String(captured.data?.details?.[0]?.description || captured.data?.message || captured.response.status).slice(0, 300)}`);
+  },
+  async verifyNotification(config, input) {
+    if (!config.appId) throw new Error("PayPal Webhook ID 未配置");
+    const event = typeof input.body === "string" ? JSON.parse(input.body) : input.body as any;
+    const verificationPayload = {
+      auth_algo: input.headers["paypal-auth-algo"] || "",
+      cert_url: input.headers["paypal-cert-url"] || "",
+      transmission_id: input.headers["paypal-transmission-id"] || "",
+      transmission_sig: input.headers["paypal-transmission-sig"] || "",
+      transmission_time: input.headers["paypal-transmission-time"] || "",
+      webhook_id: config.appId,
+      webhook_event: event,
+    };
+    const requiredHeaders = [
+      verificationPayload.auth_algo,
+      verificationPayload.cert_url,
+      verificationPayload.transmission_id,
+      verificationPayload.transmission_sig,
+      verificationPayload.transmission_time,
+    ];
+    if (requiredHeaders.some(value => !value)) throw new Error("PayPal Webhook 验签头不完整");
+    const verification = await paypalApi(config, "/v1/notifications/verify-webhook-signature", {
+      method: "POST",
+      body: JSON.stringify(verificationPayload),
+    });
+    if (!verification.response.ok || verification.data?.verification_status !== "SUCCESS") throw new Error("PayPal Webhook 签名无效");
+    if (event?.event_type !== "PAYMENT.CAPTURE.COMPLETED" || event?.resource?.status !== "COMPLETED") throw new Error("PayPal 通知不是已完成扣款事件");
+    const resource = event.resource;
+    const configuredCurrency = String(config.currency || "CNY").toUpperCase();
+    if (resource.amount?.currency_code !== configuredCurrency) throw new Error("PayPal 通知币种不匹配");
+    let orderNo = resource.invoice_id || resource.custom_id;
+    if (!orderNo && resource.supplementary_data?.related_ids?.order_id) {
+      const order = await paypalApi(config, `/v2/checkout/orders/${encodeURIComponent(resource.supplementary_data.related_ids.order_id)}`, { method: "GET" });
+      if (!order.response.ok) throw new Error("PayPal 通知无法查询关联订单");
+      orderNo = order.data?.purchase_units?.[0]?.invoice_id || order.data?.purchase_units?.[0]?.custom_id;
+    }
+    return verifiedPayment(orderNo, resource.id, resource.amount?.value, event);
   },
 };
 
@@ -389,7 +532,12 @@ const alipayOfficialDriver: PaymentDriver = {
       timestamp: alipayTimestamp(),
       version: "1.0",
       notify_url: input.notifyUrl,
-      biz_content: JSON.stringify({ subject: input.name.slice(0, 100), out_trade_no: input.orderNo, total_amount: (input.amountCents / 100).toFixed(2), timeout_express: "30m" }),
+      biz_content: JSON.stringify({
+        subject: input.name.slice(0, 100),
+        out_trade_no: input.orderNo,
+        total_amount: (input.amountCents / 100).toFixed(2),
+        timeout_express: `${Math.max(5, Math.ceil(((input.expiresAt ? new Date(input.expiresAt).getTime() : Date.now() + 30 * 60_000) - Date.now()) / 60_000))}m`,
+      }),
     };
     params.sign = alipaySign(params, config.privateKey);
     const response = await fetch(normalizedHttpUrl(gateway, "支付宝网关").toString(), {
@@ -409,12 +557,7 @@ const alipayOfficialDriver: PaymentDriver = {
     if (!config.publicKey || !verifyAlipaySignature(input.params, config.publicKey)) throw new Error("支付宝通知签名无效");
     if (!["TRADE_SUCCESS", "TRADE_FINISHED"].includes(input.params.trade_status)) throw new Error("支付宝订单尚未成功");
     if (config.merchantId && input.params.app_id && input.params.app_id !== config.merchantId) throw new Error("支付宝通知 APPID 不匹配");
-    return {
-      orderNo: input.params.out_trade_no || "",
-      tradeNo: input.params.trade_no || "",
-      amountCents: amountCents(input.params.total_amount),
-      payload: input.params,
-    };
+    return verifiedPayment(input.params.out_trade_no, input.params.trade_no, input.params.total_amount, input.params);
   },
 };
 
@@ -476,6 +619,7 @@ const wechatOfficialDriver: PaymentDriver = {
       out_trade_no: input.orderNo,
       notify_url: input.notifyUrl,
       amount: { total: input.amountCents, currency: config.currency || "CNY" },
+      ...(input.expiresAt ? { time_expire: input.expiresAt.replace(/\.\d{3}Z$/, "+00:00") } : {}),
     };
     const body = JSON.stringify(payload);
     const response = await fetch(new URL(path, gateway).toString(), {
@@ -506,12 +650,10 @@ const wechatOfficialDriver: PaymentDriver = {
     if (data.trade_state !== "SUCCESS") throw new Error("微信支付订单尚未成功");
     if (config.merchantId && data.mchid !== config.merchantId) throw new Error("微信支付商户号不匹配");
     if (config.appId && data.appid !== config.appId) throw new Error("微信支付 AppID 不匹配");
-    return {
-      orderNo: data.out_trade_no || "",
-      tradeNo: data.transaction_id || "",
-      amountCents: Number(data.amount?.total),
-      payload: data,
-    };
+    const payment = verifiedPayment(data.out_trade_no, data.transaction_id, Number(data.amount?.total) / 100, data);
+    payment.amountCents = Number(data.amount?.total);
+    if (!Number.isInteger(payment.amountCents) || payment.amountCents < 0) throw new Error("微信支付通知金额无效");
+    return payment;
   },
 };
 
@@ -520,6 +662,7 @@ const drivers: Record<Exclude<PaymentProvider, "manual">, PaymentDriver> = {
   mgate: mgateDriver,
   tokenpay: tokenpayDriver,
   epusdt: epusdtDriver,
+  paypal: paypalDriver,
   alipay_official: alipayOfficialDriver,
   wechat_official: wechatOfficialDriver,
 };

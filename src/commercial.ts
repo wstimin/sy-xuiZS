@@ -1,8 +1,8 @@
 export type UserRole = 'user' | 'admin';
 export type QuotaMode = 'none' | 'limited' | 'unlimited';
 export type DurationUnit = 'days' | 'months' | 'years' | 'lifetime';
-export type PaymentProvider = 'manual' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'alipay_official' | 'wechat_official';
-export type PaymentMethodType = 'manual' | 'alipay' | 'wechat' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt';
+export type PaymentProvider = 'manual' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'paypal' | 'alipay_official' | 'wechat_official';
+export type PaymentMethodType = 'manual' | 'alipay' | 'wechat' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'paypal';
 
 export interface CurrentUser {
   id: string;
@@ -48,6 +48,7 @@ export interface PaymentAttempt {
   orderNo: string;
   provider: string;
   status: 'created' | 'pending' | 'paid' | 'failed' | 'closed';
+  providerOrderId?: string;
   providerTradeNo?: string;
   checkoutUrl?: string;
   errorMessage?: string;
@@ -180,6 +181,22 @@ export interface AccountData {
   deployments: DeploymentRecord[];
   paymentInstructions: string;
   paymentMethods: PaymentMethod[];
+  redeemCodePurchaseUrl: string;
+}
+
+export interface RedeemCode {
+  id: string;
+  codeMasked: string;
+  planId: string;
+  planName: string;
+  status: 'active' | 'redeemed' | 'disabled' | 'expired';
+  note: string;
+  redeemedByUserId?: string;
+  redeemedByUsername?: string;
+  entitlementId?: string;
+  redeemedAt?: string;
+  expiresAt?: string;
+  createdAt: string;
 }
 
 export class ApiError extends Error {

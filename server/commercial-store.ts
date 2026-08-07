@@ -22,7 +22,7 @@ export interface SessionUser {
 export interface PaymentMethod {
   id: string;
   name: string;
-  type: "manual" | "alipay" | "wechat" | "epay" | "mgate" | "tokenpay" | "epusdt";
+  type: "manual" | "alipay" | "wechat" | "epay" | "mgate" | "tokenpay" | "epusdt" | "paypal";
   enabled: boolean;
   instructions: string;
   paymentUrl: string;
@@ -49,9 +49,15 @@ export interface PaymentMethod {
 
 const TOKENPAY_CURRENCIES = new Set(["USDT_TRC20", "TRX", "ETH", "USDT_ERC20", "USDC_ERC20"]);
 const MGATE_CURRENCIES = new Set(["CNY", "USD", "EUR", "HKD", "TWD", "JPY", "KRW", "SGD"]);
-const EPAY_CHANNELS = ["alipay", "wxpay", "qqpay"] as const;
+const EPAY_CHANNELS = ["alipay", "wxpay", "qqpay", "paypal", "usdt.trc20"] as const;
 const EPAY_CHANNEL_SET = new Set<string>(EPAY_CHANNELS);
-const EPAY_CHANNEL_NAMES: Record<string, string> = { alipay: "支付宝", wxpay: "微信支付", qqpay: "QQ 钱包" };
+const EPAY_CHANNEL_NAMES: Record<string, string> = {
+  alipay: "支付宝",
+  wxpay: "微信支付",
+  qqpay: "QQ 钱包",
+  paypal: "PayPal",
+  "usdt.trc20": "USDT",
+};
 
 function publicEpayName(channel: string) {
   return EPAY_CHANNEL_NAMES[channel] || channel;
@@ -144,6 +150,39 @@ export interface EntitlementGrantInput {
   concurrencyLimit?: number;
 }
 
+export interface RedeemCodeCreateInput {
+  planId: string;
+  quantity: number;
+  note?: string;
+  expiresAt?: string | null;
+}
+
+export interface CreatedRedeemCode {
+  id: string;
+  code: string;
+  codeMasked: string;
+  planId: string;
+  planName: string;
+  status: "active";
+  note: string;
+  expiresAt: string | null;
+}
+
+export interface RedeemCodeRecord {
+  id: string;
+  codeMasked: string;
+  planId: string;
+  planName: string;
+  status: "active" | "redeemed" | "disabled" | "expired";
+  note: string;
+  redeemedByUserId: string | null;
+  redeemedByUsername: string | null;
+  entitlementId: string | null;
+  redeemedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 
 function nowIso() {
@@ -152,6 +191,22 @@ function nowIso() {
 
 function hashToken(value: string) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeRedeemCode(value: string) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function createRedeemCodeValue() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = randomBytes(16);
+  const groups = Array.from({ length: 4 }, (_, group) => Array.from({ length: 4 }, (_, index) => alphabet[bytes[group * 4 + index] % alphabet.length]).join(""));
+  return `XUI-${groups.join("-")}`;
+}
+
+function maskRedeemCode(value: string) {
+  const groups = value.split("-");
+  return groups.length >= 5 ? `${groups[0]}-${groups[1]}-****-****-${groups[4]}` : `${value.slice(0, 4)}****${value.slice(-4)}`;
 }
 
 function hashPassword(password: string) {
@@ -317,6 +372,23 @@ export class CommercialStore {
       );
       CREATE INDEX IF NOT EXISTS idx_entitlements_user ON entitlements(user_id, status, expires_at);
 
+      CREATE TABLE IF NOT EXISTS redeem_codes (
+        id TEXT PRIMARY KEY,
+        code_hash TEXT NOT NULL UNIQUE,
+        code_masked TEXT NOT NULL,
+        plan_id TEXT NOT NULL REFERENCES plans(id),
+        plan_snapshot TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'redeemed', 'disabled')),
+        note TEXT NOT NULL DEFAULT '',
+        redeemed_by_user_id TEXT REFERENCES users(id),
+        entitlement_id TEXT REFERENCES entitlements(id),
+        redeemed_at TEXT,
+        expires_at TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_redeem_codes_status ON redeem_codes(status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_redeem_codes_user ON redeem_codes(redeemed_by_user_id, redeemed_at DESC);
+
       CREATE TABLE IF NOT EXISTS deployments (
         id TEXT PRIMARY KEY,
         request_id TEXT NOT NULL,
@@ -395,6 +467,7 @@ export class CommercialStore {
         order_id TEXT NOT NULL REFERENCES orders(id),
         provider TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('created', 'pending', 'paid', 'failed', 'closed', 'refunded')),
+        provider_order_id TEXT,
         provider_trade_no TEXT,
         checkout_url TEXT NOT NULL DEFAULT '',
         request_payload TEXT NOT NULL DEFAULT '{}',
@@ -457,6 +530,11 @@ export class CommercialStore {
     ] as const) {
       if (!orderColumns.some(column => column.name === name)) this.db.exec(`ALTER TABLE orders ADD COLUMN ${name} ${definition}`);
     }
+    const paymentAttemptColumns = this.db.prepare("PRAGMA table_info(payment_attempts)").all() as Array<{ name: string }>;
+    if (!paymentAttemptColumns.some(column => column.name === "provider_order_id")) {
+      this.db.exec("ALTER TABLE payment_attempts ADD COLUMN provider_order_id TEXT");
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_payment_attempts_provider_order ON payment_attempts(provider, provider_order_id)");
     this.migratePaymentChannelSchema();
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
 
@@ -490,6 +568,7 @@ export class CommercialStore {
     settings.run("public_base_url", "", nowIso());
     settings.run("order_expiry_minutes", "30", nowIso());
     settings.run("admin_path", "admin", nowIso());
+    settings.run("redeem_code_purchase_url", "", nowIso());
 
     this.migratePaymentChannels();
 
@@ -691,7 +770,7 @@ export class CommercialStore {
     }
     const methods = Array.isArray(value) ? value.map((item: any, index): PaymentMethod | null => {
       if (!item || typeof item !== "object") return null;
-      const type = ["manual", "alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt"].includes(item.type) ? item.type : "manual";
+      const type = ["manual", "alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt", "paypal"].includes(item.type) ? item.type : "manual";
       return {
         id: String(item.id || "").trim(),
         name: String(item.name || "").trim(),
@@ -765,7 +844,7 @@ export class CommercialStore {
       if (!/^[a-z0-9_-]{2,32}$/.test(id)) throw new Error("支付方式标识必须为 2 到 32 位小写字母、数字、下划线或短横线");
       if (ids.has(id)) throw new Error(`支付方式标识 ${id} 重复`);
       if (!name || name.length > 40) throw new Error("支付方式名称必须为 1 到 40 位");
-      if (!["manual", "alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt"].includes(type)) throw new Error("支付方式类型无效");
+      if (!["manual", "alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt", "paypal"].includes(type)) throw new Error("支付方式类型无效");
       ids.add(id);
       return {
         id,
@@ -784,12 +863,12 @@ export class CommercialStore {
       const timestamp = nowIso();
       for (const method of methods) {
         const raw = value.find((item: any) => String(item?.id || "").trim().toLowerCase() === method.id) as any;
-        const supportedProviders: PaymentProvider[] = ["manual", "epay", "mgate", "tokenpay", "epusdt", "alipay_official", "wechat_official"];
+        const supportedProviders: PaymentProvider[] = ["manual", "epay", "mgate", "tokenpay", "epusdt", "paypal", "alipay_official", "wechat_official"];
         const requestedProvider = String(raw?.provider || "");
         const provider = supportedProviders.includes(requestedProvider as PaymentProvider)
           ? requestedProvider as PaymentProvider
           : method.type === "epay" ? "epay"
-            : method.type === "mgate" || method.type === "tokenpay" || method.type === "epusdt" ? method.type
+            : method.type === "mgate" || method.type === "tokenpay" || method.type === "epusdt" || method.type === "paypal" ? method.type
               : "manual";
         const gatewayUrl = String(raw?.gatewayUrl || "").trim().slice(0, 1000);
         const merchantId = String(raw?.merchantId || "").trim().slice(0, 100);
@@ -812,7 +891,7 @@ export class CommercialStore {
           currency = "USDT-TRC20";
         }
         if (provider === "mgate" && !MGATE_CURRENCIES.has(currency)) throw new Error(`支付通道 ${method.name} 的源货币无效`);
-        if (["alipay_official", "wechat_official"].includes(provider)) currency = "CNY";
+        if (["alipay_official", "wechat_official", "paypal"].includes(provider)) currency = "CNY";
         const callbackBaseUrl = String(raw?.callbackBaseUrl || "").trim().replace(/\/+$/, "").slice(0, 1000);
         const appId = String(raw?.appId || "").trim().slice(0, 100);
         const publicKey = String(raw?.publicKey || "").trim().slice(0, 20_000);
@@ -828,7 +907,7 @@ export class CommercialStore {
           const callback = new URL(callbackBaseUrl);
           if (!['http:', 'https:'].includes(callback.protocol)) throw new Error(`支付通道 ${method.name} 的回调域名必须是 HTTP 或 HTTPS 地址`);
         }
-        if (provider !== "manual" && method.enabled && !gatewayUrl && !["alipay_official", "wechat_official"].includes(provider)) {
+        if (provider !== "manual" && method.enabled && !gatewayUrl && !["alipay_official", "wechat_official", "paypal"].includes(provider)) {
           throw new Error(`支付通道 ${method.name} 启用前必须填写网关或 API 地址`);
         }
         if (["epay", "mgate"].includes(provider) && method.enabled && (!merchantId || !encryptedSecret)) {
@@ -836,6 +915,9 @@ export class CommercialStore {
         }
         if (provider === "tokenpay" && method.enabled && !encryptedSecret) throw new Error(`支付通道 ${method.name} 启用前必须填写 API 密钥`);
         if (provider === "epusdt" && method.enabled && !encryptedSecret) throw new Error(`支付通道 ${method.name} 启用前必须填写签名 Token`);
+        if (provider === "paypal" && method.enabled && (!merchantId || !encryptedSecret || !appId)) {
+          throw new Error(`支付通道 ${method.name} 启用前必须填写 Client ID、Client Secret 和 Webhook ID`);
+        }
         if (provider === "alipay_official" && method.enabled && (!merchantId || !encryptedPrivateKey || !publicKey)) {
           throw new Error(`支付通道 ${method.name} 启用前必须填写 APPID、应用私钥和支付宝公钥`);
         }
@@ -1262,7 +1344,7 @@ export class CommercialStore {
     `).all(...(userId ? [userId] : []));
   }
 
-  markOrderPaid(orderId: string, provider = "manual", tradeNo = `manual-${randomUUID()}`) {
+  markOrderPaid(orderId: string, provider = "manual", tradeNo = `manual-${randomUUID()}`, allowVerifiedLatePayment = false) {
     return this.db.transaction(() => {
       const order = this.db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as any;
       if (!order) throw new Error("订单不存在");
@@ -1272,8 +1354,11 @@ export class CommercialStore {
         }
         return this.getOrder(orderId);
       }
-      if (order.status !== "pending") throw new Error("只有待支付订单可以确认收款");
-      if (order.expires_at && order.expires_at <= nowIso()) {
+      const lateStatus = order.status === "expired" || order.status === "cancelled";
+      if (order.status !== "pending" && !(allowVerifiedLatePayment && lateStatus && order.payment_provider === provider && provider !== "manual")) {
+        throw new Error("只有待支付订单可以确认收款");
+      }
+      if (!allowVerifiedLatePayment && order.expires_at && order.expires_at <= nowIso()) {
         this.db.prepare("UPDATE orders SET status = 'expired', updated_at = ? WHERE id = ?").run(nowIso(), orderId);
         throw new Error("订单已过期，请重新下单");
       }
@@ -1291,12 +1376,17 @@ export class CommercialStore {
     const order = this.getOrder(orderId);
     if (!order || (userId && order.userId !== userId)) throw new Error("订单不存在");
     if (order.status !== "pending") throw new Error("只有待支付订单可以取消");
+    const openAttempt = this.db.prepare("SELECT 1 FROM payment_attempts WHERE order_id = ? AND status IN ('created', 'pending') LIMIT 1").get(orderId);
+    if (openAttempt && order.paymentProvider !== "manual") throw new Error("该订单已有进行中的在线支付，请等待支付结果或订单自动过期");
     this.db.prepare("UPDATE orders SET status = 'cancelled', cancelled_at = ?, cancel_reason = ?, updated_at = ? WHERE id = ?")
       .run(nowIso(), reason.slice(0, 500), nowIso(), orderId);
     return this.getOrder(orderId);
   }
 
-  refundOrder(orderId: string, reason = "", refundTradeNo = "") {
+  refundOrder(orderId: string, reason: string, refundTradeNo: string) {
+    const normalizedReason = String(reason || "").trim();
+    const normalizedRefundTradeNo = String(refundTradeNo || "").trim();
+    if (!normalizedReason || !normalizedRefundTradeNo) throw new Error("请填写外部退款凭证号和退款原因");
     return this.db.transaction(() => {
       const order = this.getOrder(orderId);
       if (!order) throw new Error("订单不存在");
@@ -1310,7 +1400,7 @@ export class CommercialStore {
       `).get(orderId);
       if (activeDeployment) throw new Error("该订单仍有执行中或待确认任务，请处理完成后再退款");
       this.db.prepare("UPDATE orders SET status = 'refunded', refunded_at = ?, refund_reason = ?, refund_trade_no = ?, updated_at = ? WHERE id = ?")
-        .run(nowIso(), reason.slice(0, 500), refundTradeNo.slice(0, 200), nowIso(), orderId);
+        .run(nowIso(), normalizedReason.slice(0, 500), normalizedRefundTradeNo.slice(0, 200), nowIso(), orderId);
       this.db.prepare("UPDATE entitlements SET status = 'revoked' WHERE source_order_id = ?")
         .run(orderId);
       return this.getOrder(orderId);
@@ -1325,11 +1415,11 @@ export class CommercialStore {
     return result.changes;
   }
 
-  createPaymentAttempt(orderId: string, provider: string, checkoutUrl: string, requestPayload: unknown, expiresAt?: string | null) {
+  createPaymentAttempt(orderId: string, provider: string, checkoutUrl: string, requestPayload: unknown, expiresAt?: string | null, providerOrderId = "") {
     const id = randomUUID();
     const timestamp = nowIso();
-    this.db.prepare(`INSERT INTO payment_attempts (id, order_id, provider, status, checkout_url, request_payload, expires_at, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`)
-      .run(id, orderId, provider, checkoutUrl, JSON.stringify(requestPayload || {}), expiresAt || null, timestamp, timestamp);
+    this.db.prepare(`INSERT INTO payment_attempts (id, order_id, provider, status, provider_order_id, checkout_url, request_payload, expires_at, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`)
+      .run(id, orderId, provider, providerOrderId, checkoutUrl, JSON.stringify(requestPayload || {}), expiresAt || null, timestamp, timestamp);
     return this.getPaymentAttempt(id)!;
   }
 
@@ -1343,23 +1433,30 @@ export class CommercialStore {
   }
 
   getPaymentAttempt(id: string) {
-    return this.db.prepare(`SELECT id, order_id AS orderId, provider, status, provider_trade_no AS providerTradeNo,
+    return this.db.prepare(`SELECT id, order_id AS orderId, provider, status, provider_order_id AS providerOrderId, provider_trade_no AS providerTradeNo,
       checkout_url AS checkoutUrl, error_message AS errorMessage, expires_at AS expiresAt, paid_at AS paidAt,
       created_at AS createdAt, updated_at AS updatedAt FROM payment_attempts WHERE id = ?`).get(id) as any;
   }
 
   listPaymentAttempts(orderId?: string) {
     return this.db.prepare(`SELECT pa.id, pa.order_id AS orderId, o.order_no AS orderNo, pa.provider, pa.status,
-      pa.provider_trade_no AS providerTradeNo, pa.checkout_url AS checkoutUrl, pa.error_message AS errorMessage,
+      pa.provider_order_id AS providerOrderId, pa.provider_trade_no AS providerTradeNo, pa.checkout_url AS checkoutUrl, pa.error_message AS errorMessage,
       pa.expires_at AS expiresAt, pa.paid_at AS paidAt, pa.created_at AS createdAt, pa.updated_at AS updatedAt
       FROM payment_attempts pa JOIN orders o ON o.id = pa.order_id ${orderId ? "WHERE pa.order_id = ?" : ""}
       ORDER BY pa.created_at DESC LIMIT 500`).all(...(orderId ? [orderId] : []));
   }
 
+  getPaymentAttemptByProviderOrder(provider: string, providerOrderId: string) {
+    return this.db.prepare(`SELECT pa.id, pa.order_id AS orderId, pa.provider, pa.status, pa.provider_order_id AS providerOrderId, pa.provider_trade_no AS providerTradeNo,
+      pa.checkout_url AS checkoutUrl, pa.expires_at AS expiresAt, pa.created_at AS createdAt, pa.updated_at AS updatedAt
+      FROM payment_attempts pa WHERE pa.provider = ? AND (pa.provider_order_id = ? OR (pa.provider_order_id IS NULL AND pa.provider_trade_no = ?)) ORDER BY pa.created_at DESC LIMIT 1`)
+      .get(provider, providerOrderId, providerOrderId) as any;
+  }
+
   completePaymentAttempt(orderId: string, provider: string, tradeNo: string, payload: unknown) {
     return this.db.transaction(() => {
-      const result = this.markOrderPaid(orderId, provider, tradeNo);
-      this.db.prepare(`UPDATE payment_attempts SET status = 'paid', provider_trade_no = ?, response_payload = ?, paid_at = COALESCE(paid_at, ?), updated_at = ? WHERE order_id = ? AND provider = ? AND status IN ('created', 'pending', 'paid')`)
+      const result = this.markOrderPaid(orderId, provider, tradeNo, true);
+      this.db.prepare(`UPDATE payment_attempts SET status = 'paid', provider_trade_no = ?, response_payload = ?, paid_at = COALESCE(paid_at, ?), updated_at = ? WHERE order_id = ? AND provider = ? AND status IN ('created', 'pending', 'paid', 'closed')`)
         .run(tradeNo, JSON.stringify(payload || {}), nowIso(), nowIso(), orderId, provider);
       return result;
     })();
@@ -1381,6 +1478,9 @@ export class CommercialStore {
     };
     this.db.prepare("INSERT INTO payment_notifications (id, channel_id, provider, order_no, status, payload, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run(randomUUID(), channelId, provider, orderNo.slice(0, 100), status, JSON.stringify(sanitize(payload || {})).slice(0, 20_000), errorMessage.slice(0, 1000), nowIso());
+    this.db.prepare(`DELETE FROM payment_notifications WHERE id IN (
+      SELECT id FROM payment_notifications ORDER BY created_at DESC LIMIT -1 OFFSET 2000
+    )`).run();
   }
 
   listPaymentNotifications() {
@@ -1391,6 +1491,10 @@ export class CommercialStore {
 
   private grantOrderEntitlement(order: any) {
     const plan = JSON.parse(order.plan_snapshot);
+    this.grantPlanEntitlement(order.user_id, plan, order.id, `订单 ${order.order_no} 发放`);
+  }
+
+  private grantPlanEntitlement(userId: string, plan: any, sourceOrderId: string | null, ledgerNote: string) {
     const startedAt = new Date();
     const expiresAt = addDuration(startedAt, plan.durationUnit, plan.durationValue);
     const id = randomUUID();
@@ -1401,7 +1505,7 @@ export class CommercialStore {
         daily_panel_limit, daily_node_limit, concurrency_limit, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, order.user_id, order.id, plan.name, startedAt.toISOString(), expiresAt,
+      id, userId, sourceOrderId, plan.name, startedAt.toISOString(), expiresAt,
       plan.durationUnit === "lifetime" ? 1 : 0,
       plan.panelMode, plan.panelMode === "limited" ? plan.panelLimit : 0, plan.panelMode === "limited" ? plan.panelLimit : 0,
       plan.nodeMode, plan.nodeMode === "limited" ? plan.nodeLimit : 0, plan.nodeMode === "limited" ? plan.nodeLimit : 0,
@@ -1410,8 +1514,83 @@ export class CommercialStore {
     for (const capability of ["panel", "node"] as Capability[]) {
       const mode = plan[`${capability}Mode`];
       const amount = mode === "limited" ? plan[`${capability}Limit`] : 0;
-      if (mode !== "none") this.addLedger(order.user_id, id, null, capability, "grant", amount, `订单 ${order.order_no} 发放`);
+      if (mode !== "none") this.addLedger(userId, id, null, capability, "grant", amount, ledgerNote);
     }
+    return id;
+  }
+
+  createRedeemCodes(input: RedeemCodeCreateInput): CreatedRedeemCode[] {
+    const plan = this.getPlan(String(input.planId || ""));
+    if (!plan) throw new Error("套餐不存在或已经下架");
+    if (!Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 100) throw new Error("单次生成数量必须为 1 到 100");
+    const note = String(input.note || "").trim().slice(0, 300);
+    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+    if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) throw new Error("卡密有效期必须晚于当前时间");
+    const planSnapshot = JSON.stringify(plan);
+    return this.db.transaction(() => {
+      const created: CreatedRedeemCode[] = [];
+      const insert = this.db.prepare(`INSERT INTO redeem_codes
+        (id, code_hash, code_masked, plan_id, plan_snapshot, status, note, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)`);
+      for (let index = 0; index < input.quantity; index += 1) {
+        let code = "";
+        let id = "";
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          code = createRedeemCodeValue();
+          id = randomUUID();
+          try {
+            insert.run(id, hashToken(code), maskRedeemCode(code), plan.id, planSnapshot, note, expiresAt?.toISOString() || null, nowIso());
+            break;
+          } catch (error: any) {
+            if (attempt === 4 || !/UNIQUE|code_hash/i.test(String(error?.message))) throw error;
+          }
+        }
+        created.push({ id, code, codeMasked: maskRedeemCode(code), planId: plan.id, planName: plan.name, status: "active", note, expiresAt: expiresAt?.toISOString() || null });
+      }
+      return created;
+    })();
+  }
+
+  listRedeemCodes(): RedeemCodeRecord[] {
+    return this.db.prepare(`
+      SELECT rc.id, rc.code_masked AS codeMasked, rc.plan_id AS planId,
+        json_extract(rc.plan_snapshot, '$.name') AS planName,
+        CASE WHEN rc.status = 'active' AND rc.expires_at IS NOT NULL AND rc.expires_at <= ? THEN 'expired' ELSE rc.status END AS status,
+        rc.note, rc.redeemed_by_user_id AS redeemedByUserId, u.username AS redeemedByUsername,
+        rc.entitlement_id AS entitlementId, rc.redeemed_at AS redeemedAt,
+        rc.expires_at AS expiresAt, rc.created_at AS createdAt
+      FROM redeem_codes rc
+      LEFT JOIN users u ON u.id = rc.redeemed_by_user_id
+      ORDER BY rc.created_at DESC LIMIT 2000
+    `).all(nowIso()) as RedeemCodeRecord[];
+  }
+
+  updateRedeemCodeStatus(id: string, status: "active" | "disabled") {
+    const row = this.db.prepare("SELECT status FROM redeem_codes WHERE id = ?").get(id) as any;
+    if (!row) throw new Error("卡密不存在");
+    if (row.status === "redeemed") throw new Error("已兑换卡密不能修改状态");
+    this.db.prepare("UPDATE redeem_codes SET status = ? WHERE id = ?").run(status, id);
+  }
+
+  redeemCode(userId: string, value: string) {
+    const code = normalizeRedeemCode(value);
+    if (!/^XUI-[A-Z2-9]{4}(?:-[A-Z2-9]{4}){3}$/.test(code)) throw new Error("卡密格式不正确");
+    return this.db.transaction(() => {
+      const row = this.db.prepare("SELECT * FROM redeem_codes WHERE code_hash = ?").get(hashToken(code)) as any;
+      if (!row) throw new Error("卡密不存在");
+      if (row.status === "redeemed") throw new Error("卡密已经兑换");
+      if (row.status === "disabled") throw new Error("卡密已经停用");
+      if (row.expires_at && row.expires_at <= nowIso()) throw new Error("卡密已经过期");
+      const timestamp = nowIso();
+      const updated = this.db.prepare(`UPDATE redeem_codes SET status = 'redeemed', redeemed_by_user_id = ?, redeemed_at = ?
+        WHERE id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?)`)
+        .run(userId, timestamp, row.id, timestamp);
+      if (!updated.changes) throw new Error("卡密已经失效");
+      const plan = JSON.parse(row.plan_snapshot);
+      const entitlementId = this.grantPlanEntitlement(userId, plan, null, `卡密 ${row.code_masked} 兑换`);
+      this.db.prepare("UPDATE redeem_codes SET entitlement_id = ? WHERE id = ?").run(entitlementId, row.id);
+      return { entitlementId, planName: plan.name, codeMasked: row.code_masked };
+    })();
   }
 
   grantEntitlement(userId: string, input: EntitlementGrantInput) {

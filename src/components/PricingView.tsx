@@ -36,7 +36,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
     }
     setOrdering(plan.id);
     try {
-      const data = await api<{ order: Order; payment: PaymentCheckout | null }>('/api/orders', { method: 'POST', body: JSON.stringify({ planId: plan.id, paymentProvider }) });
+      const data = await api<{ order: Order; payment: PaymentCheckout | null; paymentError?: string }>('/api/orders', { method: 'POST', body: JSON.stringify({ planId: plan.id, paymentProvider }) });
       await onOrderCreated();
       if (data.payment?.checkoutType === 'redirect') {
         window.location.assign(data.payment.checkoutUrl);
@@ -45,6 +45,11 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       if (data.payment?.checkoutType === 'qrcode') {
         setSelectedPlan(null);
         setCheckout({ order: data.order, payment: data.payment });
+        return;
+      }
+      if (data.paymentError) {
+        showToast('订单已创建', `支付网关暂不可用，可在订单中心继续支付。${data.paymentError}`, 'warning');
+        setSelectedPlan(null);
         return;
       }
       showToast('订单已创建', `订单号 ${data.order.orderNo}，请按账户页说明完成付款`, 'success');

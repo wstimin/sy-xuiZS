@@ -120,6 +120,46 @@ test("paid order grants the exact plan snapshot", () => {
   store.close();
 });
 
+test("redeem codes store only hashes and grant their plan once", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("redeem-user", "strong-password");
+    const plan = store.createPlan({
+      name: "卡密月卡", priceCents: 2900, durationUnit: "months", durationValue: 1,
+      panelMode: "limited", panelLimit: 2, nodeMode: "limited", nodeLimit: 8,
+      dailyPanelLimit: 1, dailyNodeLimit: 4, concurrencyLimit: 1, enabled: true, sortOrder: 1,
+    });
+    const [created]: any[] = store.createRedeemCodes({ planId: plan.id, quantity: 1, note: "测试批次" });
+    assert.match(created.code, /^XUI-/);
+    assert.equal(store.listRedeemCodes()[0].codeMasked, created.codeMasked);
+    assert.equal(JSON.stringify(store.listRedeemCodes()).includes(created.code), false);
+
+    const result = store.redeemCode(user.id, created.code.toLowerCase());
+    assert.equal(result.planName, "卡密月卡");
+    const [entitlement]: any[] = store.listEntitlements(user.id);
+    assert.equal(entitlement.panelRemaining, 2);
+    assert.equal(entitlement.nodeRemaining, 8);
+    assert.equal(store.listRedeemCodes()[0].status, "redeemed");
+    assert.throws(() => store.redeemCode(user.id, created.code), /已经兑换/);
+  } finally {
+    store.close();
+  }
+});
+
+test("disabled and expired redeem codes cannot be used", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("blocked-redeem-user", "strong-password");
+    const plan = store.listPlans()[0];
+    const [disabled]: any[] = store.createRedeemCodes({ planId: plan.id, quantity: 1 });
+    store.updateRedeemCodeStatus(disabled.id, "disabled");
+    assert.throws(() => store.redeemCode(user.id, disabled.code), /已经停用/);
+    assert.throws(() => store.createRedeemCodes({ planId: plan.id, quantity: 1, expiresAt: new Date(Date.now() - 1000).toISOString() }), /晚于当前时间/);
+  } finally {
+    store.close();
+  }
+});
+
 test("refunding an order revokes the entitlement granted by that order", () => {
   const store = createStore();
   const user = store.createUser("refund-buyer", "strong-password");
@@ -127,7 +167,7 @@ test("refunding an order revokes the entitlement granted by that order", () => {
   const order = store.createOrder(user.id, plan.id);
   store.markOrderPaid(order.id, "test", "refund-trade-1");
 
-  store.refundOrder(order.id);
+  store.refundOrder(order.id, "测试退款", "REFUND-1");
 
   const refunded: any = store.getOrder(order.id);
   const [entitlement]: any[] = store.listEntitlements(user.id);
@@ -573,4 +613,82 @@ test("epay URLs and callback signatures use the documented MD5 scheme", () => {
   assert.equal(checkout.pathname, "/submit.php");
   assert.equal(checkout.searchParams.get("money"), "9.90");
   assert.ok(checkout.searchParams.get("sign"));
+});
+
+test("one EPay merchant can expose USDT, PayPal, Alipay, Wechat and QQ", () => {
+  const store = createStore();
+  try {
+    store.setPaymentMethods([{
+      id: "epay-five", name: "易支付", type: "epay", provider: "epay", enabled: true,
+      instructions: "在线支付", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001",
+      merchantSecret: "epay-secret", channel: "alipay",
+      enabledChannels: ["alipay", "wxpay", "qqpay", "paypal", "usdt.trc20"], sortOrder: 10,
+    }]);
+    assert.deepEqual(store.getPaymentMethods().map(method => ({ name: method.name, channel: method.channel })), [
+      { name: "支付宝", channel: "alipay" },
+      { name: "微信支付", channel: "wxpay" },
+      { name: "QQ 钱包", channel: "qqpay" },
+      { name: "PayPal", channel: "paypal" },
+      { name: "USDT", channel: "usdt.trc20" },
+    ]);
+  } finally {
+    store.close();
+  }
+});
+
+test("PayPal credentials are encrypted and provider order ids survive capture completion", () => {
+  const store = createStore();
+  try {
+    store.setPaymentMethods([{
+      id: "paypal-main", name: "PayPal", type: "paypal", provider: "paypal", enabled: true,
+      instructions: "PayPal 支付", paymentUrl: "", merchantId: "client-id", merchantSecret: "client-secret",
+      appId: "WEBHOOK-1", currency: "USD", sandbox: true, sortOrder: 10,
+    }]);
+    const admin = store.getPaymentMethods(true)[0];
+    assert.equal(admin.currency, "CNY");
+    assert.equal(admin.sandbox, true);
+    assert.equal(admin.merchantSecretConfigured, true);
+    assert.equal(admin.merchantSecret, undefined);
+    assert.equal(store.getPaymentMethods(true, true)[0].merchantSecret, "client-secret");
+
+    const user = store.createUser("paypal-user", "strong-password");
+    const order = store.createOrder(user.id, store.listPlans()[0].id, "paypal-main");
+    const attempt = store.createPaymentAttempt(order.id, "paypal-main", "https://paypal.test/checkout", {}, order.expiresAt, "PAYPAL-ORDER-1");
+    assert.equal(attempt.providerOrderId, "PAYPAL-ORDER-1");
+    store.completePaymentAttempt(order.id, "paypal-main", "CAPTURE-1", { status: "COMPLETED" });
+    const found = store.getPaymentAttemptByProviderOrder("paypal-main", "PAYPAL-ORDER-1");
+    assert.equal(found.id, attempt.id);
+    assert.equal(store.getPaymentAttempt(attempt.id).providerTradeNo, "CAPTURE-1");
+  } finally {
+    store.close();
+  }
+});
+
+test("verified online callbacks recover expired orders while manual payments cannot", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("late-payment-user", "strong-password");
+    const manualOrder = store.createOrder(user.id, store.listPlans()[0].id, "manual");
+    store.setPaymentMethods([{
+      id: "epay-late", name: "易支付", type: "epay", provider: "epay", enabled: true,
+      instructions: "在线支付", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001",
+      merchantSecret: "epay-secret", channel: "alipay", enabledChannels: ["alipay"], sortOrder: 10,
+    }]);
+    const order = store.createOrder(user.id, store.listPlans()[0].id, "epay-late--alipay");
+    const attempt = store.createPaymentAttempt(order.id, "epay-late", "https://pay.example.test/checkout", {}, order.expiresAt);
+    assert.throws(() => store.cancelOrder(order.id, user.id), /进行中的在线支付/);
+    store.db.prepare("UPDATE orders SET expires_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", order.id);
+    store.expirePendingOrders();
+    assert.equal(store.getOrder(order.id).status, "expired");
+    assert.equal(store.getPaymentAttempt(attempt.id).status, "closed");
+    store.completePaymentAttempt(order.id, "epay-late", "EPAY-LATE-1", { verified: true });
+    assert.equal(store.getOrder(order.id).status, "paid");
+    assert.equal(store.getPaymentAttempt(attempt.id).status, "paid");
+    assert.equal(store.listEntitlements(user.id).length, 1);
+
+    store.db.prepare("UPDATE orders SET status = 'expired' WHERE id = ?").run(manualOrder.id);
+    assert.throws(() => store.markOrderPaid(manualOrder.id, "manual", "MANUAL-LATE-1", true), /待支付订单/);
+  } finally {
+    store.close();
+  }
 });

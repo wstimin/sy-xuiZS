@@ -87,6 +87,23 @@ test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", as
     assert.equal(account.orders[0].paymentProvider, "manual");
     assert.equal(account.entitlements[0].panelRemaining, 1);
     assert.equal(account.entitlements[0].nodeRemaining, 3);
+
+    const missingRefundProof = await fetch(`${base}/admin/orders/${order.id}/refund`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: combinedCookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(missingRefundProof.status, 400);
+
+    const refundResponse = await fetch(`${base}/admin/orders/${order.id}/refund`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: combinedCookie },
+      body: JSON.stringify({ reason: "用户申请退款", refundTradeNo: "REFUND-API-1" }),
+    });
+    assert.equal(refundResponse.status, 200);
+    const refunded = (await refundResponse.json() as any).order;
+    assert.equal(refunded.status, "refunded");
+    assert.equal(refunded.refundTradeNo, "REFUND-API-1");
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     store.close();
@@ -304,6 +321,93 @@ test("email registration, payment settings and provider validation align across 
   }
 });
 
+test("redeem code APIs issue plan benefits once and expose a validated purchase link", async () => {
+  const store = new CommercialStore(":memory:");
+  const app = express();
+  app.use(express.json());
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+
+  try {
+    const bootstrap = await fetch(`${base}/auth/bootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "code-admin", password: "admin-password" }),
+    });
+    const adminCookie = sessionCookie(bootstrap);
+
+    const registration = await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "code-user", email: "code-user@example.com", password: "buyer-password" }),
+    });
+    const userCookie = sessionCookie(registration);
+    const user = (await registration.json() as any).user;
+    const plan = store.listPlans()[0];
+
+    const createResponse = await fetch(`${base}/admin/redeem-codes`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ planId: plan.id, quantity: 1, note: "api batch" }),
+    });
+    assert.equal(createResponse.status, 201);
+    const created = (await createResponse.json() as any).redeemCodes[0];
+    assert.match(created.code, /^XUI-[A-Z2-9]{4}(?:-[A-Z2-9]{4}){3}$/);
+
+    const listResponse = await fetch(`${base}/admin/redeem-codes`, { headers: { cookie: adminCookie } });
+    assert.equal(listResponse.status, 200);
+    const listed = await listResponse.json() as any;
+    assert.equal(listed.redeemCodes[0].codeMasked, created.codeMasked);
+    assert.equal("code" in listed.redeemCodes[0], false);
+    assert.equal(JSON.stringify(listed).includes(created.code), false);
+
+    const redeemResponse = await fetch(`${base}/redeem-codes/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: userCookie },
+      body: JSON.stringify({ code: created.code.toLowerCase() }),
+    });
+    assert.equal(redeemResponse.status, 200);
+    assert.equal((await redeemResponse.json() as any).planName, plan.name);
+
+    const accountAfterRedeem = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
+    assert.equal(accountAfterRedeem.entitlements.length, 1);
+    assert.equal(accountAfterRedeem.entitlements[0].planName, plan.name);
+
+    const repeated = await fetch(`${base}/redeem-codes/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: userCookie },
+      body: JSON.stringify({ code: created.code }),
+    });
+    assert.equal(repeated.status, 400);
+    assert.equal(store.listEntitlements(user.id).length, 1);
+
+    const purchaseUrl = "https://shop.example.test/redeem-codes";
+    const settingsResponse = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ redeemCodePurchaseUrl: purchaseUrl }),
+    });
+    assert.equal(settingsResponse.status, 200);
+    const accountWithLink = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
+    assert.equal(accountWithLink.redeemCodePurchaseUrl, purchaseUrl);
+
+    const unsafeLink = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ redeemCodePurchaseUrl: "javascript:alert(1)" }),
+    });
+    assert.equal(unsafeLink.status, 400);
+    assert.equal(store.getSetting("redeem_code_purchase_url", ""), purchaseUrl);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});
+
 test("online payment callbacks reject wrong amounts and grant benefits only once", async () => {
   const store = new CommercialStore(":memory:");
   const app = express();
@@ -345,14 +449,18 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
     assert.match(await directVisit.text(), /异步通知接口/);
     assert.equal(store.listPaymentNotifications().length, 0);
 
-    const callback = (money: string) => {
+    const callback = (money: string, pid = "1001") => {
       const params: Record<string, string> = {
-        pid: "1001", out_trade_no: order.orderNo, trade_no: "EPAY-TRADE-1",
+        pid, out_trade_no: order.orderNo, trade_no: "EPAY-TRADE-1",
         trade_status: "TRADE_SUCCESS", money, sign_type: "MD5",
       };
       params.sign = epaySign(params, "callback-secret");
       return fetch(`${base}/payment/epay/epay-live/notify?${new URLSearchParams(params)}`);
     };
+
+    const wrongPid = await callback((order.amountCents / 100).toFixed(2), "2002");
+    assert.equal(wrongPid.status, 400);
+    assert.equal(store.getOrder(order.id).status, "pending");
 
     const wrongAmount = await callback("99.00");
     assert.equal(wrongAmount.status, 400);
@@ -369,7 +477,47 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
     assert.equal(repeated.status, 200);
     assert.equal(store.listEntitlements(user.id).length, 1);
     assert.equal(store.listPaymentNotifications().filter((item: any) => item.status === "accepted").length, 2);
-    assert.equal(store.listPaymentNotifications().filter((item: any) => item.status === "rejected").length, 1);
+    assert.equal(store.listPaymentNotifications().filter((item: any) => item.status === "rejected").length, 2);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});
+
+test("gateway checkout failures keep the created order available for retry", async () => {
+  const store = new CommercialStore(":memory:");
+  const app = express();
+  app.use(express.json());
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+
+  try {
+    store.bootstrapAdmin("gateway-admin", "strong-password");
+    store.setPaymentMethods([{
+      id: "tokenpay-down", name: "USDT", type: "tokenpay", provider: "tokenpay", enabled: true,
+      instructions: "USDT 支付", paymentUrl: "", gatewayUrl: `http://127.0.0.1:${port}/unavailable/`,
+      merchantSecret: "tokenpay-secret", currency: "USDT_TRC20", sortOrder: 10,
+    }]);
+    const user = store.createUser("gateway-user", "strong-password", "user", "gateway@example.com");
+    const login = await fetch(`${base}/auth/login`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ identifier: user.email, password: "strong-password" }),
+    });
+    const response = await fetch(`${base}/orders`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: sessionCookie(login) },
+      body: JSON.stringify({ planId: store.listPlans()[0].id, paymentProvider: "tokenpay-down" }),
+    });
+    assert.equal(response.status, 201);
+    const result = await response.json() as any;
+    assert.equal(result.success, true);
+    assert.equal(result.order.status, "pending");
+    assert.equal(result.payment, null);
+    assert.ok(result.paymentError);
+    assert.equal((store.listPaymentAttempts(result.order.id)[0] as any).status, "failed");
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     store.close();

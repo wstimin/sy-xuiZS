@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createServer } from "node:http";
+import { AddressInfo } from "node:net";
 import {
   createPrivateKey,
   createSign,
@@ -7,8 +9,10 @@ import {
 } from "node:crypto";
 import {
   decryptWechatResource,
+  epaySign,
   encryptWechatResourceForTest,
   genericMd5Sign,
+  getPaymentDriver,
   verifyAlipayResponseSignature,
   verifyAlipaySignature,
   verifyWechatNotificationSignature,
@@ -88,4 +92,99 @@ test("Wechat API v3 resources decrypt and notification headers verify", () => {
   assert.equal(verifyWechatNotificationSignature(publicKey, headers, `${body} `), false);
 
   assert.throws(() => decryptWechatResource("too-short", resource), /32 字节/);
+});
+
+test("EPay notifications require the configured PID and platform trade number", async () => {
+  const driver = getPaymentDriver("epay");
+  const config = { id: "epay", provider: "epay" as const, merchantId: "1001", merchantSecret: "secret" };
+  const valid: Record<string, string> = {
+    pid: "1001",
+    out_trade_no: "ORDER1",
+    trade_no: "EPAY1",
+    trade_status: "TRADE_SUCCESS",
+    money: "9.90",
+    sign_type: "MD5",
+  };
+  valid.sign = epaySign(valid, "secret");
+  const payment = await driver.verifyNotification(config, { params: valid, body: {}, headers: {} });
+  assert.deepEqual({ orderNo: payment.orderNo, tradeNo: payment.tradeNo, amountCents: payment.amountCents }, {
+    orderNo: "ORDER1", tradeNo: "EPAY1", amountCents: 990,
+  });
+
+  const wrongPid: Record<string, string> = { ...valid, pid: "2002" };
+  wrongPid.sign = epaySign(wrongPid, "secret");
+  await assert.rejects(driver.verifyNotification(config, { params: wrongPid, body: {}, headers: {} }), /PID/);
+
+  const missingTradeNo: Record<string, string> = { ...valid, trade_no: "" };
+  missingTradeNo.sign = epaySign(missingTradeNo, "secret");
+  await assert.rejects(driver.verifyNotification(config, { params: missingTradeNo, body: {}, headers: {} }), /平台交易号/);
+});
+
+test("PayPal Orders v2 creates, captures and verifies completed payments", async () => {
+  const requests: Array<{ method: string; path: string; body: any }> = [];
+  const server = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const rawBody = Buffer.concat(chunks).toString("utf8");
+    let body: any = rawBody;
+    try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { /* OAuth form body */ }
+    requests.push({ method: req.method || "GET", path: req.url || "", body });
+    res.setHeader("content-type", "application/json");
+    if (req.url === "/v1/oauth2/token") return res.end(JSON.stringify({ access_token: "access-token" }));
+    if (req.url === "/v2/checkout/orders" && req.method === "POST") {
+      return res.end(JSON.stringify({ id: "PAYPAL-ORDER-1", status: "PAYER_ACTION_REQUIRED", links: [{ rel: "payer-action", href: "https://www.sandbox.paypal.com/checkoutnow?token=PAYPAL-ORDER-1" }] }));
+    }
+    if (req.url === "/v2/checkout/orders/PAYPAL-ORDER-1/capture") {
+      return res.end(JSON.stringify({
+        id: "PAYPAL-ORDER-1",
+        status: "COMPLETED",
+        purchase_units: [{ invoice_id: "ORDER1", custom_id: "ORDER1", payments: { captures: [{ id: "CAPTURE-1", status: "COMPLETED", amount: { currency_code: "CNY", value: "9.90" } }] } }],
+      }));
+    }
+    if (req.url === "/v1/notifications/verify-webhook-signature") return res.end(JSON.stringify({ verification_status: "SUCCESS" }));
+    res.statusCode = 404;
+    res.end(JSON.stringify({ message: "not found" }));
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  try {
+    const driver = getPaymentDriver("paypal");
+    const config = { id: "paypal", provider: "paypal" as const, gatewayUrl: baseUrl, merchantId: "client-id", merchantSecret: "client-secret", appId: "WEBHOOK-1", currency: "CNY" };
+    const checkout = await driver.createCheckout(config, {
+      orderNo: "ORDER1", amountCents: 990, name: "Test plan", notifyUrl: "https://site.test/notify",
+      returnUrl: "https://site.test/paypal/return", cancelUrl: "https://site.test/paypal/cancel",
+    });
+    assert.equal(checkout.type, "redirect");
+    assert.equal(checkout.providerOrderId, "PAYPAL-ORDER-1");
+    assert.match(checkout.checkoutUrl, /PAYPAL-ORDER-1/);
+    const createRequest = requests.find(item => item.path === "/v2/checkout/orders");
+    assert.equal(createRequest?.body.purchase_units[0].amount.value, "9.90");
+    assert.equal(createRequest?.body.purchase_units[0].amount.currency_code, "CNY");
+    assert.equal(createRequest?.body.payment_source.paypal.experience_context.return_url, "https://site.test/paypal/return");
+
+    const captured = await driver.captureCheckout!(config, "PAYPAL-ORDER-1", "attempt-1");
+    assert.deepEqual({ orderNo: captured.orderNo, tradeNo: captured.tradeNo, amountCents: captured.amountCents }, {
+      orderNo: "ORDER1", tradeNo: "CAPTURE-1", amountCents: 990,
+    });
+
+    const event = {
+      event_type: "PAYMENT.CAPTURE.COMPLETED",
+      resource: { id: "CAPTURE-1", status: "COMPLETED", invoice_id: "ORDER1", amount: { currency_code: "CNY", value: "9.90" } },
+    };
+    const notified = await driver.verifyNotification(config, {
+      params: {}, body: JSON.stringify(event), headers: {
+        "paypal-auth-algo": "SHA256withRSA", "paypal-cert-url": "https://api.paypal.com/cert.pem",
+        "paypal-transmission-id": "transmission-1", "paypal-transmission-sig": "signature",
+        "paypal-transmission-time": new Date().toISOString(),
+      },
+    });
+    assert.deepEqual({ orderNo: notified.orderNo, tradeNo: notified.tradeNo, amountCents: notified.amountCents }, {
+      orderNo: "ORDER1", tradeNo: "CAPTURE-1", amountCents: 990,
+    });
+    assert.equal(requests.filter(item => item.path === "/v1/oauth2/token").length, 3);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
 });

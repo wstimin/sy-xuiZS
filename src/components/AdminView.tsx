@@ -49,13 +49,14 @@ import {
   PaymentProvider,
   EmailSettings,
   Plan,
+  RedeemCode,
   quotaText,
 } from '../commercial';
 import { copyToClipboard } from '../utils/clipboard';
 import { ChangePasswordForm } from './ChangePasswordForm';
 import { AdminDialog } from './admin/AdminDialog';
 
-type AdminTab = 'dashboard' | 'orders' | 'plans' | 'users' | 'entitlements' | 'ledger' | 'deployments' | 'audit' | 'settings' | 'security';
+type AdminTab = 'dashboard' | 'orders' | 'plans' | 'redeem-codes' | 'users' | 'entitlements' | 'ledger' | 'deployments' | 'audit' | 'settings' | 'security';
 type SettingsSection = 'general' | 'email' | 'payments';
 type SettingsDialog = 'order' | 'smtp' | 'sender' | 'verification' | 'test-email' | null;
 type AdminUser = { id: string; username: string; email: string | null; emailVerified: boolean; role: 'user' | 'admin'; status: 'active' | 'disabled'; createdAt: string; lastLoginAt?: string };
@@ -82,7 +83,8 @@ type Stats = {
   failed: number;
   uncertain: number;
 };
-type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; email: EmailSettings; orderExpiryMinutes: number; adminPath: string };
+type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; email: EmailSettings; orderExpiryMinutes: number; adminPath: string; redeemCodePurchaseUrl: string };
+type CreatedRedeemCode = RedeemCode & { code: string };
 
 const PAGE_SIZE = 10;
 const emptyPlan: Omit<Plan, 'id'> = {
@@ -115,21 +117,20 @@ const emptyGrant = {
   concurrencyLimit: 1,
 };
 const emptyUser = { username: '', email: '', password: '', role: 'user' as 'user' | 'admin' };
-const emptyPaymentMethod = (): PaymentMethod => ({ id: `method-${Date.now()}`, name: '新支付方式', type: 'manual', provider: 'manual', enabled: true, instructions: '', paymentUrl: '', gatewayUrl: '', merchantId: '', merchantSecret: '', merchantSecretConfigured: false, channel: 'alipay', sortOrder: 10 });
+const emptyPaymentMethod = (): PaymentMethod => ({ id: `method-${Date.now()}`, name: '易支付', type: 'epay', provider: 'epay', enabled: true, instructions: '', paymentUrl: '', gatewayUrl: '', merchantId: '', merchantSecret: '', merchantSecretConfigured: false, channel: 'alipay', enabledChannels: ['alipay'], currency: 'CNY', sortOrder: 10 });
 const emptyEmailSettings: EmailSettings = { emailEnabled: false, emailVerificationRequired: false, smtpHost: '', smtpPort: 465, smtpEncryption: 'ssl', smtpUsername: '', smtpPassword: '', smtpPasswordConfigured: false, smtpFromName: 'NEXUS CLOUD', smtpFromEmail: '', smtpReplyTo: '', verificationCodeTtlMinutes: 10, verificationResendSeconds: 60, siteName: 'NEXUS CLOUD', publicBaseUrl: '' };
 const TOKENPAY_CURRENCIES = [
   { value: 'USDT_TRC20', label: 'USDT-TRC20' },
-  { value: 'TRX', label: 'TRX' },
-  { value: 'ETH', label: 'ETH' },
   { value: 'USDT_ERC20', label: 'USDT-ERC20' },
-  { value: 'USDC_ERC20', label: 'USDC-ERC20' },
 ] as const;
+const LEGACY_TOKENPAY_CURRENCIES = ['TRX', 'ETH', 'USDC_ERC20'] as const;
 const MGATE_CURRENCIES = ['CNY', 'USD', 'EUR', 'HKD', 'TWD', 'JPY', 'KRW', 'SGD'] as const;
 
 const navigation: Array<{ id: AdminTab; label: string; icon: React.ElementType; tone: string; section?: string }> = [
   { id: 'dashboard', label: '运营概览', icon: LayoutDashboard, tone: 'cyan' },
   { id: 'orders', label: '订单管理', icon: CreditCard, tone: 'green', section: '业务管理' },
   { id: 'plans', label: '套餐管理', icon: Boxes, tone: 'violet' },
+  { id: 'redeem-codes', label: '卡密管理', icon: KeyRound, tone: 'amber' },
   { id: 'users', label: '用户管理', icon: Users, tone: 'blue' },
   { id: 'entitlements', label: '权益管理', icon: BadgeCheck, tone: 'emerald' },
   { id: 'ledger', label: '额度流水', icon: FileText, tone: 'sky' },
@@ -162,7 +163,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [paymentAttempts, setPaymentAttempts] = useState<PaymentAttempt[]>([]);
   const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
-  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin' });
+  const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
+  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '' });
   const [accountUsername, setAccountUsername] = useState(currentUser.username);
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
@@ -178,6 +180,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [tradeNo, setTradeNo] = useState('');
   const [cancelOrder, setCancelOrder] = useState<Order | null>(null);
   const [refundOrder, setRefundOrder] = useState<Order | null>(null);
+  const [refundTradeNo, setRefundTradeNo] = useState('');
+  const [refundReason, setRefundReason] = useState('');
   const [userAction, setUserAction] = useState<{ user: AdminUser; kind: 'status' | 'role' | 'password'; nextValue?: string } | null>(null);
   const [nextPassword, setNextPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -191,11 +195,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [viewDeployment, setViewDeployment] = useState<DeploymentRecord | null>(null);
   const [userDetail, setUserDetail] = useState<UserDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [redeemCodeDraft, setRedeemCodeDraft] = useState({ planId: '', quantity: 10, note: '', expiresAt: '' });
+  const [redeemCodeDialogOpen, setRedeemCodeDialogOpen] = useState(false);
+  const [createdRedeemCodes, setCreatedRedeemCodes] = useState<CreatedRedeemCode[]>([]);
 
   const load = async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      const [statsResult, plansResult, ordersResult, usersResult, entitlementResult, deploymentResult, ledgerResult, auditResult, settingsResult, attemptResult, notificationResult] = await Promise.all([
+      const [statsResult, plansResult, ordersResult, usersResult, entitlementResult, deploymentResult, ledgerResult, auditResult, settingsResult, attemptResult, notificationResult, redeemCodeResult] = await Promise.all([
         api<{ stats: Stats }>('/api/admin/stats'),
         api<{ plans: Plan[] }>('/api/admin/plans'),
         api<{ orders: Order[] }>('/api/admin/orders'),
@@ -207,6 +214,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         api<{ settings: SystemSettings }>('/api/admin/settings'),
         api<{ attempts: PaymentAttempt[] }>('/api/admin/payment-attempts'),
         api<{ notifications: PaymentNotification[] }>('/api/admin/payment-notifications'),
+        api<{ redeemCodes: RedeemCode[] }>('/api/admin/redeem-codes'),
       ]);
       setStats(statsResult.stats);
       setPlans(plansResult.plans);
@@ -218,10 +226,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       setAuditLogs(auditResult.logs);
       setPaymentAttempts(attemptResult.attempts);
       setPaymentNotifications(notificationResult.notifications);
+      setRedeemCodes(redeemCodeResult.redeemCodes);
       setSettingsData(settingsResult.settings);
       setAdminPathDraft(settingsResult.settings.adminPath);
       if (!grant.userId && usersResult.users.length) {
         setGrant(value => ({ ...value, userId: usersResult.users.find(user => user.role === 'user')?.id || usersResult.users[0].id }));
+      }
+      if (!redeemCodeDraft.planId && plansResult.plans.length) {
+        setRedeemCodeDraft(value => ({ ...value, planId: plansResult.plans.find(plan => plan.enabled)?.id || plansResult.plans[0].id }));
       }
     } catch (error) {
       if (error && typeof error === 'object' && 'status' in error && error.status === 401) onSessionEnded();
@@ -260,6 +272,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     const matchesQuery = !normalizedQuery || `${plan.name} ${plan.description}`.toLowerCase().includes(normalizedQuery);
     return matchesQuery && (statusFilter === 'all' || (statusFilter === 'enabled' ? plan.enabled : !plan.enabled));
   }), [normalizedQuery, plans, statusFilter]);
+  const filteredRedeemCodes = useMemo(() => redeemCodes.filter(item => {
+    const matchesQuery = !normalizedQuery || `${item.codeMasked} ${item.planName} ${item.note} ${item.redeemedByUsername || ''}`.toLowerCase().includes(normalizedQuery);
+    return matchesQuery && (statusFilter === 'all' || item.status === statusFilter);
+  }), [normalizedQuery, redeemCodes, statusFilter]);
   const filteredUsers = useMemo(() => users.filter(user => {
     const matchesQuery = !normalizedQuery || `${user.username} ${user.email || ''}`.toLowerCase().includes(normalizedQuery);
     return matchesQuery && (statusFilter === 'all' || user.status === statusFilter || user.role === statusFilter);
@@ -282,7 +298,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     return matchesQuery && (statusFilter === 'all' || item.targetType === statusFilter);
   }), [auditLogs, normalizedQuery, statusFilter]);
 
-  const activeList = tab === 'orders' ? filteredOrders : tab === 'plans' ? filteredPlans : tab === 'users' ? filteredUsers : tab === 'entitlements' ? filteredEntitlements : tab === 'ledger' ? filteredLedger : tab === 'deployments' ? filteredDeployments : tab === 'audit' ? filteredAudit : [];
+  const activeList = tab === 'orders' ? filteredOrders : tab === 'plans' ? filteredPlans : tab === 'redeem-codes' ? filteredRedeemCodes : tab === 'users' ? filteredUsers : tab === 'entitlements' ? filteredEntitlements : tab === 'ledger' ? filteredLedger : tab === 'deployments' ? filteredDeployments : tab === 'audit' ? filteredAudit : [];
   const pageCount = Math.max(1, Math.ceil(activeList.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const pageStart = (safePage - 1) * PAGE_SIZE;
@@ -301,6 +317,43 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   const saveSettings = async () => {
     await runAction('系统设置已保存', '/api/admin/settings', { method: 'PUT', body: JSON.stringify(settingsData) });
+  };
+
+  const createRedeemCodes = async () => {
+    setBusy(true);
+    try {
+      const result = await api<{ redeemCodes: CreatedRedeemCode[] }>('/api/admin/redeem-codes', {
+        method: 'POST',
+        body: JSON.stringify({ ...redeemCodeDraft, expiresAt: redeemCodeDraft.expiresAt ? new Date(redeemCodeDraft.expiresAt).toISOString() : null }),
+      });
+      setCreatedRedeemCodes(result.redeemCodes);
+      setRedeemCodeDialogOpen(false);
+      setRedeemCodeDraft(value => ({ ...value, quantity: 10, note: '', expiresAt: '' }));
+      await load(true);
+      showToast('卡密已生成', '请立即复制或下载，本页面关闭后不能再次查看明文', 'success');
+    } catch (error) {
+      showToast('生成卡密失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyCreatedRedeemCodes = async () => {
+    const success = await copyToClipboard(createdRedeemCodes.map(item => item.code).join('\n'));
+    showToast(success ? '全部卡密已复制' : '复制失败', success ? `共 ${createdRedeemCodes.length} 张` : '请使用下载功能保存', success ? 'success' : 'error');
+  };
+
+  const downloadCreatedRedeemCodes = () => {
+    const content = createdRedeemCodes.map(item => item.code).join('\r\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `redeem-codes-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   };
 
   const saveAccountUsername = async (event: React.FormEvent) => {
@@ -477,7 +530,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                   <td>{order.username || '-'}</td><td className="admin-money">{formatMoney(order.amountCents)}</td><td><StatusBadge status={order.status} /></td>
                   <td>{order.paymentTradeNo ? <><span>{order.paymentProvider || 'manual'}</span><small className="admin-cell-sub">{order.paymentTradeNo}</small></> : <span className="admin-muted">未支付</span>}</td>
                   <td>{formatDate(order.createdAt)}</td>
-                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" onClick={() => setViewOrder(order)}><Eye /></button>{order.status === 'pending' && <><button className="admin-link success" onClick={() => { setPaymentOrder(order); setTradeNo(''); }}>确认收款</button><button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button></>}{order.status === 'paid' && <button className="admin-link warning" onClick={() => setRefundOrder(order)}>退款撤权</button>}</div></td>
+                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" onClick={() => setViewOrder(order)}><Eye /></button>{order.status === 'pending' && <><button className="admin-link success" onClick={() => { setPaymentOrder(order); setTradeNo(''); }}>确认收款</button><button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button></>}{order.status === 'paid' && <button className="admin-link warning" onClick={() => { setRefundOrder(order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}</div></td>
                 </tr>)}
               </AdminTable>
               <Pagination total={filteredOrders.length} page={safePage} pageCount={pageCount} onPage={setPage} />
@@ -496,6 +549,20 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                 </tr>)}
               </AdminTable>
               <Pagination total={filteredPlans.length} page={safePage} pageCount={pageCount} onPage={setPage} />
+            </AdminSection>}
+
+            {tab === 'redeem-codes' && <AdminSection title="卡密管理" description="生成绑定套餐的一次性卡密，并查看兑换和停用状态。" action={<button className="admin-button primary" onClick={() => setRedeemCodeDialogOpen(true)}><KeyRound /> 生成卡密</button>}>
+              <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索卡密、套餐、备注或兑换用户" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部状态'], ['active', '未兑换'], ['redeemed', '已兑换'], ['disabled', '已停用'], ['expired', '已过期']]} />
+              <AdminTable columns={['卡密', '套餐', '状态', '备注', '兑换用户', '有效期', '创建时间', '操作']} empty="没有符合条件的卡密">
+                {filteredRedeemCodes.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}>
+                  <td><strong className="admin-primary-text admin-code">{item.codeMasked}</strong></td>
+                  <td>{item.planName}</td><td><StatusBadge status={item.status} /></td><td>{item.note || <span className="admin-muted">-</span>}</td>
+                  <td>{item.redeemedByUsername ? <><strong>{item.redeemedByUsername}</strong><small className="admin-cell-sub">{formatDate(item.redeemedAt)}</small></> : <span className="admin-muted">未兑换</span>}</td>
+                  <td>{item.expiresAt ? formatDate(item.expiresAt) : '长期有效'}</td><td>{formatDate(item.createdAt)}</td>
+                  <td>{item.status === 'active' || item.status === 'disabled' ? <button className={item.status === 'active' ? 'admin-link danger' : 'admin-link success'} onClick={() => void runAction(item.status === 'active' ? '卡密已停用' : '卡密已启用', `/api/admin/redeem-codes/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: item.status === 'active' ? 'disabled' : 'active' }) })}>{item.status === 'active' ? '停用' : '启用'}</button> : <span className="admin-muted">-</span>}</td>
+                </tr>)}
+              </AdminTable>
+              <Pagination total={filteredRedeemCodes.length} page={safePage} pageCount={pageCount} onPage={setPage} />
             </AdminSection>}
 
             {tab === 'users' && <AdminSection title="用户管理" description="创建账号并管理真实账户状态、角色、密码与业务记录。" action={<button className="admin-button primary" onClick={() => setCreatingUser({ ...emptyUser })}><UserPlus /> 创建用户</button>}>
@@ -579,6 +646,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                         <button type="button" className="admin-button secondary" onClick={() => setSettingsDialog('order')}><Pencil /> 编辑订单规则</button>
                       </div>
                     </section>
+                    <section className="admin-settings-section">
+                      <div className="admin-settings-section-title"><h3>卡密购买</h3><p>配置后用户账户页会显示购买卡密入口。</p></div>
+                      <div className="admin-settings-form">
+                        <label className="admin-field"><span>卡密购买链接</span><input type="url" value={settingsData.redeemCodePurchaseUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, redeemCodePurchaseUrl: event.target.value })} placeholder="https://example.com/buy" /><small>留空则不显示购买按钮，仅支持 HTTP 或 HTTPS。</small></label>
+                      </div>
+                    </section>
                   </>}
 
                   {settingsSection === 'email' && <>
@@ -660,6 +733,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       </div>
 
       <PlanDialog plan={editingPlan} busy={busy} onChange={setEditingPlan} onClose={() => setEditingPlan(null)} onSave={() => void savePlan()} />
+      <AdminDialog open={redeemCodeDialogOpen} title="生成卡密" description="每张卡密只能兑换一次，并按当前套餐内容创建权益。" confirmLabel="生成卡密" tone="success" busy={busy} confirmDisabled={!redeemCodeDraft.planId || redeemCodeDraft.quantity < 1 || redeemCodeDraft.quantity > 100} onClose={() => setRedeemCodeDialogOpen(false)} onConfirm={() => void createRedeemCodes()}>
+        <div className="admin-form-grid">
+          <label className="admin-field span-2"><span>绑定套餐</span><select value={redeemCodeDraft.planId} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, planId: event.target.value })}>{plans.filter(plan => plan.enabled).map(plan => <option key={plan.id} value={plan.id}>{plan.name} · {formatMoney(plan.priceCents)}</option>)}</select><small>仅能为当前已上架套餐生成卡密。</small></label>
+          <label className="admin-field"><span>生成数量</span><input type="number" min="1" max="100" value={redeemCodeDraft.quantity} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, quantity: Number(event.target.value) })} /></label>
+          <label className="admin-field"><span>有效期</span><input type="datetime-local" value={redeemCodeDraft.expiresAt} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, expiresAt: event.target.value })} /><small>留空表示长期有效。</small></label>
+          <label className="admin-field span-2"><span>批次备注</span><input value={redeemCodeDraft.note} maxLength={300} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, note: event.target.value })} placeholder="例如：淘宝 8 月批次" /></label>
+        </div>
+      </AdminDialog>
+      <AdminDialog open={createdRedeemCodes.length > 0} title="卡密生成完成" description="明文只在本次显示，关闭后后台只能查看脱敏值。" cancelLabel="关闭" onClose={() => setCreatedRedeemCodes([])}>
+        <div className="admin-redeem-result-actions"><button type="button" className="admin-button secondary" onClick={() => void copyCreatedRedeemCodes()}><ClipboardCopy /> 复制全部</button><button type="button" className="admin-button secondary" onClick={downloadCreatedRedeemCodes}><Download /> 下载 TXT</button></div>
+        <div className="admin-redeem-result-list">{createdRedeemCodes.map(item => <code key={item.id}>{item.code}</code>)}</div>
+      </AdminDialog>
       <AdminDialog open={settingsDialog === 'order'} title="编辑订单规则" description="设置待付款订单的保留时间和用户付款引导，确认后仍需保存全部设置才会生效。" confirmLabel="完成编辑" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid one">
           <label className="admin-field"><span>订单有效期（分钟）</span><input type="number" min="5" max="1440" value={settingsData.orderExpiryMinutes} onChange={event => setSettingsData({ ...settingsData, orderExpiryMinutes: Number(event.target.value) })} /><small>超过有效期的未支付订单将不能继续付款。</small></label>
@@ -702,8 +787,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         <label className="admin-field"><span>支付交易号或收款凭证号</span><input value={tradeNo} onChange={event => setTradeNo(event.target.value)} maxLength={128} placeholder="请输入唯一的交易号，便于后续核对" /><small>该编号会写入订单和支付事件记录。</small></label>
       </AdminDialog>
       <AdminDialog open={Boolean(cancelOrder)} title="取消待付款订单" description={`订单 ${cancelOrder?.orderNo || ''} 将变为已取消，之后不能再确认收款。`} confirmLabel="确认取消订单" tone="danger" busy={busy} onClose={() => setCancelOrder(null)} onConfirm={() => cancelOrder && void runAction('订单已取消', `/api/admin/orders/${cancelOrder.id}/cancel`, { method: 'POST' }, () => setCancelOrder(null))} />
-      <AdminDialog open={Boolean(refundOrder)} title="退款并撤销权益" description="该操作会把订单标记为已退款，并立即撤销由此订单发放的权益。存在执行中或待核对任务时，后端会拒绝退款。" confirmLabel="确认退款并撤权" tone="danger" busy={busy} onClose={() => setRefundOrder(null)} onConfirm={() => refundOrder && void runAction('订单已退款并撤销权益', `/api/admin/orders/${refundOrder.id}/refund`, { method: 'POST' }, () => setRefundOrder(null))}>
+      <AdminDialog open={Boolean(refundOrder)} title="登记外部退款并撤销权益" description="请先在对应支付平台完成真实退款，再登记退款凭证。系统只负责标记订单并撤销权益，不会主动向支付平台发起退款。" confirmLabel="确认已退款并撤权" tone="danger" busy={busy} confirmDisabled={!refundTradeNo.trim() || !refundReason.trim()} onClose={() => { setRefundOrder(null); setRefundTradeNo(''); setRefundReason(''); }} onConfirm={() => refundOrder && void runAction('外部退款已登记并撤销权益', `/api/admin/orders/${refundOrder.id}/refund`, { method: 'POST', body: JSON.stringify({ refundTradeNo, reason: refundReason }) }, () => { setRefundOrder(null); setRefundTradeNo(''); setRefundReason(''); })}>
         {refundOrder && <div className="admin-dialog-summary"><div><span>订单号</span><strong>{refundOrder.orderNo}</strong></div><div><span>用户</span><strong>{refundOrder.username || '-'}</strong></div><div><span>退款金额</span><strong>{formatMoney(refundOrder.amountCents)}</strong></div></div>}
+        <div className="admin-form-grid one">
+          <label className="admin-field"><span>外部退款凭证号</span><input value={refundTradeNo} onChange={event => setRefundTradeNo(event.target.value)} maxLength={128} placeholder="填写 PayPal、支付宝、微信或其他支付平台退款单号" /></label>
+          <label className="admin-field"><span>退款原因</span><textarea value={refundReason} onChange={event => setRefundReason(event.target.value)} maxLength={500} placeholder="填写退款原因，便于后续审计核对" /></label>
+        </div>
       </AdminDialog>
       <AdminDialog open={Boolean(userAction)} title={userActionTitle(userAction)} description={userActionDescription(userAction)} confirmLabel={userAction?.kind === 'password' ? '确认重置密码' : '确认修改'} tone={userAction?.kind === 'status' && userAction.nextValue === 'disabled' ? 'danger' : 'warning'} busy={busy} confirmDisabled={userAction?.kind === 'password' && (nextPassword.length < 8 || nextPassword !== confirmPassword)} onClose={() => { setUserAction(null); setNextPassword(''); setConfirmPassword(''); }} onConfirm={() => void confirmUserAction()}>
         {userAction?.kind === 'password' && <div className="admin-form-grid one"><label className="admin-field"><span>新密码</span><input type="password" value={nextPassword} onChange={event => setNextPassword(event.target.value)} minLength={8} maxLength={128} autoComplete="new-password" /></label><label className="admin-field"><span>确认新密码</span><input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} minLength={8} maxLength={128} autoComplete="new-password" /><small className={confirmPassword && nextPassword !== confirmPassword ? 'error' : ''}>{confirmPassword && nextPassword !== confirmPassword ? '两次输入不一致' : '密码长度为 8 到 128 位'}</small></label></div>}
@@ -790,7 +879,7 @@ const PlanSnapshotDetails: React.FC<{ order: Order }> = ({ order }) => {
 };
 
 const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
-  const labels: Record<string, string> = { created: '已创建', pending: '待确认', paid: '已付款', failed: '失败', closed: '已关闭', accepted: '已验收', rejected: '已拒绝', refunded: '已退款', cancelled: '已取消', expired: '已过期', active: '正常', disabled: '已禁用', admin: '管理员', user: '普通用户', enabled: '已上架', revoked: '已撤销', reserved: '已预约', running: '执行中', succeeded: '成功', uncertain: '待核对', grant: '发放', reserve: '冻结', consume: '核销', release: '返还', adjust: '调额', panel: '面板', node: '节点', plan: '套餐', order: '订单', entitlement: '权益', deployment: '交付任务', settings: '系统设置' };
+  const labels: Record<string, string> = { created: '已创建', pending: '待确认', paid: '已付款', failed: '失败', closed: '已关闭', accepted: '已验收', rejected: '已拒绝', refunded: '已退款', cancelled: '已取消', expired: '已过期', active: '正常', redeemed: '已兑换', disabled: '已禁用', admin: '管理员', user: '普通用户', enabled: '已上架', revoked: '已撤销', reserved: '已预约', running: '执行中', succeeded: '成功', uncertain: '待核对', grant: '发放', reserve: '冻结', consume: '核销', release: '返还', adjust: '调额', panel: '面板', node: '节点', plan: '套餐', order: '订单', entitlement: '权益', deployment: '交付任务', redeem_code: '卡密', settings: '系统设置' };
   return <span className={`admin-status ${status}`}>{labels[status] || status}</span>;
 };
 
@@ -845,7 +934,16 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
   return <div className="admin-form-grid">
     <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={40} onChange={event => patch({ name: event.target.value })} /></label>
     <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={32} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>订单创建后不建议修改已有标识。</small></label>
-    <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, enabledChannels: next === 'epay' ? method.enabledChannels || [method.channel || 'alipay'] : method.enabledChannels, currency: defaultPaymentCurrency(next, method) }); }}><option value="manual">人工收款</option><option value="epay">聚合支付</option><option value="mgate">MGate</option><option value="tokenpay">TokenPay</option><option value="epusdt">Epusdt</option><option value="alipay_official">支付宝官方</option><option value="wechat_official">微信支付官方</option></select></label>
+    <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, enabledChannels: next === 'epay' ? method.enabledChannels || [method.channel || 'alipay'] : method.enabledChannels, currency: defaultPaymentCurrency(next, method) }); }}>
+      {provider === 'manual' && <option value="manual">人工收款（历史配置）</option>}
+      {provider === 'mgate' && <option value="mgate">MGate（历史配置）</option>}
+      <option value="epay">易支付聚合</option>
+      <option value="tokenpay">USDT - TokenPay</option>
+      <option value="epusdt">USDT - Epusdt</option>
+      <option value="paypal">PayPal 官方</option>
+      <option value="alipay_official">支付宝官方</option>
+      <option value="wechat_official">微信支付官方</option>
+    </select></label>
     <label className="admin-field"><span>显示排序</span><input type="number" value={method.sortOrder} onChange={event => patch({ sortOrder: Number(event.target.value) })} /></label>
 
     {provider === 'manual' && <>
@@ -881,7 +979,7 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
 
     {provider === 'tokenpay' && <>
       <label className="admin-field span-2"><span>TokenPay API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://tokenpay.example.com" /></label>
-      <label className="admin-field span-2"><span>币种</span><select value={tokenPayCurrency(method)} onChange={event => patch({ currency: event.target.value })}>{TOKENPAY_CURRENCIES.map(currency => <option key={currency.value} value={currency.value}>{currency.label}</option>)}</select><small>系统会自动转换成 TokenPay 接口要求的币种标识。</small></label>
+      <label className="admin-field span-2"><span>USDT 网络</span><select value={tokenPayCurrency(method)} onChange={event => patch({ currency: event.target.value })}>{isLegacyTokenPayCurrency(method) && <option value={tokenPayCurrency(method)}>{tokenPayCurrency(method).replaceAll('_', '-')}（历史配置）</option>}{TOKENPAY_CURRENCIES.map(currency => <option key={currency.value} value={currency.value}>{currency.label}</option>)}</select><small>新通道仅提供 USDT 网络；历史 TRX、ETH、USDC 配置仍可读取并迁移。</small></label>
       <SecretField label="API 密钥" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
     </>}
 
@@ -889,6 +987,15 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
       <label className="admin-field span-2"><span>Epusdt API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://epusdt.example.com/api/v1/order/create-transaction" /></label>
       <label className="admin-field span-2"><span>币种</span><select value="USDT-TRC20" onChange={() => patch({ currency: 'USDT-TRC20' })}><option value="USDT-TRC20">USDT-TRC20</option></select><small>Epusdt 当前驱动固定使用 USDT-TRC20。</small></label>
       <SecretField label="签名 Token" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
+    </>}
+
+    {provider === 'paypal' && <>
+      <label className="admin-field span-2"><span>PayPal API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="留空使用 PayPal 官方 API 地址" /><small>正式环境默认使用 api-m.paypal.com，沙箱环境默认使用 api-m.sandbox.paypal.com。</small></label>
+      <label className="admin-field span-2"><span>Client ID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} autoComplete="off" /></label>
+      <SecretField label="Client Secret" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
+      <label className="admin-field span-2"><span>Webhook ID</span><input value={method.appId || ''} onChange={event => patch({ appId: event.target.value })} /><small>在 PayPal 开发者后台创建 Webhook 后填写其 ID，用于校验异步通知。</small></label>
+      <label className="admin-field span-2"><span>订单币种</span><select value="CNY" onChange={() => patch({ currency: 'CNY' })}><option value="CNY">CNY - 人民币</option></select><small>当前套餐金额按人民币分存储，固定使用 CNY 可避免未换汇直接扣款。</small></label>
+      <label className="admin-checkbox span-2"><input type="checkbox" checked={method.sandbox === true} onChange={event => patch({ sandbox: event.target.checked })} /><span><strong>使用 PayPal 沙箱</strong><small>测试时启用并填写沙箱应用的 Client ID、Client Secret 与 Webhook ID。</small></span></label>
     </>}
 
     {provider === 'alipay_official' && <>
@@ -937,28 +1044,34 @@ function paymentChannelText(method: PaymentMethod) {
   const provider = paymentProvider(method);
   if (provider === 'manual') return '线下确认';
   if (provider === 'epay') {
-    const channels: Record<string, string> = { alipay: '支付宝', wxpay: '微信支付', qqpay: 'QQ 钱包' };
+    const channels: Record<string, string> = { alipay: '支付宝', wxpay: '微信支付', qqpay: 'QQ 钱包', paypal: 'PayPal', 'usdt.trc20': 'USDT' };
     const enabled = method.enabledChannels || [method.channel || 'alipay'];
     return enabled.map(channel => channels[channel] || channel).join('、') || '未启用支付方式';
   }
   if (provider === 'tokenpay') return tokenPayCurrency(method).replace('_', '-').replace('_', '-');
   if (provider === 'epusdt') return 'USDT-TRC20';
+  if (provider === 'paypal') return method.sandbox ? 'PayPal 沙箱' : 'PayPal Orders v2';
   if (provider === 'alipay_official') return '当面付二维码';
   if (provider === 'wechat_official') return 'Native 二维码';
   return method.currency || 'CNY';
 }
 
 function tokenPayCurrency(method: PaymentMethod) {
-  const values = TOKENPAY_CURRENCIES.map(item => item.value) as readonly string[];
+  const values = [...TOKENPAY_CURRENCIES.map(item => item.value), ...LEGACY_TOKENPAY_CURRENCIES] as readonly string[];
   const configured = String(method.currency || '').toUpperCase().replace(/-/g, '_');
   if (values.includes(configured)) return configured;
   const legacy = String(method.merchantId || '').toUpperCase().replace(/-/g, '_');
   return values.includes(legacy) ? legacy : 'USDT_TRC20';
 }
 
+function isLegacyTokenPayCurrency(method: PaymentMethod) {
+  return (LEGACY_TOKENPAY_CURRENCIES as readonly string[]).includes(tokenPayCurrency(method));
+}
+
 function defaultPaymentCurrency(provider: PaymentProvider, method: PaymentMethod) {
   if (provider === 'tokenpay') return tokenPayCurrency(method);
   if (provider === 'epusdt') return 'USDT-TRC20';
+  if (provider === 'paypal') return 'CNY';
   return 'CNY';
 }
 
@@ -966,7 +1079,7 @@ function paymentProvider(method: PaymentMethod): PaymentProvider {
   if (method.provider) return method.provider;
   if (method.type === 'alipay') return 'alipay_official';
   if (method.type === 'wechat') return 'wechat_official';
-  if (method.type === 'epay' || method.type === 'mgate' || method.type === 'tokenpay' || method.type === 'epusdt') return method.type;
+  if (method.type === 'epay' || method.type === 'mgate' || method.type === 'tokenpay' || method.type === 'epusdt' || method.type === 'paypal') return method.type;
   return 'manual';
 }
 
@@ -980,10 +1093,12 @@ const EPAY_CHANNEL_OPTIONS = [
   { value: 'alipay', label: '支付宝' },
   { value: 'wxpay', label: '微信支付' },
   { value: 'qqpay', label: 'QQ 钱包' },
+  { value: 'paypal', label: 'PayPal' },
+  { value: 'usdt.trc20', label: 'USDT' },
 ] as const;
 
 function paymentProviderName(provider: string) {
-  const labels: Record<string, string> = { manual: '人工收款', epay: '聚合支付', mgate: 'MGate', tokenpay: 'TokenPay', epusdt: 'Epusdt', alipay_official: '支付宝官方', wechat_official: '微信支付官方' };
+  const labels: Record<string, string> = { manual: '人工收款', epay: '易支付聚合', mgate: 'MGate', tokenpay: 'USDT / TokenPay', epusdt: 'USDT / Epusdt', paypal: 'PayPal 官方', alipay_official: '支付宝官方', wechat_official: '微信支付官方' };
   return labels[provider] || provider;
 }
 
