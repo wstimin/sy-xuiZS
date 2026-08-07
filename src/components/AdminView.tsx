@@ -16,6 +16,7 @@ import {
   ExternalLink,
   FileClock,
   FileText,
+  Headphones,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -42,6 +43,7 @@ import {
 } from 'lucide-react';
 import {
   api,
+  ContactMethod,
   ContactSettings,
   CurrentUser,
   DeploymentRecord,
@@ -128,7 +130,30 @@ const emptyGrant = {
 const emptyUser = { username: '', email: '', password: '', role: 'user' as 'user' | 'admin' };
 const emptyPaymentMethod = (): PaymentMethod => ({ id: `method-${Date.now()}`, name: '易支付', type: 'epay', provider: 'epay', enabled: true, instructions: '', paymentUrl: '', gatewayUrl: '', merchantId: '', merchantSecret: '', merchantSecretConfigured: false, channel: 'alipay', enabledChannels: ['alipay'], currency: 'CNY', sortOrder: 10 });
 const emptyEmailSettings: EmailSettings = { emailEnabled: false, emailVerificationRequired: false, smtpHost: '', smtpPort: 465, smtpEncryption: 'ssl', smtpUsername: '', smtpPassword: '', smtpPasswordConfigured: false, smtpFromName: 'NEXUS CLOUD', smtpFromEmail: '', smtpReplyTo: '', verificationCodeTtlMinutes: 10, verificationResendSeconds: 60, siteName: 'NEXUS CLOUD', publicBaseUrl: '' };
-const emptyContactSettings: ContactSettings = { enabled: false, buttonLabel: '立即咨询', title: '联系站长', description: '', contactText: '', contactUrl: '', qrCodeUrl: '', qrCodeUploaded: false };
+const emptyContactSettings: ContactSettings = { enabled: false, buttonLabel: '立即咨询', title: '联系站长', description: '', methods: [] };
+const contactTypeLabels: Record<ContactMethod['type'], string> = {
+  wechat: '微信',
+  qq: 'QQ',
+  telegram: 'Telegram',
+  whatsapp: 'WhatsApp',
+  wecom: '企业微信',
+  email: '邮箱',
+  phone: '电话',
+  discord: 'Discord',
+  line: 'LINE',
+  custom: '自定义',
+};
+const emptyContactMethod = (): ContactMethod => ({
+  id: `contact-${Date.now().toString(36)}`,
+  type: 'wechat',
+  enabled: true,
+  name: '微信',
+  value: '',
+  contactUrl: '',
+  qrCodeUrl: '',
+  qrCodeUploaded: false,
+  sortOrder: 10,
+});
 const emptyRecommendationSettings: ResourceRecommendationSettings = { serverEnabled: true, residentialIpEnabled: true, items: [] };
 const emptyRecommendation = (): ResourceRecommendation => ({
   id: `resource-${Date.now().toString(36)}`,
@@ -190,6 +215,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
   const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', contact: emptyContactSettings, recommendations: emptyRecommendationSettings });
+  const [savedContactMethodIds, setSavedContactMethodIds] = useState<string[]>([]);
   const [accountUsername, setAccountUsername] = useState(currentUser.username);
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
@@ -198,6 +224,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [deletingPaymentMethod, setDeletingPaymentMethod] = useState<{ index: number; method: PaymentMethod } | null>(null);
   const [editingRecommendation, setEditingRecommendation] = useState<{ index: number; item: ResourceRecommendation } | null>(null);
   const [deletingRecommendation, setDeletingRecommendation] = useState<{ index: number; item: ResourceRecommendation } | null>(null);
+  const [editingContactMethod, setEditingContactMethod] = useState<{ index: number; method: ContactMethod } | null>(null);
+  const [deletingContactMethod, setDeletingContactMethod] = useState<{ index: number; method: ContactMethod } | null>(null);
   const [testEmailRecipient, setTestEmailRecipient] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -255,6 +283,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       setPaymentNotifications(notificationResult.notifications);
       setRedeemCodes(redeemCodeResult.redeemCodes);
       setSettingsData(settingsResult.settings);
+      setSavedContactMethodIds(settingsResult.settings.contact.methods.map(method => method.id));
       setAdminPathDraft(settingsResult.settings.adminPath);
       if (!grant.userId && usersResult.users.length) {
         setGrant(value => ({ ...value, userId: usersResult.users.find(user => user.role === 'user')?.id || usersResult.users[0].id }));
@@ -346,10 +375,54 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     await runAction('系统设置已保存', '/api/admin/settings', { method: 'PUT', body: JSON.stringify(settingsData) });
   };
 
-  const uploadContactQr = async (file?: File) => {
+  const updateContactMethod = (index: number, patch: Partial<ContactMethod>) => {
+    setSettingsData(value => ({
+      ...value,
+      contact: {
+        ...value.contact,
+        methods: value.contact.methods.map((method, methodIndex) => methodIndex === index ? { ...method, ...patch } : method),
+      },
+    }));
+  };
+
+  const openNewContactMethod = () => {
+    if (settingsData.contact.methods.length >= 10) return showToast('已达到联系方式上限', '最多可以配置 10 种联系方式', 'warning');
+    setEditingContactMethod({ index: -1, method: emptyContactMethod() });
+  };
+
+  const saveContactMethodDraft = () => {
+    if (!editingContactMethod) return;
+    const normalized = {
+      ...editingContactMethod.method,
+      id: editingContactMethod.method.id.trim().toLowerCase(),
+      name: editingContactMethod.method.name.trim(),
+      value: editingContactMethod.method.value.trim(),
+      contactUrl: editingContactMethod.method.contactUrl.trim(),
+      qrCodeUrl: editingContactMethod.method.qrCodeUrl.trim(),
+    };
+    const duplicate = settingsData.contact.methods.some((method, index) => method.id === normalized.id && index !== editingContactMethod.index);
+    if (duplicate) return showToast('联系方式标识重复', '请为每种联系方式填写不同的唯一标识', 'warning');
+    setSettingsData(value => ({
+      ...value,
+      contact: {
+        ...value.contact,
+        methods: editingContactMethod.index < 0
+          ? [...value.contact.methods, normalized]
+          : value.contact.methods.map((method, index) => index === editingContactMethod.index ? normalized : method),
+      },
+    }));
+    setEditingContactMethod(null);
+  };
+
+  const removeContactMethod = (index: number) => {
+    setSettingsData(value => ({ ...value, contact: { ...value.contact, methods: value.contact.methods.filter((_method, methodIndex) => methodIndex !== index) } }));
+  };
+
+  const uploadContactQr = async (index: number, method: ContactMethod, file?: File) => {
     if (!file) return;
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return showToast('图片格式不支持', '请选择 PNG、JPEG 或 WebP 图片', 'warning');
     if (file.size > 1024 * 1024) return showToast('图片过大', '咨询二维码不能超过 1MB', 'warning');
+    if (!savedContactMethodIds.includes(method.id)) return showToast('请先保存联系方式', '点击右上角“保存全部设置”后再上传二维码', 'warning');
     setBusy(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -358,9 +431,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         reader.onerror = () => reject(new Error('图片读取失败'));
         reader.readAsDataURL(file);
       });
-      await api('/api/admin/contact-qr', { method: 'POST', body: JSON.stringify({ dataUrl }) });
-      setSettingsData(current => ({ ...current, contact: { ...current.contact, qrCodeUploaded: true } }));
-      showToast('咨询二维码已上传', '前台将优先显示已上传的二维码', 'success');
+      await api(`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
+      updateContactMethod(index, { qrCodeUploaded: true });
+      showToast(`${method.name}二维码已上传`, '前台会优先显示上传的图片', 'success');
     } catch (error) {
       showToast('二维码上传失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
@@ -368,12 +441,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     }
   };
 
-  const deleteContactQr = async () => {
+  const deleteContactQr = async (index: number, method: ContactMethod) => {
     setBusy(true);
     try {
-      await api('/api/admin/contact-qr', { method: 'DELETE' });
-      setSettingsData(current => ({ ...current, contact: { ...current.contact, qrCodeUploaded: false } }));
-      showToast('已删除上传的二维码', settingsData.contact.qrCodeUrl ? '前台将改用填写的二维码图片地址' : '前台将不再显示二维码', 'success');
+      await api(`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`, { method: 'DELETE' });
+      updateContactMethod(index, { qrCodeUploaded: false });
+      showToast('已删除上传的二维码', method.qrCodeUrl ? '前台将改用填写的二维码图片地址' : '该联系方式将不再显示二维码', 'success');
     } catch (error) {
       showToast('二维码删除失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
@@ -817,7 +890,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                       </div>
                     </section>
                     <section className="admin-settings-section">
-                      <div className="admin-settings-section-title"><h3>咨询设置</h3><p>在公开首页和用户工作台右下角显示悬浮咨询入口，方便用户随时联系站长。</p></div>
+                      <div className="admin-settings-section-title"><h3>咨询入口</h3><p>在公开首页和用户工作台右下角显示悬浮按钮，具体联系方式在下方独立管理。</p></div>
                       <div className="admin-setting-list compact">
                         <SettingSwitch label="显示悬浮咨询按钮" description="关闭后前台不显示咨询入口，已保存的内容和二维码仍会保留。至少填写一种联系方式后按钮才会出现。" checked={settingsData.contact.enabled} onChange={enabled => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, enabled } })} />
                       </div>
@@ -826,16 +899,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                           <label className="admin-field"><span>悬浮按钮名称</span><input value={settingsData.contact.buttonLabel} maxLength={40} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, buttonLabel: event.target.value } })} placeholder="立即咨询" /><small>建议填写 2 到 10 个字符，例如“联系站长”或“技术支持”。</small></label>
                           <label className="admin-field"><span>咨询弹窗标题</span><input value={settingsData.contact.title} maxLength={100} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, title: event.target.value } })} placeholder="联系站长" /></label>
                           <label className="admin-field span-2"><span>咨询说明</span><textarea value={settingsData.contact.description} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, description: event.target.value } })} placeholder="例如：遇到搭建、支付或使用问题，可以联系站长处理。" /><small>{settingsData.contact.description.length} / 1000</small></label>
-                          <label className="admin-field span-2"><span>联系方式</span><textarea value={settingsData.contact.contactText} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, contactText: event.target.value } })} placeholder={'例如：\n微信：example\nTelegram：@example\n邮箱：support@example.com'} /><small>支持换行，会按填写格式显示。</small></label>
-                          <label className="admin-field"><span>咨询链接</span><input type="url" value={settingsData.contact.contactUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, contactUrl: event.target.value } })} placeholder="https://t.me/example" /><small>可选，仅支持 HTTP 或 HTTPS。</small></label>
-                          <label className="admin-field"><span>二维码图片地址</span><input type="url" value={settingsData.contact.qrCodeUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, qrCodeUrl: event.target.value } })} placeholder="https://example.com/contact.png" /><small>未上传二维码时使用此地址。</small></label>
                         </div>
-                        <div className="admin-contact-upload">
-                          <div className="admin-contact-upload-preview">
-                            {settingsData.contact.qrCodeUploaded ? <img src="/api/contact-qr" alt="已上传的联系二维码" /> : settingsData.contact.qrCodeUrl ? <img src={settingsData.contact.qrCodeUrl} alt="联系二维码预览" /> : <span><QrCode /><small>暂无二维码</small></span>}
-                          </div>
-                          <div><strong>{settingsData.contact.qrCodeUploaded ? '已上传二维码' : '上传二维码图片'}</strong><p>上传图片优先于二维码地址，支持 PNG、JPEG、WebP，最大 1MB。</p><div className="admin-contact-upload-actions"><label className={`admin-button secondary ${busy ? 'disabled' : ''}`}><Upload /> 选择图片<input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(file); }} /></label>{settingsData.contact.qrCodeUploaded && <button type="button" className="admin-button danger" disabled={busy} onClick={() => void deleteContactQr()}><Trash2 /> 删除上传图片</button>}</div></div>
-                        </div>
+                      </div>
+                    </section>
+                    <section className="admin-settings-section flush">
+                      <div className="admin-contact-method-head"><div><h3>联系方式</h3><p>账号、联系链接和二维码按条绑定，最多配置 10 种。</p></div><div className="admin-settings-head-actions"><span className="admin-resource-count">{settingsData.contact.methods.length} / 10</span><button type="button" className="admin-button secondary" disabled={settingsData.contact.methods.length >= 10} onClick={openNewContactMethod}><PackagePlus /> 新增联系方式</button></div></div>
+                      <div className="admin-resource-table-wrap">
+                        <table className="admin-payment-table admin-contact-method-table">
+                          <thead><tr><th>名称</th><th>类型</th><th>账号或说明</th><th>排序</th><th>状态</th><th>二维码</th><th>操作</th></tr></thead>
+                          <tbody>{settingsData.contact.methods.map((method, index) => <tr key={`${method.id}-${index}`}>
+                            <td><div className="admin-payment-name"><span><Headphones /></span><div><strong>{method.name || '未命名联系方式'}</strong><small>{method.id}</small></div></div></td>
+                            <td>{contactTypeLabels[method.type]}</td>
+                            <td><span className="admin-result-text">{method.value || '-'}</span></td>
+                            <td>{method.sortOrder}</td>
+                            <td><div className="admin-payment-state"><StatusBadge status={method.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-checked={method.enabled} className={`admin-switch ${method.enabled ? 'on' : ''}`} onClick={() => updateContactMethod(index, { enabled: !method.enabled })}><span /></button></div></td>
+                            <td><div className="admin-contact-qr-actions"><span className={`admin-contact-qr-preview ${method.qrCodeUploaded || method.qrCodeUrl ? 'has-image' : ''}`}>{method.qrCodeUploaded ? <img src={`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`} alt="" /> : method.qrCodeUrl ? <img src={method.qrCodeUrl} alt="" /> : <QrCode />}</span><label className={`admin-icon-button small ${busy ? 'disabled' : ''}`} title="上传二维码"><Upload /><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(index, method, file); }} /></label>{method.qrCodeUploaded && <button type="button" className="admin-icon-button small danger" title="删除已上传二维码" disabled={busy} onClick={() => void deleteContactQr(index, method)}><Trash2 /></button>}</div></td>
+                            <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑联系方式" onClick={() => setEditingContactMethod({ index, method: { ...method } })}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除联系方式" onClick={() => setDeletingContactMethod({ index, method })}><X /></button></div></td>
+                          </tr>)}</tbody>
+                        </table>
+                        {!settingsData.contact.methods.length && <div className="admin-table-empty compact"><Headphones /><strong>暂无联系方式</strong><span>新增至少一种联系方式后，悬浮咨询按钮才会在前台显示。</span></div>}
                       </div>
                     </section>
                   </>}
@@ -1000,6 +1082,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         {editingRecommendation && <ResourceRecommendationEditor item={editingRecommendation.item} onChange={item => setEditingRecommendation({ ...editingRecommendation, item })} />}
       </AdminDialog>
       <AdminDialog open={Boolean(deletingRecommendation)} title="删除资源推荐" description={`将从设置草稿中删除“${deletingRecommendation?.item.name || '未命名厂商'}”。已上传的 Logo 可继续保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingRecommendation(null)} onConfirm={() => { if (deletingRecommendation) removeRecommendation(deletingRecommendation.index); setDeletingRecommendation(null); }} />
+      <AdminDialog open={Boolean(editingContactMethod)} title={editingContactMethod?.index === -1 ? '新增联系方式' : '编辑联系方式'} description="账号、链接和二维码会绑定在同一条联系方式中；完成编辑后仍需保存全部设置才会生效。" confirmLabel="保存联系方式" busy={busy} confirmDisabled={!editingContactMethod?.method.name.trim() || !editingContactMethod?.method.id.trim()} onClose={() => setEditingContactMethod(null)} onConfirm={saveContactMethodDraft}>
+        {editingContactMethod && <ContactMethodEditor method={editingContactMethod.method} onChange={method => setEditingContactMethod({ ...editingContactMethod, method })} />}
+      </AdminDialog>
+      <AdminDialog open={Boolean(deletingContactMethod)} title="删除联系方式" description={`将从设置草稿中删除“${deletingContactMethod?.method.name || '未命名联系方式'}”。已上传的二维码会保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingContactMethod(null)} onConfirm={() => { if (deletingContactMethod) removeContactMethod(deletingContactMethod.index); setDeletingContactMethod(null); }} />
       <AdminDialog open={Boolean(paymentOrder)} title="确认人工收款" description="确认后将按照下单时的套餐快照发放权益，此操作会直接改变用户可用次数。" confirmLabel="确认收款并发放权益" tone="success" busy={busy} confirmDisabled={!tradeNo.trim()} onClose={() => { setPaymentOrder(null); setTradeNo(''); }} onConfirm={() => void confirmPayment()}>
         {paymentOrder && <div className="admin-dialog-summary"><div><span>订单号</span><strong>{paymentOrder.orderNo}</strong></div><div><span>用户</span><strong>{paymentOrder.username || '-'}</strong></div><div><span>金额</span><strong>{formatMoney(paymentOrder.amountCents)}</strong></div></div>}
         <label className="admin-field"><span>支付交易号或收款凭证号</span><input value={tradeNo} onChange={event => setTradeNo(event.target.value)} maxLength={128} placeholder="请输入唯一的交易号，便于后续核对" /><small>该编号会写入订单和支付事件记录。</small></label>
@@ -1142,6 +1228,20 @@ const QuotaDialog: React.FC<{ value: Entitlement | null; busy: boolean; onChange
   <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={value.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...value, dailyNodeLimit })} /></label>
   <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={value.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...value, concurrencyLimit })} /></label>
 </div>}</AdminDialog>;
+
+const ContactMethodEditor: React.FC<{ method: ContactMethod; onChange: (method: ContactMethod) => void }> = ({ method, onChange }) => {
+  const patch = (value: Partial<ContactMethod>) => onChange({ ...method, ...value });
+  return <div className="admin-form-grid">
+    <label className="admin-field"><span>联系方式类型</span><select value={method.type} onChange={event => { const type = event.target.value as ContactMethod['type']; patch({ type, name: method.name === contactTypeLabels[method.type] ? contactTypeLabels[type] : method.name }); }}>{Object.entries(contactTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+    <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={40} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>用于独立保存二维码，保存后不建议修改。</small></label>
+    <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={80} onChange={event => patch({ name: event.target.value })} placeholder={contactTypeLabels[method.type]} /></label>
+    <label className="admin-field"><span>显示排序</span><NumberInput min="-9999" max="9999" value={method.sortOrder} onValueChange={sortOrder => patch({ sortOrder })} /></label>
+    <label className="admin-field span-2"><span>账号或联系信息</span><textarea value={method.value} maxLength={1000} onChange={event => patch({ value: event.target.value })} placeholder="例如：example、@example、support@example.com" /><small>这里填写的内容会和本条二维码一起显示。</small></label>
+    <label className="admin-field span-2"><span>联系链接</span><input value={method.contactUrl} maxLength={1000} onChange={event => patch({ contactUrl: event.target.value })} placeholder="https://t.me/example、mailto:support@example.com 或 tel:+8613800000000" /><small>可选，支持 HTTP、HTTPS、mailto 和 tel。</small></label>
+    <label className="admin-field span-2"><span>二维码图片地址</span><input type="url" value={method.qrCodeUrl} maxLength={1000} onChange={event => patch({ qrCodeUrl: event.target.value })} placeholder="https://example.com/contact.png" /><small>可选。保存全部设置后也可在列表中上传图片，上传图片优先显示。</small></label>
+    <label className="admin-checkbox span-2"><input type="checkbox" checked={method.enabled} onChange={event => patch({ enabled: event.target.checked })} /><span><strong>启用此联系方式</strong><small>关闭后该方式从用户咨询弹窗隐藏，配置和二维码仍然保留。</small></span></label>
+  </div>;
+};
 
 const ResourceRecommendationEditor: React.FC<{ item: ResourceRecommendation; onChange: (item: ResourceRecommendation) => void }> = ({ item, onChange }) => {
   const patch = (value: Partial<ResourceRecommendation>) => onChange({ ...item, ...value });

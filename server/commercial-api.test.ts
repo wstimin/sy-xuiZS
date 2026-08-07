@@ -563,7 +563,7 @@ test("gateway checkout failures keep the created order available for retry", asy
   }
 });
 
-test("contact settings and QR uploads are configurable, validated and publicly readable", async () => {
+test("contact methods are independent, limited, migrated and publicly readable", async () => {
   const store = new CommercialStore(":memory:");
   const app = express();
   app.use(express.json({ limit: "2mb" }));
@@ -579,9 +579,9 @@ test("contact settings and QR uploads are configurable, validated and publicly r
     assert.equal(initial.contact.enabled, false);
     assert.equal(initial.contact.buttonLabel, "立即咨询");
     assert.equal(initial.contact.title, "联系站长");
-    assert.equal(initial.contact.qrCodeUploaded, false);
+    assert.deepEqual(initial.contact.methods, []);
 
-    const unauthorizedUpload = await fetch(`${base}/admin/contact-qr`, {
+    const unauthorizedUpload = await fetch(`${base}/admin/contact-methods/wechat/qr`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ dataUrl: "data:image/png;base64,iVBORw0KGgo=" }),
@@ -594,8 +594,19 @@ test("contact settings and QR uploads are configurable, validated and publicly r
       body: JSON.stringify({ username: "contact-admin", password: "admin-password" }),
     });
     const adminCookie = sessionCookie(bootstrap);
-    const qrCodeUrl = "https://cdn.example.test/contact.png";
-    const contactUrl = "https://t.me/example";
+    const method = (id: string, type: string, sortOrder: number, enabled = true) => ({
+      id,
+      type,
+      enabled,
+      name: `${type}-${id}`,
+      value: `account-${id}`,
+      contactUrl: type === "email" ? `mailto:${id}@example.com` : type === "phone" ? "tel:+8613800000000" : `https://example.test/${id}`,
+      qrCodeUrl: `https://cdn.example.test/${id}.png`,
+      sortOrder,
+    });
+    const wechat = method("wechat", "wechat", 20);
+    const email = method("email", "email", 10);
+    const hidden = method("hidden", "qq", 5, false);
     const saved = await fetch(`${base}/admin/settings`, {
       method: "PUT",
       headers: { "content-type": "application/json", cookie: adminCookie },
@@ -605,9 +616,7 @@ test("contact settings and QR uploads are configurable, validated and publicly r
           buttonLabel: "联系售后",
           title: "联系运营支持",
           description: "每天 09:00 至 22:00 在线",
-          contactText: "微信：example\n邮箱：support@example.com",
-          contactUrl,
-          qrCodeUrl,
+          methods: [wechat, email, hidden],
         },
       }),
     });
@@ -616,20 +625,33 @@ test("contact settings and QR uploads are configurable, validated and publicly r
     const publicSettings = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
     assert.equal(publicSettings.contact.enabled, true);
     assert.equal(publicSettings.contact.buttonLabel, "联系售后");
-    assert.equal(publicSettings.contact.contactUrl, contactUrl);
-    assert.equal(publicSettings.contact.qrCodeUrl, qrCodeUrl);
+    assert.deepEqual(publicSettings.contact.methods.map((entry: any) => entry.id), ["email", "wechat"]);
+    assert.equal(publicSettings.contact.methods[0].contactUrl, "mailto:email@example.com");
+    assert.equal(publicSettings.contact.methods[0].qrCodeUploaded, false);
 
-    for (const unsafeField of ["contactUrl", "qrCodeUrl"] as const) {
-      const invalid = await fetch(`${base}/admin/settings`, {
-        method: "PUT",
-        headers: { "content-type": "application/json", cookie: adminCookie },
-        body: JSON.stringify({ contact: { [unsafeField]: "javascript:alert(1)" } }),
-      });
-      assert.equal(invalid.status, 400);
-    }
-    const unchanged = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
-    assert.equal(unchanged.contact.contactUrl, contactUrl);
-    assert.equal(unchanged.contact.qrCodeUrl, qrCodeUrl);
+    const adminSettings = await fetch(`${base}/admin/settings`, { headers: { cookie: adminCookie } }).then(response => response.json()) as any;
+    assert.deepEqual(adminSettings.settings.contact.methods.map((entry: any) => entry.id), ["hidden", "email", "wechat"]);
+
+    const unsafeUrl = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ contact: { methods: [{ ...wechat, contactUrl: "javascript:alert(1)" }] } }),
+    });
+    assert.equal(unsafeUrl.status, 400);
+
+    const duplicateIds = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ contact: { methods: [wechat, { ...email, id: wechat.id }] } }),
+    });
+    assert.equal(duplicateIds.status, 400);
+
+    const tooMany = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ contact: { methods: Array.from({ length: 11 }, (_value, index) => method(`contact-${index}`, "custom", index)) } }),
+    });
+    assert.equal(tooMany.status, 400);
 
     const formats = [
       ["image/png", Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])],
@@ -637,26 +659,26 @@ test("contact settings and QR uploads are configurable, validated and publicly r
       ["image/webp", Buffer.from("RIFF0000WEBP", "ascii")],
     ] as const;
     for (const [mimeType, image] of formats) {
-      const upload = await fetch(`${base}/admin/contact-qr`, {
+      const upload = await fetch(`${base}/admin/contact-methods/wechat/qr`, {
         method: "POST",
         headers: { "content-type": "application/json", cookie: adminCookie },
         body: JSON.stringify({ dataUrl: `data:${mimeType};base64,${image.toString("base64")}` }),
       });
       assert.equal(upload.status, 200);
-      const publicQr = await fetch(`${base}/contact-qr`);
+      const publicQr = await fetch(`${base}/contact-methods/wechat/qr`);
       assert.equal(publicQr.status, 200);
       assert.equal(publicQr.headers.get("content-type"), mimeType);
       assert.deepEqual(Buffer.from(await publicQr.arrayBuffer()), image);
     }
 
-    const invalidImage = await fetch(`${base}/admin/contact-qr`, {
+    const invalidImage = await fetch(`${base}/admin/contact-methods/wechat/qr`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: adminCookie },
       body: JSON.stringify({ dataUrl: `data:image/png;base64,${Buffer.from("not an image").toString("base64")}` }),
     });
     assert.equal(invalidImage.status, 400);
 
-    const invalidBase64 = await fetch(`${base}/admin/contact-qr`, {
+    const invalidBase64 = await fetch(`${base}/admin/contact-methods/wechat/qr`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: adminCookie },
       body: JSON.stringify({ dataUrl: "data:image/png;base64,iVBORw0KGgo" }),
@@ -665,7 +687,7 @@ test("contact settings and QR uploads are configurable, validated and publicly r
 
     const oversizedImage = Buffer.alloc(1024 * 1024 + 1);
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(oversizedImage);
-    const oversizedUpload = await fetch(`${base}/admin/contact-qr`, {
+    const oversizedUpload = await fetch(`${base}/admin/contact-methods/wechat/qr`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: adminCookie },
       body: JSON.stringify({ dataUrl: `data:image/png;base64,${oversizedImage.toString("base64")}` }),
@@ -673,17 +695,51 @@ test("contact settings and QR uploads are configurable, validated and publicly r
     assert.equal(oversizedUpload.status, 400);
 
     const afterUpload = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
-    assert.equal(afterUpload.contact.qrCodeUploaded, true);
+    assert.equal(afterUpload.contact.methods.find((entry: any) => entry.id === "wechat").qrCodeUploaded, true);
+    const adminQr = await fetch(`${base}/admin/contact-methods/wechat/qr`, { headers: { cookie: adminCookie } });
+    assert.equal(adminQr.status, 200);
 
-    const unauthorizedDelete = await fetch(`${base}/admin/contact-qr`, { method: "DELETE" });
+    const unauthorizedDelete = await fetch(`${base}/admin/contact-methods/wechat/qr`, { method: "DELETE" });
     assert.equal(unauthorizedDelete.status, 401);
-    const deleted = await fetch(`${base}/admin/contact-qr`, { method: "DELETE", headers: { cookie: adminCookie } });
+    const deleted = await fetch(`${base}/admin/contact-methods/wechat/qr`, { method: "DELETE", headers: { cookie: adminCookie } });
     assert.equal(deleted.status, 200);
 
     const afterDelete = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
-    assert.equal(afterDelete.contact.qrCodeUploaded, false);
-    assert.equal(afterDelete.contact.qrCodeUrl, qrCodeUrl);
-    assert.equal((await fetch(`${base}/contact-qr`)).status, 404);
+    assert.equal(afterDelete.contact.methods.find((entry: any) => entry.id === "wechat").qrCodeUploaded, false);
+    assert.equal((await fetch(`${base}/contact-methods/wechat/qr`)).status, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});
+
+test("legacy contact settings migrate into one independent contact method", async () => {
+  const store = new CommercialStore(":memory:");
+  store.setSetting("contact_enabled", "true");
+  store.setSetting("contact_text", "微信：legacy-account");
+  store.setSetting("contact_url", "https://example.test/legacy");
+  store.setSetting("contact_qr_url", "https://cdn.example.test/legacy.png");
+  store.setSetting("contact_qr_mime", "image/png");
+  store.setSetting("contact_qr_data", Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"));
+  const app = express();
+  app.use(express.json());
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+
+  try {
+    const settings = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
+    assert.equal(settings.contact.methods.length, 1);
+    assert.equal(settings.contact.methods[0].id, "legacy-contact");
+    assert.equal(settings.contact.methods[0].value, "微信：legacy-account");
+    assert.equal(settings.contact.methods[0].qrCodeUploaded, true);
+    assert.match(store.getSetting("contact_methods", ""), /legacy-contact/);
+    const qr = await fetch(`${base}/contact-methods/legacy-contact/qr`);
+    assert.equal(qr.status, 200);
+    assert.equal(qr.headers.get("content-type"), "image/png");
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     store.close();

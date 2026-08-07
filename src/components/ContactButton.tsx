@@ -1,6 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { ExternalLink, Headphones, X } from 'lucide-react';
-import { api, ContactSettings } from '../commercial';
+import { ExternalLink, Headphones, QrCode, X } from 'lucide-react';
+import { api, ContactMethod, ContactSettings } from '../commercial';
+
+const contactTypeLabels: Record<ContactMethod['type'], string> = {
+  wechat: '微信',
+  qq: 'QQ',
+  telegram: 'Telegram',
+  whatsapp: 'WhatsApp',
+  wecom: '企业微信',
+  email: '邮箱',
+  phone: '电话',
+  discord: 'Discord',
+  line: 'LINE',
+  custom: '其他',
+};
 
 export const ContactButton: React.FC = () => {
   const [contact, setContact] = useState<ContactSettings | null>(null);
@@ -20,8 +33,8 @@ export const ContactButton: React.FC = () => {
   }, [open]);
 
   if (!contact?.enabled) return null;
-  const qrCodeSrc = contact.qrCodeUploaded ? '/api/contact-qr' : contact.qrCodeUrl;
-  if (!contact.contactText && !contact.contactUrl && !qrCodeSrc) return null;
+  const methods = contact.methods.filter(method => method.enabled && (method.value || method.contactUrl || method.qrCodeUrl || method.qrCodeUploaded));
+  if (!methods.length) return null;
 
   return <>
     <button type="button" className="contact-floating-button" onClick={() => setOpen(true)} aria-haspopup="dialog" title={contact.buttonLabel || '立即咨询'}>
@@ -36,9 +49,20 @@ export const ContactButton: React.FC = () => {
         </header>
         <div className="contact-dialog-body">
           {contact.description && <p className="contact-dialog-description">{contact.description}</p>}
-          {contact.contactText && <div className="contact-dialog-text">{contact.contactText}</div>}
-          {qrCodeSrc && <div className="contact-dialog-qr"><img src={qrCodeSrc} alt="咨询二维码" /></div>}
-          {contact.contactUrl && <a href={contact.contactUrl} target="_blank" rel="noreferrer">打开咨询链接 <ExternalLink /></a>}
+          <div className="contact-method-list">
+            {methods.map(method => {
+              const qrCodeSrc = method.qrCodeUploaded ? `/api/contact-methods/${encodeURIComponent(method.id)}/qr` : method.qrCodeUrl;
+              return <article className="contact-method" key={method.id}>
+                <div className="contact-method-main">
+                  <span className="contact-method-type">{contactTypeLabels[method.type]}</span>
+                  <div><h3>{method.name}</h3>{method.value && <p>{method.value}</p>}</div>
+                </div>
+                {qrCodeSrc && <div className="contact-method-qr"><img src={qrCodeSrc} alt={`${method.name}二维码`} /></div>}
+                {method.contactUrl && <a href={method.contactUrl} target={method.contactUrl.startsWith('http') ? '_blank' : undefined} rel="noreferrer">联系此方式 <ExternalLink /></a>}
+                {!qrCodeSrc && !method.contactUrl && <span className="contact-method-hint"><QrCode /> 请使用上方账号联系</span>}
+              </article>;
+            })}
+          </div>
         </div>
       </section>
     </div>}

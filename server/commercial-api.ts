@@ -9,20 +9,33 @@ const USER_COOKIE_NAME = "xui_user_session";
 const ADMIN_COOKIE_NAME = "xui_admin_session";
 const CONTACT_QR_MAX_BYTES = 1024 * 1024;
 const CONTACT_QR_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const CONTACT_METHOD_LIMIT = 10;
+const CONTACT_METHOD_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
+const CONTACT_METHOD_TYPES = new Set(["wechat", "qq", "telegram", "whatsapp", "wecom", "email", "phone", "discord", "line", "custom"]);
 const RESOURCE_LOGO_MAX_BYTES = 512 * 1024;
 const RESOURCE_PAGE_MAX_BYTES = 256 * 1024;
 const RESOURCE_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/x-icon"]);
 const RESOURCE_RECOMMENDATION_LIMIT = 20;
 const RESOURCE_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
 
+type ContactMethodType = "wechat" | "qq" | "telegram" | "whatsapp" | "wecom" | "email" | "phone" | "discord" | "line" | "custom";
+type ContactMethod = {
+  id: string;
+  type: ContactMethodType;
+  enabled: boolean;
+  name: string;
+  value: string;
+  contactUrl: string;
+  qrCodeUrl: string;
+  sortOrder: number;
+};
+
 type ContactSettingsInput = {
   enabled: boolean;
   buttonLabel: string;
   title: string;
   description: string;
-  contactText: string;
-  contactUrl: string;
-  qrCodeUrl: string;
+  methods: ContactMethod[];
 };
 
 type ResourceRecommendationCategory = "server" | "residential_ip";
@@ -109,35 +122,124 @@ function optionalHttpUrl(value: unknown, label: string) {
   return normalized;
 }
 
+function optionalContactUrl(value: unknown, label: string) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "";
+  if (normalized.length > 1000) throw new Error(`${label}不能超过 1000 个字符`);
+  let parsed: URL;
+  try { parsed = new URL(normalized); }
+  catch { throw new Error(`${label}格式不正确`); }
+  if (!["http:", "https:", "mailto:", "tel:"].includes(parsed.protocol)) throw new Error(`${label}仅支持 HTTP、HTTPS、mailto 或 tel`);
+  return normalized;
+}
+
 function limitedText(value: unknown, label: string, maxLength: number, fallback = "") {
   const normalized = String(value ?? fallback).trim();
   if (normalized.length > maxLength) throw new Error(`${label}不能超过 ${maxLength} 个字符`);
   return normalized;
 }
 
-function contactSettings(store: CommercialStore) {
+function contactMethod(value: unknown): ContactMethod {
+  const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const id = limitedText(input.id, "联系方式标识", 40).toLowerCase();
+  if (!CONTACT_METHOD_ID_PATTERN.test(id)) throw new Error("联系方式标识只能包含小写字母、数字、下划线和短横线");
+  const type = String(input.type || "custom") as ContactMethodType;
+  if (!CONTACT_METHOD_TYPES.has(type)) throw new Error("联系方式类型不正确");
+  const name = limitedText(input.name, "联系方式名称", 80);
+  if (!name) throw new Error("请填写联系方式名称");
+  const sortOrder = intValue(input.sortOrder);
+  if (sortOrder < -9999 || sortOrder > 9999) throw new Error("联系方式排序必须在 -9999 到 9999 之间");
+  return {
+    id,
+    type,
+    enabled: input.enabled !== false,
+    name,
+    value: limitedText(input.value, "账号或联系信息", 1000),
+    contactUrl: optionalContactUrl(input.contactUrl, "联系链接"),
+    qrCodeUrl: optionalHttpUrl(input.qrCodeUrl, "二维码图片地址"),
+    sortOrder,
+  };
+}
+
+function legacyContactMethod(store: CommercialStore): ContactMethod | null {
+  const value = store.getSetting("contact_text", "");
+  const contactUrl = store.getSetting("contact_url", "");
+  const qrCodeUrl = store.getSetting("contact_qr_url", "");
+  const qrCodeData = store.getSetting("contact_qr_data", "");
+  if (!value && !contactUrl && !qrCodeUrl && !qrCodeData) return null;
+  return {
+    id: "legacy-contact",
+    type: "custom",
+    enabled: true,
+    name: "联系方式",
+    value,
+    contactUrl,
+    qrCodeUrl,
+    sortOrder: 10,
+  };
+}
+
+function contactMethods(store: CommercialStore) {
+  const stored = store.getSetting("contact_methods", "");
+  if (stored.trim()) {
+    try {
+      const parsed = JSON.parse(stored) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      return parsed.slice(0, CONTACT_METHOD_LIMIT).map(contactMethod);
+    } catch {
+      return [];
+    }
+  }
+  const legacy = legacyContactMethod(store);
+  if (!legacy) return [];
+  store.setSetting("contact_methods", JSON.stringify([legacy]));
+  return [legacy];
+}
+
+function contactQrSettingKey(id: string, suffix: "mime" | "data") {
+  if (!CONTACT_METHOD_ID_PATTERN.test(id)) throw new Error("联系方式标识格式不正确");
+  return `contact_qr_${id}_${suffix}`;
+}
+
+function contactQrValue(store: CommercialStore, id: string, suffix: "mime" | "data") {
+  const value = store.getSetting(contactQrSettingKey(id, suffix), "");
+  if (value || id !== "legacy-contact") return value;
+  return store.getSetting(`contact_qr_${suffix}`, "");
+}
+
+function contactSettings(store: CommercialStore, includeDisabled = false) {
   return {
     enabled: store.getSetting("contact_enabled", "false") === "true",
     buttonLabel: store.getSetting("contact_button_label", "立即咨询"),
     title: store.getSetting("contact_title", "联系站长"),
     description: store.getSetting("contact_description", ""),
-    contactText: store.getSetting("contact_text", ""),
-    contactUrl: store.getSetting("contact_url", ""),
-    qrCodeUrl: store.getSetting("contact_qr_url", ""),
-    qrCodeUploaded: Boolean(store.getSetting("contact_qr_data", "")),
+    methods: contactMethods(store)
+      .filter(method => includeDisabled || method.enabled)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, "zh-CN"))
+      .map(method => ({
+        ...method,
+        qrCodeUploaded: Boolean(contactQrValue(store, method.id, "data")),
+      })),
   };
 }
 
 function contactSettingsInput(value: unknown, current: ReturnType<typeof contactSettings>): ContactSettingsInput {
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const methods = input.methods === undefined
+    ? current.methods.map(({ qrCodeUploaded: _qrCodeUploaded, ...method }) => method)
+    : (() => {
+      if (!Array.isArray(input.methods)) throw new Error("联系方式数据格式不正确");
+      if (input.methods.length > CONTACT_METHOD_LIMIT) throw new Error(`联系方式最多只能配置 ${CONTACT_METHOD_LIMIT} 项`);
+      const entries = input.methods.map(contactMethod);
+      if (new Set(entries.map(method => method.id)).size !== entries.length) throw new Error("联系方式标识不能重复");
+      return entries;
+    })();
   return {
     enabled: typeof input.enabled === "boolean" ? input.enabled : current.enabled,
     buttonLabel: limitedText(input.buttonLabel, "悬浮按钮名称", 40, current.buttonLabel) || "立即咨询",
     title: limitedText(input.title, "咨询弹窗标题", 100, current.title) || "联系站长",
     description: limitedText(input.description, "咨询说明", 1000, current.description),
-    contactText: limitedText(input.contactText, "联系方式", 1000, current.contactText),
-    contactUrl: input.contactUrl === undefined ? current.contactUrl : optionalHttpUrl(input.contactUrl, "联系链接"),
-    qrCodeUrl: input.qrCodeUrl === undefined ? current.qrCodeUrl : optionalHttpUrl(input.qrCodeUrl, "二维码图片地址"),
+    methods,
   };
 }
 
@@ -148,6 +250,17 @@ function validContactQr(mimeType: string, data: Buffer) {
   const isJpeg = mimeType === "image/jpeg" && data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
   const isWebp = mimeType === "image/webp" && data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
   if (!isPng && !isJpeg && !isWebp) throw new Error("二维码图片内容与文件格式不匹配");
+}
+
+function sendContactQr(store: CommercialStore, id: string, res: Response) {
+  const data = contactQrValue(store, id, "data");
+  const mimeType = contactQrValue(store, id, "mime");
+  if (!data || !CONTACT_QR_TYPES.has(mimeType)) return res.status(404).json({ success: false, error: "尚未上传该联系方式的二维码" });
+  const image = Buffer.from(data, "base64");
+  res.setHeader("Content-Type", mimeType);
+  res.setHeader("Content-Length", String(image.length));
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(image);
 }
 
 function resourceLogoSettingKey(id: string, suffix: "mime" | "data") {
@@ -667,6 +780,11 @@ export function createCommercialRouter(store: CommercialStore) {
 
   router.get("/plans", (_req, res) => res.json({ plans: store.listPlans() }));
   router.get("/contact-settings", (_req, res) => res.json({ contact: contactSettings(store) }));
+  router.get("/contact-methods/:id/qr", route((req, res) => {
+    const id = String(req.params.id || "");
+    if (!contactMethods(store).some(method => method.id === id && method.enabled)) return res.status(404).json({ success: false, error: "联系方式不存在或未启用" });
+    sendContactQr(store, id, res);
+  }));
   router.get("/resource-recommendations", requireCommercialUser, (_req, res) => res.json({ recommendations: resourceRecommendationResponse(store) }));
   router.get("/resource-recommendations/:id/logo", requireCommercialUser, route((req, res) => {
     sendResourceLogo(store, String(req.params.id || ""), res);
@@ -824,7 +942,7 @@ export function createCommercialRouter(store: CommercialStore) {
       orderExpiryMinutes: Number(store.getSetting("order_expiry_minutes", "30")) || 30,
       adminPath: store.getAdminPath(),
       redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
-      contact: contactSettings(store),
+      contact: contactSettings(store, true),
       recommendations: resourceRecommendationResponse(store, true),
     },
   }));
@@ -948,7 +1066,7 @@ export function createCommercialRouter(store: CommercialStore) {
     res.json({ success: true });
   }));
   router.put("/admin/settings", requireAdmin, route((req, res) => {
-    const nextContact = req.body?.contact === undefined ? null : contactSettingsInput(req.body.contact, contactSettings(store));
+    const nextContact = req.body?.contact === undefined ? null : contactSettingsInput(req.body.contact, contactSettings(store, true));
     const nextRecommendations = req.body?.recommendations === undefined ? null : resourceRecommendationSettingsInput(req.body.recommendations);
     if (typeof req.body?.registrationEnabled === "boolean") store.setSetting("registration_enabled", String(req.body.registrationEnabled));
     if (typeof req.body?.panelDeployEnabled === "boolean") store.setSetting("panel_deploy_enabled", String(req.body.panelDeployEnabled));
@@ -969,9 +1087,7 @@ export function createCommercialRouter(store: CommercialStore) {
       store.setSetting("contact_button_label", nextContact.buttonLabel);
       store.setSetting("contact_title", nextContact.title);
       store.setSetting("contact_description", nextContact.description);
-      store.setSetting("contact_text", nextContact.contactText);
-      store.setSetting("contact_url", nextContact.contactUrl);
-      store.setSetting("contact_qr_url", nextContact.qrCodeUrl);
+      store.setSetting("contact_methods", JSON.stringify(nextContact.methods));
     }
     if (nextRecommendations) store.setSetting("resource_recommendations", JSON.stringify(nextRecommendations));
     let adminPath: string | undefined;
@@ -981,7 +1097,7 @@ export function createCommercialRouter(store: CommercialStore) {
       panelDeployEnabled: req.body?.panelDeployEnabled,
       nodeDeployEnabled: req.body?.nodeDeployEnabled,
       redeemCodePurchaseUrl: req.body?.redeemCodePurchaseUrl === undefined ? undefined : "[updated]",
-      contact: nextContact ? { enabled: nextContact.enabled, qrCodeUrl: nextContact.qrCodeUrl ? "[configured]" : "" } : undefined,
+      contact: nextContact ? { enabled: nextContact.enabled, count: nextContact.methods.length } : undefined,
       recommendations: nextRecommendations ? { count: nextRecommendations.items.length } : undefined,
       adminPath,
     }));
@@ -1006,6 +1122,39 @@ export function createCommercialRouter(store: CommercialStore) {
     store.setSetting("contact_qr_mime", "");
     store.setSetting("contact_qr_data", "");
     store.recordAdminAction(adminUser(res).id, "删除联系二维码", "settings", "contact_qr");
+    res.json({ success: true, qrCodeUploaded: false });
+  }));
+
+  router.get("/admin/contact-methods/:id/qr", requireAdmin, route((req, res) => {
+    const id = String(req.params.id || "");
+    if (!contactMethods(store).some(method => method.id === id)) return res.status(404).json({ success: false, error: "联系方式不存在" });
+    sendContactQr(store, id, res);
+  }));
+
+  router.post("/admin/contact-methods/:id/qr", requireAdmin, route((req, res) => {
+    const id = String(req.params.id || "");
+    if (!contactMethods(store).some(method => method.id === id)) throw new Error("请先保存该联系方式，再上传二维码");
+    const dataUrl = String(req.body?.dataUrl || "");
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+    if (!match || match[2].length % 4 !== 0) throw new Error("二维码图片数据格式不正确");
+    const data = Buffer.from(match[2], "base64");
+    if (data.toString("base64") !== match[2]) throw new Error("二维码图片数据格式不正确");
+    validContactQr(match[1], data);
+    store.setSetting(contactQrSettingKey(id, "mime"), match[1]);
+    store.setSetting(contactQrSettingKey(id, "data"), data.toString("base64"));
+    store.recordAdminAction(adminUser(res).id, "上传联系方式二维码", "settings", id, `${match[1]} / ${data.length} bytes`);
+    res.json({ success: true, qrCodeUploaded: true });
+  }));
+
+  router.delete("/admin/contact-methods/:id/qr", requireAdmin, route((req, res) => {
+    const id = String(req.params.id || "");
+    store.setSetting(contactQrSettingKey(id, "mime"), "");
+    store.setSetting(contactQrSettingKey(id, "data"), "");
+    if (id === "legacy-contact") {
+      store.setSetting("contact_qr_mime", "");
+      store.setSetting("contact_qr_data", "");
+    }
+    store.recordAdminAction(adminUser(res).id, "删除联系方式二维码", "settings", id);
     res.json({ success: true, qrCodeUploaded: false });
   }));
 

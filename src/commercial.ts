@@ -93,15 +93,26 @@ export interface EmailSettings {
   publicBaseUrl: string;
 }
 
+export type ContactMethodType = 'wechat' | 'qq' | 'telegram' | 'whatsapp' | 'wecom' | 'email' | 'phone' | 'discord' | 'line' | 'custom';
+
+export interface ContactMethod {
+  id: string;
+  type: ContactMethodType;
+  enabled: boolean;
+  name: string;
+  value: string;
+  contactUrl: string;
+  qrCodeUrl: string;
+  qrCodeUploaded: boolean;
+  sortOrder: number;
+}
+
 export interface ContactSettings {
   enabled: boolean;
   buttonLabel: string;
   title: string;
   description: string;
-  contactText: string;
-  contactUrl: string;
-  qrCodeUrl: string;
-  qrCodeUploaded: boolean;
+  methods: ContactMethod[];
 }
 
 export type ResourceRecommendationCategory = 'server' | 'residential_ip';
