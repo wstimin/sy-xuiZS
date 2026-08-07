@@ -93,6 +93,17 @@ export interface EmailSettings {
   publicBaseUrl: string;
 }
 
+export interface ContactSettings {
+  enabled: boolean;
+  buttonLabel: string;
+  title: string;
+  description: string;
+  contactText: string;
+  contactUrl: string;
+  qrCodeUrl: string;
+  qrCodeUploaded: boolean;
+}
+
 export interface Plan {
   id: string;
   name: string;

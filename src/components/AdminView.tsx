@@ -24,6 +24,7 @@ import {
   PackagePlus,
   Pencil,
   PowerOff,
+  QrCode,
   RefreshCw,
   Save,
   Search,
@@ -32,12 +33,15 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Terminal,
+  Trash2,
+  Upload,
   UserPlus,
   Users,
   X,
 } from 'lucide-react';
 import {
   api,
+  ContactSettings,
   CurrentUser,
   DeploymentRecord,
   Entitlement,
@@ -85,7 +89,7 @@ type Stats = {
   failed: number;
   uncertain: number;
 };
-type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; email: EmailSettings; orderExpiryMinutes: number; adminPath: string; redeemCodePurchaseUrl: string };
+type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; email: EmailSettings; orderExpiryMinutes: number; adminPath: string; redeemCodePurchaseUrl: string; contact: ContactSettings };
 type CreatedRedeemCode = RedeemCode & { code: string };
 
 const PAGE_SIZE = 10;
@@ -121,6 +125,7 @@ const emptyGrant = {
 const emptyUser = { username: '', email: '', password: '', role: 'user' as 'user' | 'admin' };
 const emptyPaymentMethod = (): PaymentMethod => ({ id: `method-${Date.now()}`, name: '易支付', type: 'epay', provider: 'epay', enabled: true, instructions: '', paymentUrl: '', gatewayUrl: '', merchantId: '', merchantSecret: '', merchantSecretConfigured: false, channel: 'alipay', enabledChannels: ['alipay'], currency: 'CNY', sortOrder: 10 });
 const emptyEmailSettings: EmailSettings = { emailEnabled: false, emailVerificationRequired: false, smtpHost: '', smtpPort: 465, smtpEncryption: 'ssl', smtpUsername: '', smtpPassword: '', smtpPasswordConfigured: false, smtpFromName: 'NEXUS CLOUD', smtpFromEmail: '', smtpReplyTo: '', verificationCodeTtlMinutes: 10, verificationResendSeconds: 60, siteName: 'NEXUS CLOUD', publicBaseUrl: '' };
+const emptyContactSettings: ContactSettings = { enabled: false, buttonLabel: '联系我们', title: '联系我们', description: '', contactText: '', contactUrl: '', qrCodeUrl: '', qrCodeUploaded: false };
 const TOKENPAY_CURRENCIES = [
   { value: 'USDT_TRC20', label: 'USDT-TRC20' },
   { value: 'USDT_ERC20', label: 'USDT-ERC20' },
@@ -166,7 +171,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [paymentAttempts, setPaymentAttempts] = useState<PaymentAttempt[]>([]);
   const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
-  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '' });
+  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', contact: emptyContactSettings });
   const [accountUsername, setAccountUsername] = useState(currentUser.username);
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
@@ -319,6 +324,41 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   const saveSettings = async () => {
     await runAction('系统设置已保存', '/api/admin/settings', { method: 'PUT', body: JSON.stringify(settingsData) });
+  };
+
+  const uploadContactQr = async (file?: File) => {
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return showToast('图片格式不支持', '请选择 PNG、JPEG 或 WebP 图片', 'warning');
+    if (file.size > 1024 * 1024) return showToast('图片过大', '联系二维码不能超过 1MB', 'warning');
+    setBusy(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('图片读取失败'));
+        reader.onerror = () => reject(new Error('图片读取失败'));
+        reader.readAsDataURL(file);
+      });
+      await api('/api/admin/contact-qr', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+      setSettingsData(current => ({ ...current, contact: { ...current.contact, qrCodeUploaded: true } }));
+      showToast('联系二维码已上传', '前台将优先显示已上传的二维码', 'success');
+    } catch (error) {
+      showToast('二维码上传失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteContactQr = async () => {
+    setBusy(true);
+    try {
+      await api('/api/admin/contact-qr', { method: 'DELETE' });
+      setSettingsData(current => ({ ...current, contact: { ...current.contact, qrCodeUploaded: false } }));
+      showToast('已删除上传的二维码', settingsData.contact.qrCodeUrl ? '前台将改用填写的二维码图片地址' : '前台将不再显示二维码', 'success');
+    } catch (error) {
+      showToast('二维码删除失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const createRedeemCodes = async () => {
@@ -660,6 +700,28 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                       <div className="admin-settings-section-title"><h3>卡密购买</h3><p>配置后用户账户页会显示购买卡密入口。</p></div>
                       <div className="admin-settings-form">
                         <label className="admin-field"><span>卡密购买链接</span><input type="url" value={settingsData.redeemCodePurchaseUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, redeemCodePurchaseUrl: event.target.value })} placeholder="https://example.com/buy" /><small>留空则不显示购买按钮，仅支持 HTTP 或 HTTPS。</small></label>
+                      </div>
+                    </section>
+                    <section className="admin-settings-section">
+                      <div className="admin-settings-section-title"><h3>联系我们</h3><p>在公开首页和用户工作台页脚显示联系入口，可同时配置文字、链接和二维码。</p></div>
+                      <div className="admin-setting-list compact">
+                        <SettingSwitch label="显示联系我们按钮" description="关闭后前台页脚不显示联系入口，已保存的内容和二维码仍会保留。" checked={settingsData.contact.enabled} onChange={enabled => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, enabled } })} />
+                      </div>
+                      <div className="admin-settings-form contact-settings-form">
+                        <div className="admin-form-grid">
+                          <label className="admin-field"><span>页脚按钮文案</span><input value={settingsData.contact.buttonLabel} maxLength={40} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, buttonLabel: event.target.value } })} placeholder="联系我们" /></label>
+                          <label className="admin-field"><span>弹窗标题</span><input value={settingsData.contact.title} maxLength={100} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, title: event.target.value } })} placeholder="联系我们" /></label>
+                          <label className="admin-field span-2"><span>联系说明</span><textarea value={settingsData.contact.description} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, description: event.target.value } })} placeholder="例如：工作时间、售前与售后说明" /><small>{settingsData.contact.description.length} / 1000</small></label>
+                          <label className="admin-field span-2"><span>联系方式</span><textarea value={settingsData.contact.contactText} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, contactText: event.target.value } })} placeholder={'例如：\n微信：example\nTelegram：@example\n邮箱：support@example.com'} /><small>支持换行，会按填写格式显示。</small></label>
+                          <label className="admin-field"><span>联系链接</span><input type="url" value={settingsData.contact.contactUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, contactUrl: event.target.value } })} placeholder="https://t.me/example" /><small>可选，仅支持 HTTP 或 HTTPS。</small></label>
+                          <label className="admin-field"><span>二维码图片地址</span><input type="url" value={settingsData.contact.qrCodeUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, qrCodeUrl: event.target.value } })} placeholder="https://example.com/contact.png" /><small>未上传二维码时使用此地址。</small></label>
+                        </div>
+                        <div className="admin-contact-upload">
+                          <div className="admin-contact-upload-preview">
+                            {settingsData.contact.qrCodeUploaded ? <img src="/api/contact-qr" alt="已上传的联系二维码" /> : settingsData.contact.qrCodeUrl ? <img src={settingsData.contact.qrCodeUrl} alt="联系二维码预览" /> : <span><QrCode /><small>暂无二维码</small></span>}
+                          </div>
+                          <div><strong>{settingsData.contact.qrCodeUploaded ? '已上传二维码' : '上传二维码图片'}</strong><p>上传图片优先于二维码地址，支持 PNG、JPEG、WebP，最大 1MB。</p><div className="admin-contact-upload-actions"><label className={`admin-button secondary ${busy ? 'disabled' : ''}`}><Upload /> 选择图片<input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(file); }} /></label>{settingsData.contact.qrCodeUploaded && <button type="button" className="admin-button danger" disabled={busy} onClick={() => void deleteContactQr()}><Trash2 /> 删除上传图片</button>}</div></div>
+                        </div>
                       </div>
                     </section>
                   </>}

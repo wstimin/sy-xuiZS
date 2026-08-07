@@ -562,3 +562,129 @@ test("gateway checkout failures keep the created order available for retry", asy
     store.close();
   }
 });
+
+test("contact settings and QR uploads are configurable, validated and publicly readable", async () => {
+  const store = new CommercialStore(":memory:");
+  const app = express();
+  app.use(express.json({ limit: "2mb" }));
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+
+  try {
+    const initial = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
+    assert.equal(initial.contact.enabled, false);
+    assert.equal(initial.contact.buttonLabel, "联系我们");
+    assert.equal(initial.contact.qrCodeUploaded, false);
+
+    const unauthorizedUpload = await fetch(`${base}/admin/contact-qr`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dataUrl: "data:image/png;base64,iVBORw0KGgo=" }),
+    });
+    assert.equal(unauthorizedUpload.status, 401);
+
+    const bootstrap = await fetch(`${base}/auth/bootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "contact-admin", password: "admin-password" }),
+    });
+    const adminCookie = sessionCookie(bootstrap);
+    const qrCodeUrl = "https://cdn.example.test/contact.png";
+    const contactUrl = "https://t.me/example";
+    const saved = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({
+        contact: {
+          enabled: true,
+          buttonLabel: "联系售后",
+          title: "联系运营支持",
+          description: "每天 09:00 至 22:00 在线",
+          contactText: "微信：example\n邮箱：support@example.com",
+          contactUrl,
+          qrCodeUrl,
+        },
+      }),
+    });
+    assert.equal(saved.status, 200);
+
+    const publicSettings = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
+    assert.equal(publicSettings.contact.enabled, true);
+    assert.equal(publicSettings.contact.buttonLabel, "联系售后");
+    assert.equal(publicSettings.contact.contactUrl, contactUrl);
+    assert.equal(publicSettings.contact.qrCodeUrl, qrCodeUrl);
+
+    for (const unsafeField of ["contactUrl", "qrCodeUrl"] as const) {
+      const invalid = await fetch(`${base}/admin/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", cookie: adminCookie },
+        body: JSON.stringify({ contact: { [unsafeField]: "javascript:alert(1)" } }),
+      });
+      assert.equal(invalid.status, 400);
+    }
+    const unchanged = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
+    assert.equal(unchanged.contact.contactUrl, contactUrl);
+    assert.equal(unchanged.contact.qrCodeUrl, qrCodeUrl);
+
+    const formats = [
+      ["image/png", Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])],
+      ["image/jpeg", Buffer.from([0xff, 0xd8, 0xff])],
+      ["image/webp", Buffer.from("RIFF0000WEBP", "ascii")],
+    ] as const;
+    for (const [mimeType, image] of formats) {
+      const upload = await fetch(`${base}/admin/contact-qr`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: adminCookie },
+        body: JSON.stringify({ dataUrl: `data:${mimeType};base64,${image.toString("base64")}` }),
+      });
+      assert.equal(upload.status, 200);
+      const publicQr = await fetch(`${base}/contact-qr`);
+      assert.equal(publicQr.status, 200);
+      assert.equal(publicQr.headers.get("content-type"), mimeType);
+      assert.deepEqual(Buffer.from(await publicQr.arrayBuffer()), image);
+    }
+
+    const invalidImage = await fetch(`${base}/admin/contact-qr`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ dataUrl: `data:image/png;base64,${Buffer.from("not an image").toString("base64")}` }),
+    });
+    assert.equal(invalidImage.status, 400);
+
+    const invalidBase64 = await fetch(`${base}/admin/contact-qr`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ dataUrl: "data:image/png;base64,iVBORw0KGgo" }),
+    });
+    assert.equal(invalidBase64.status, 400);
+
+    const oversizedImage = Buffer.alloc(1024 * 1024 + 1);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(oversizedImage);
+    const oversizedUpload = await fetch(`${base}/admin/contact-qr`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ dataUrl: `data:image/png;base64,${oversizedImage.toString("base64")}` }),
+    });
+    assert.equal(oversizedUpload.status, 400);
+
+    const afterUpload = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
+    assert.equal(afterUpload.contact.qrCodeUploaded, true);
+
+    const unauthorizedDelete = await fetch(`${base}/admin/contact-qr`, { method: "DELETE" });
+    assert.equal(unauthorizedDelete.status, 401);
+    const deleted = await fetch(`${base}/admin/contact-qr`, { method: "DELETE", headers: { cookie: adminCookie } });
+    assert.equal(deleted.status, 200);
+
+    const afterDelete = await fetch(`${base}/contact-settings`).then(response => response.json()) as any;
+    assert.equal(afterDelete.contact.qrCodeUploaded, false);
+    assert.equal(afterDelete.contact.qrCodeUrl, qrCodeUrl);
+    assert.equal((await fetch(`${base}/contact-qr`)).status, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});

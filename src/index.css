@@ -822,6 +822,96 @@ input {
   color: #94a3b8;
 }
 
+.landing-footer-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.landing-footer-actions > a {
+  color: #475569;
+  text-decoration: none;
+}
+
+.landing-footer-actions > a:hover { color: #94a3b8; }
+
+.contact-footer-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  color: #a5b4fc;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.contact-footer-button:hover { color: #67e8f9; }
+.contact-footer-button svg { width: 14px; height: 14px; }
+
+.contact-dialog-backdrop {
+  position: fixed;
+  z-index: 140;
+  inset: 0;
+  padding: 20px;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.contact-dialog {
+  width: min(100%, 440px);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  border: 1px solid rgb(129 140 248 / 0.3);
+  border-radius: 8px;
+  color: #e4e4e7;
+  background: linear-gradient(145deg, rgb(79 70 229 / 0.12), transparent 42%), #111116;
+  box-shadow: 0 30px 90px rgb(0 0 0 / 0.52);
+  text-align: left;
+}
+
+.contact-dialog > header {
+  min-height: 78px;
+  padding: 18px 20px;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.contact-dialog-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgb(52 211 153 / 0.25);
+  border-radius: 7px;
+  color: #6ee7b7;
+  background: rgb(16 185 129 / 0.08);
+}
+
+.contact-dialog-icon svg { width: 19px; height: 19px; }
+.contact-dialog header small { color: #818cf8; font-size: 9px; font-weight: 800; }
+.contact-dialog header h2 { margin: 3px 0 0; color: #fafafa; font-size: 18px; }
+.contact-dialog header > button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / 0.09); border-radius: 6px; color: #a1a1aa; background: rgb(255 255 255 / 0.025); cursor: pointer; }
+.contact-dialog header > button:hover { color: #fff; border-color: rgb(129 140 248 / 0.35); }
+.contact-dialog header > button svg { width: 17px; height: 17px; }
+.contact-dialog-body { padding: 22px; display: grid; gap: 16px; }
+.contact-dialog-description { margin: 0; color: #a1a1aa; font-size: 13px; line-height: 1.75; }
+.contact-dialog-text { padding: 13px 14px; border-left: 2px solid #6366f1; color: #e4e4e7; background: rgb(99 102 241 / 0.07); font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.contact-dialog-qr { width: min(100%, 250px); aspect-ratio: 1; margin: 0 auto; padding: 12px; border-radius: 7px; background: #fff; }
+.contact-dialog-qr img { width: 100%; height: 100%; display: block; object-fit: contain; }
+.contact-dialog-body > a { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid rgb(129 140 248 / 0.32); border-radius: 6px; color: #e0e7ff; background: rgb(79 70 229 / 0.14); font-size: 13px; font-weight: 750; text-decoration: none; }
+.contact-dialog-body > a:hover { border-color: rgb(52 211 153 / 0.4); background: rgb(16 185 129 / 0.1); }
+.contact-dialog-body > a svg { width: 16px; height: 16px; }
+.contact-dialog-empty { margin: 0; color: #71717a; text-align: center; }
+
 .brand-lockup--footer small {
   letter-spacing: 0;
 }
@@ -3448,6 +3538,48 @@ input {
   color: #fda4af;
 }
 
+.contact-settings-form {
+  display: grid;
+  gap: 18px;
+}
+
+.contact-settings-form .admin-field textarea { min-height: 110px; }
+
+.admin-contact-upload {
+  max-width: 900px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  border: 1px solid rgb(129 140 248 / 0.2);
+  border-radius: 8px;
+  background: linear-gradient(120deg, rgb(79 70 229 / 0.07), transparent 48%), #0d1119;
+}
+
+.admin-contact-upload-preview {
+  width: 104px;
+  aspect-ratio: 1;
+  padding: 7px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgb(148 163 184 / 0.16);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.admin-contact-upload-preview img { width: 100%; height: 100%; object-fit: contain; }
+.admin-contact-upload-preview > span { display: grid; justify-items: center; gap: 7px; color: #64748b; }
+.admin-contact-upload-preview svg { width: 30px; height: 30px; }
+.admin-contact-upload-preview small { font-size: 11px; }
+.admin-contact-upload strong { color: #e2e8f0; font-size: 14px; }
+.admin-contact-upload p { margin: 6px 0 12px; color: #718096; font-size: 12px; line-height: 1.6; }
+.admin-contact-upload-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.admin-contact-upload-actions label { cursor: pointer; }
+.admin-contact-upload-actions label.disabled { opacity: 0.5; cursor: not-allowed; }
+.admin-contact-upload-actions input { display: none; }
+
 .admin-field.span-2,
 .admin-checkbox.span-2,
 .admin-form-context.span-2 {
@@ -4579,6 +4711,12 @@ input {
   .auth-network-scene {
     opacity: 0.35;
   }
+}
+
+@media (max-width: 560px) {
+  .admin-contact-upload { grid-template-columns: 1fr; }
+  .admin-contact-upload-preview { width: 120px; }
+  .contact-dialog-backdrop { padding: 12px; }
 }
 
 /* Final console, account center and icon refinement. */

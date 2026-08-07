@@ -146,7 +146,7 @@ async function startServer() {
   app.disable("x-powered-by");
   app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
   app.use(express.json({
-    limit: "256kb",
+    limit: "2mb",
     verify: (req, _res, buffer) => { (req as Request & { rawBody?: string }).rawBody = buffer.toString("utf8"); },
   }));
   app.use(express.urlencoded({ extended: false, limit: "64kb" }));

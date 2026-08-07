@@ -5,6 +5,18 @@ import { getPaymentDriver, PaymentChannelConfig, PaymentProvider } from "./payme
 
 const USER_COOKIE_NAME = "xui_user_session";
 const ADMIN_COOKIE_NAME = "xui_admin_session";
+const CONTACT_QR_MAX_BYTES = 1024 * 1024;
+const CONTACT_QR_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+type ContactSettingsInput = {
+  enabled: boolean;
+  buttonLabel: string;
+  title: string;
+  description: string;
+  contactText: string;
+  contactUrl: string;
+  qrCodeUrl: string;
+};
 
 function cookieValue(req: Request, name: string) {
   const source = req.header("cookie") || "";
@@ -67,6 +79,47 @@ function optionalHttpUrl(value: unknown, label: string) {
   catch { throw new Error(`${label}格式不正确`); }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`${label}必须使用 HTTP 或 HTTPS`);
   return normalized;
+}
+
+function limitedText(value: unknown, label: string, maxLength: number, fallback = "") {
+  const normalized = String(value ?? fallback).trim();
+  if (normalized.length > maxLength) throw new Error(`${label}不能超过 ${maxLength} 个字符`);
+  return normalized;
+}
+
+function contactSettings(store: CommercialStore) {
+  return {
+    enabled: store.getSetting("contact_enabled", "false") === "true",
+    buttonLabel: store.getSetting("contact_button_label", "联系我们"),
+    title: store.getSetting("contact_title", "联系我们"),
+    description: store.getSetting("contact_description", ""),
+    contactText: store.getSetting("contact_text", ""),
+    contactUrl: store.getSetting("contact_url", ""),
+    qrCodeUrl: store.getSetting("contact_qr_url", ""),
+    qrCodeUploaded: Boolean(store.getSetting("contact_qr_data", "")),
+  };
+}
+
+function contactSettingsInput(value: unknown, current: ReturnType<typeof contactSettings>): ContactSettingsInput {
+  const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    enabled: typeof input.enabled === "boolean" ? input.enabled : current.enabled,
+    buttonLabel: limitedText(input.buttonLabel, "页脚按钮文案", 40, current.buttonLabel) || "联系我们",
+    title: limitedText(input.title, "联系弹窗标题", 100, current.title) || "联系我们",
+    description: limitedText(input.description, "联系说明", 1000, current.description),
+    contactText: limitedText(input.contactText, "联系方式", 1000, current.contactText),
+    contactUrl: input.contactUrl === undefined ? current.contactUrl : optionalHttpUrl(input.contactUrl, "联系链接"),
+    qrCodeUrl: input.qrCodeUrl === undefined ? current.qrCodeUrl : optionalHttpUrl(input.qrCodeUrl, "二维码图片地址"),
+  };
+}
+
+function validContactQr(mimeType: string, data: Buffer) {
+  if (!CONTACT_QR_TYPES.has(mimeType)) throw new Error("二维码仅支持 PNG、JPEG 或 WebP 图片");
+  if (!data.length || data.length > CONTACT_QR_MAX_BYTES) throw new Error("二维码图片大小必须在 1MB 以内");
+  const isPng = mimeType === "image/png" && data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isJpeg = mimeType === "image/jpeg" && data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  const isWebp = mimeType === "image/webp" && data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+  if (!isPng && !isJpeg && !isWebp) throw new Error("二维码图片内容与文件格式不匹配");
 }
 
 function planInput(body: Record<string, unknown>): PlanInput {
@@ -368,6 +421,16 @@ export function createCommercialRouter(store: CommercialStore) {
   }));
 
   router.get("/plans", (_req, res) => res.json({ plans: store.listPlans() }));
+  router.get("/contact-settings", (_req, res) => res.json({ contact: contactSettings(store) }));
+  router.get("/contact-qr", (_req, res) => {
+    const data = store.getSetting("contact_qr_data", "");
+    const mimeType = store.getSetting("contact_qr_mime", "");
+    if (!data || !CONTACT_QR_TYPES.has(mimeType)) return res.status(404).json({ success: false, error: "尚未上传联系二维码" });
+    const image = Buffer.from(data, "base64");
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Length", String(image.length));
+    res.send(image);
+  });
   router.get("/payment-methods", (_req, res) => res.json({
     paymentMethods: store.getPaymentMethods(),
     redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
@@ -512,6 +575,7 @@ export function createCommercialRouter(store: CommercialStore) {
       orderExpiryMinutes: Number(store.getSetting("order_expiry_minutes", "30")) || 30,
       adminPath: store.getAdminPath(),
       redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
+      contact: contactSettings(store),
     },
   }));
 
@@ -634,6 +698,7 @@ export function createCommercialRouter(store: CommercialStore) {
     res.json({ success: true });
   }));
   router.put("/admin/settings", requireAdmin, route((req, res) => {
+    const nextContact = req.body?.contact === undefined ? null : contactSettingsInput(req.body.contact, contactSettings(store));
     if (typeof req.body?.registrationEnabled === "boolean") store.setSetting("registration_enabled", String(req.body.registrationEnabled));
     if (typeof req.body?.panelDeployEnabled === "boolean") store.setSetting("panel_deploy_enabled", String(req.body.panelDeployEnabled));
     if (typeof req.body?.nodeDeployEnabled === "boolean") store.setSetting("node_deploy_enabled", String(req.body.nodeDeployEnabled));
@@ -648,6 +713,15 @@ export function createCommercialRouter(store: CommercialStore) {
     if (req.body?.redeemCodePurchaseUrl !== undefined) {
       store.setSetting("redeem_code_purchase_url", optionalHttpUrl(req.body.redeemCodePurchaseUrl, "卡密购买链接"));
     }
+    if (nextContact) {
+      store.setSetting("contact_enabled", String(nextContact.enabled));
+      store.setSetting("contact_button_label", nextContact.buttonLabel);
+      store.setSetting("contact_title", nextContact.title);
+      store.setSetting("contact_description", nextContact.description);
+      store.setSetting("contact_text", nextContact.contactText);
+      store.setSetting("contact_url", nextContact.contactUrl);
+      store.setSetting("contact_qr_url", nextContact.qrCodeUrl);
+    }
     let adminPath: string | undefined;
     if (req.body?.adminPath !== undefined) adminPath = store.setAdminPath(String(req.body.adminPath));
     store.recordAdminAction(adminUser(res).id, "更新系统设置", "settings", "commercial", JSON.stringify({
@@ -655,9 +729,31 @@ export function createCommercialRouter(store: CommercialStore) {
       panelDeployEnabled: req.body?.panelDeployEnabled,
       nodeDeployEnabled: req.body?.nodeDeployEnabled,
       redeemCodePurchaseUrl: req.body?.redeemCodePurchaseUrl === undefined ? undefined : "[updated]",
+      contact: nextContact ? { enabled: nextContact.enabled, qrCodeUrl: nextContact.qrCodeUrl ? "[configured]" : "" } : undefined,
       adminPath,
     }));
     res.json({ success: true, adminPath: adminPath || store.getAdminPath() });
+  }));
+
+  router.post("/admin/contact-qr", requireAdmin, route((req, res) => {
+    const dataUrl = String(req.body?.dataUrl || "");
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+    if (!match) throw new Error("二维码图片数据格式不正确");
+    if (match[2].length % 4 !== 0) throw new Error("二维码图片数据格式不正确");
+    const data = Buffer.from(match[2], "base64");
+    if (data.toString("base64") !== match[2]) throw new Error("二维码图片数据格式不正确");
+    validContactQr(match[1], data);
+    store.setSetting("contact_qr_mime", match[1]);
+    store.setSetting("contact_qr_data", data.toString("base64"));
+    store.recordAdminAction(adminUser(res).id, "上传联系二维码", "settings", "contact_qr", `${match[1]} / ${data.length} bytes`);
+    res.json({ success: true, qrCodeUploaded: true });
+  }));
+
+  router.delete("/admin/contact-qr", requireAdmin, route((_req, res) => {
+    store.setSetting("contact_qr_mime", "");
+    store.setSetting("contact_qr_data", "");
+    store.recordAdminAction(adminUser(res).id, "删除联系二维码", "settings", "contact_qr");
+    res.json({ success: true, qrCodeUploaded: false });
   }));
 
   router.post("/admin/settings/test-email", requireAdmin, route(async (req, res) => {

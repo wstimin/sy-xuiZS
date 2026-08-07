@@ -12,6 +12,7 @@ import { Toast } from './components/Toast';
 import { AccountData, api, CurrentUser, Plan } from './commercial';
 import { PricingView } from './components/PricingView';
 import { AccountView } from './components/AccountView';
+import { ContactButton } from './components/ContactButton';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('home');
@@ -314,6 +315,7 @@ export default function App() {
             <span>专注面板极速部署与 SOCKS 链式节点构建</span>
           </div>
           <div className="flex items-center gap-4 text-[11px]">
+            <ContactButton />
             <button
               onClick={() => setSetupGuideOpen(true)}
               className="hover:text-indigo-400 transition-colors font-medium text-indigo-300"
