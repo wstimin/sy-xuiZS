@@ -315,6 +315,22 @@ test("email registration, payment settings and provider validation align across 
     const account = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
     assert.equal(account.paymentInstructions, "请将订单号填写为付款备注。");
     assert.equal(account.paymentMethods[0].id, "alipay");
+
+    const disableOnlinePayments = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({
+        paymentMethods: [
+          { id: "alipay", name: "支付宝", type: "alipay", enabled: false, instructions: "打开付款页完成付款", paymentUrl: "https://pay.example.test", sortOrder: 10 },
+          { id: "wechat", name: "微信支付", type: "wechat", enabled: false, instructions: "", paymentUrl: "", sortOrder: 20 },
+        ],
+      }),
+    });
+    assert.equal(disableOnlinePayments.status, 200);
+    const cardOnlyMethods = await fetch(`${base}/payment-methods`).then(response => response.json()) as any;
+    assert.deepEqual(cardOnlyMethods.paymentMethods, []);
+    const cardOnlyAccount = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
+    assert.deepEqual(cardOnlyAccount.paymentMethods, []);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     store.close();

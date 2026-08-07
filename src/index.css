@@ -5824,6 +5824,12 @@ input {
   gap: 14px;
 }
 
+.admin-settings-content-head > .admin-settings-head-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .admin-settings-icon {
   width: 42px;
   height: 42px;
@@ -6216,6 +6222,14 @@ input {
 
   .admin-settings-content-head > .admin-button {
     width: 100%;
+  }
+
+  .admin-settings-content-head > .admin-settings-head-actions {
+    width: 100%;
+  }
+
+  .admin-settings-head-actions .admin-button {
+    flex: 1 1 150px;
   }
 
   .admin-settings-section {

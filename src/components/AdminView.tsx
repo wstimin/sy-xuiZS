@@ -23,6 +23,7 @@ import {
   Network,
   PackagePlus,
   Pencil,
+  PowerOff,
   RefreshCw,
   Save,
   Search,
@@ -452,6 +453,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     setSettingsData(value => ({ ...value, paymentMethods: value.paymentMethods.filter((_method, methodIndex) => methodIndex !== index) }));
   };
 
+  const disableAllPaymentMethods = () => {
+    setSettingsData(value => ({
+      ...value,
+      paymentMethods: value.paymentMethods.map(method => ({ ...method, enabled: false })),
+    }));
+    showToast('已切换为仅卡密模式', '所有在线支付渠道已在草稿中停用，请点击“保存全部设置”生效', 'success');
+  };
+
   const openNewPaymentMethod = () => {
     setEditingPaymentMethod({ index: -1, method: emptyPaymentMethod() });
   };
@@ -675,7 +684,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                   </>}
 
                   {settingsSection === 'payments' && <>
-                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><CreditCard /></span><div><h2>支付渠道</h2><p>启用后的渠道会显示在用户下单流程中，订单会保存用户所选方式。</p></div></div><button type="button" className="admin-button secondary" onClick={openNewPaymentMethod}><PackagePlus /> 新增支付方式</button></header>
+                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><CreditCard /></span><div><h2>支付渠道</h2><p>{settingsData.paymentMethods.some(method => method.enabled) ? '启用后的渠道会显示在用户下单流程中；也可以全部停用，仅保留卡密购买与兑换。' : '当前为仅卡密模式，用户端不会显示在线支付渠道。'}</p></div></div><div className="admin-settings-head-actions"><button type="button" className="admin-button secondary" disabled={!settingsData.paymentMethods.some(method => method.enabled)} onClick={disableAllPaymentMethods}><PowerOff /> 仅使用卡密</button><button type="button" className="admin-button secondary" onClick={openNewPaymentMethod}><PackagePlus /> 新增支付方式</button></div></header>
                     <section className="admin-settings-section flush">
                       <div className="admin-payment-table-wrap">
                         <table className="admin-payment-table">
@@ -966,7 +975,7 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
           const next = event.target.checked ? [...new Set([...current, option.value])] : current.filter(item => item !== option.value);
           patch({ enabledChannels: next, channel: next[0] || method.channel || 'alipay' });
         }} /><span><strong>{option.label}</strong><small>允许用户在下单时选择</small></span></label>)}
-      </div><small>可同时启用多种方式。至少保留一种，实际下单类型会按用户选择传给支付平台。</small></div>
+      </div><small>可同时启用多种方式。启用此易支付渠道时至少选择一种；如果只使用卡密，可停用整个支付渠道。</small></div>
       <SecretField label="商户密钥" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
       <div className="admin-form-context span-2"><strong>异步通知地址</strong><span>保存后在支付列表中复制，填写到支付平台后台的异步通知地址。同步返回地址由系统按当前站点自动生成。</span></div>
     </>}
