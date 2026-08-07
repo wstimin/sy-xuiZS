@@ -135,7 +135,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                     一键部署 xui 面板
                   </h3>
                   <p className="text-xs text-zinc-400 leading-relaxed">
-                    输入 VPS IP 和 SSH 凭据，设置面板访问端口与路径，后台会自动安装 3x-ui 面板并生成随机安全登录账号密码。
+                    输入 VPS IP 和 SSH 凭据，设置面板访问端口与路径，后台会自动安装 3x-ui 面板并生成随机安全登录账号密码。安装后还需在云厂商控制台放行该面板端口。
                   </p>
                 </div>
 
@@ -226,6 +226,22 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                     <p className="text-xs text-zinc-400 pl-6 leading-relaxed">
                       点击【一键搭建】后，后台将建立 SSH 通道在 VPS 上自动完成依赖补全与 3x-ui 安装。搭建完成后页面会弹窗显示完整的<strong>面板登录 URL、初始 Username 及高强度随机密码</strong>，请注意保存。
                     </p>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 space-y-2">
+                    <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 text-[11px] flex items-center justify-center font-mono">4</span>
+                      在云厂商控制台放行面板端口
+                    </div>
+                    <div className="text-xs text-zinc-300 pl-6 leading-relaxed space-y-2">
+                      <p>自动安装无法替您修改阿里云、腾讯云、华为云、AWS、GCP 等平台的<strong>安全组或云防火墙</strong>。请新增 TCP 入站规则，放行搭建结果中显示的面板端口，例如 <code className="text-amber-200">2053</code>。</p>
+                      <ul className="list-disc pl-4 space-y-1 text-zinc-400">
+                        <li>协议选择 TCP，目标端口填写实际面板端口，不是固定填写 2053。</li>
+                        <li>调试时可临时允许您的公网 IP；确认可访问后，建议只保留可信来源 IP。</li>
+                        <li>使用域名申请 SSL 证书时，还需按证书验证方式放行 80 / 443 端口。</li>
+                        <li>如果 VPS 启用了 UFW、firewalld 等本机防火墙，也要同步放行相同端口。</li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -340,6 +356,17 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                 <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1.5">
                   <div className="font-bold text-purple-300 flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-purple-400 shrink-0" />
+                    Q: 面板显示搭建成功，但登录地址打不开或一直超时？
+                  </div>
+                  <div className="text-zinc-300 leading-relaxed pl-6">
+                    这通常不是安装失败，而是<strong>云厂商安全组或云防火墙没有放行面板端口</strong>。请在 VPS 控制台新增 TCP 入站规则，端口填写搭建结果中的实际面板端口，并检查服务器本机的 UFW / firewalld。注意 SSH 端口已放行不代表面板端口也已放行。
+                  </div>
+                </div>
+
+                {/* Q4 */}
+                <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1.5">
+                  <div className="font-bold text-purple-300 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-purple-400 shrink-0" />
                     Q: 生成的节点连接后无法联网或延迟显示为 -1？
                   </div>
                   <div className="text-zinc-300 leading-relaxed pl-6">
@@ -347,7 +374,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                   </div>
                 </div>
 
-                {/* Q4 */}
+                {/* Q5 */}
                 <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1.5">
                   <div className="font-bold text-purple-300 flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-purple-400 shrink-0" />
