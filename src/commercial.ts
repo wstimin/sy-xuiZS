@@ -104,6 +104,35 @@ export interface ContactSettings {
   qrCodeUploaded: boolean;
 }
 
+export type ResourceRecommendationCategory = 'server' | 'residential_ip';
+
+export interface ResourceRecommendation {
+  id: string;
+  category: ResourceRecommendationCategory;
+  enabled: boolean;
+  name: string;
+  description: string;
+  logoUrl: string;
+  logoUploaded: boolean;
+  regions: string;
+  referencePrice: string;
+  badge: string;
+  purchaseUrl: string;
+  buttonLabel: string;
+  openInNewTab: boolean;
+  sortOrder: number;
+  serverConfiguration: string;
+  ipType: string;
+  protocols: string;
+  billingMethod: string;
+}
+
+export interface ResourceRecommendationSettings {
+  serverEnabled: boolean;
+  residentialIpEnabled: boolean;
+  items: ResourceRecommendation[];
+}
+
 export interface Plan {
   id: string;
   name: string;

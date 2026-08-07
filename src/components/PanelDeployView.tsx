@@ -14,6 +14,7 @@ interface PanelDeployViewProps {
   onGoToNodeWithPanel: (result: PanelResult) => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
   entitlements?: Entitlement[];
+  onOpenResources?: () => void;
 }
 
 interface SshTestDetails {
@@ -54,7 +55,8 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
   onPanelCreated,
   onGoToNodeWithPanel,
   showToast,
-  entitlements = []
+  entitlements = [],
+  onOpenResources
 }) => {
   const [form, setForm] = useState<PanelDeployForm>({
     ipOrDomain: '',
@@ -377,6 +379,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+      {onOpenResources && <button type="button" className="deploy-resource-link" onClick={onOpenResources}><Server /><span>还没有服务器？前往资源推荐</span><ArrowRight /></button>}
       <div className="rounded-md border border-indigo-500/25 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
         面板权益：{activeCapability(entitlements, 'panel').length ? activeCapability(entitlements, 'panel').map(item => `${item.planName} ${quotaText(item.panelMode, item.panelRemaining)}`).join('；') : '暂无可用次数，请先购买套餐或联系管理员发放'}
       </div>

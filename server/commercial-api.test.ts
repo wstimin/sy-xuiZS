@@ -689,3 +689,135 @@ test("contact settings and QR uploads are configurable, validated and publicly r
     store.close();
   }
 });
+
+test("resource recommendations enforce limits, filtering and protected logo access", async () => {
+  const store = new CommercialStore(":memory:");
+  const app = express();
+  app.use(express.json({ limit: "2mb" }));
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+
+  const item = (id: string, category: "server" | "residential_ip", sortOrder: number) => ({
+    id,
+    category,
+    enabled: true,
+    name: `Vendor ${id}`,
+    description: "Recommended provider",
+    logoUrl: "",
+    regions: "Hong Kong, United States",
+    referencePrice: "$5/month",
+    badge: "Recommended",
+    purchaseUrl: `https://example.test/${id}`,
+    buttonLabel: "Buy now",
+    openInNewTab: true,
+    sortOrder,
+    serverConfiguration: category === "server" ? "1 vCPU / 1 GB RAM" : "",
+    ipType: category === "residential_ip" ? "Static residential" : "",
+    protocols: category === "residential_ip" ? "SOCKS5, HTTPS" : "",
+    billingMethod: category === "residential_ip" ? "Monthly" : "",
+  });
+
+  try {
+    assert.equal((await fetch(`${base}/resource-recommendations`)).status, 401);
+    assert.equal((await fetch(`${base}/admin/resource-recommendations/server-one/logo`)).status, 401);
+
+    const bootstrap = await fetch(`${base}/auth/bootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "resource-admin", password: "admin-password" }),
+    });
+    const adminCookie = sessionCookie(bootstrap);
+    const registration = await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "resource-user", email: "resource@example.com", password: "user-password" }),
+    });
+    const userCookie = sessionCookie(registration);
+
+    const serverItem = item("server-one", "server", 20);
+    const residentialItem = item("residential-one", "residential_ip", 10);
+    const saved = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ recommendations: { serverEnabled: true, residentialIpEnabled: true, items: [serverItem, residentialItem] } }),
+    });
+    assert.equal(saved.status, 200);
+
+    const publicResponse = await fetch(`${base}/resource-recommendations`, { headers: { cookie: userCookie } });
+    assert.equal(publicResponse.status, 200);
+    const publicSettings = (await publicResponse.json() as any).recommendations;
+    assert.deepEqual(publicSettings.items.map((entry: any) => entry.id), ["residential-one", "server-one"]);
+    assert.equal(publicSettings.items[0].logoUploaded, false);
+
+    const adminSettings = await fetch(`${base}/admin/settings`, { headers: { cookie: adminCookie } }).then(response => response.json()) as any;
+    assert.equal(adminSettings.settings.recommendations.items.length, 2);
+
+    const invalidUrl = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ recommendations: { serverEnabled: true, residentialIpEnabled: true, items: [{ ...serverItem, purchaseUrl: "javascript:alert(1)" }] } }),
+    });
+    assert.equal(invalidUrl.status, 400);
+
+    const duplicateIds = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ recommendations: { serverEnabled: true, residentialIpEnabled: true, items: [serverItem, { ...residentialItem, id: serverItem.id }] } }),
+    });
+    assert.equal(duplicateIds.status, 400);
+
+    const tooMany = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ recommendations: { serverEnabled: true, residentialIpEnabled: true, items: Array.from({ length: 21 }, (_value, index) => item(`server-${index}`, "server", index)) } }),
+    });
+    assert.equal(tooMany.status, 400);
+
+    const hiddenCategory = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ recommendations: { serverEnabled: true, residentialIpEnabled: false, items: [serverItem, residentialItem] } }),
+    });
+    assert.equal(hiddenCategory.status, 200);
+    const filtered = await fetch(`${base}/resource-recommendations`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
+    assert.deepEqual(filtered.recommendations.items.map((entry: any) => entry.id), ["server-one"]);
+
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const unauthorizedUpload = await fetch(`${base}/admin/resource-recommendations/server-one/logo`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dataUrl: `data:image/png;base64,${png.toString("base64")}` }),
+    });
+    assert.equal(unauthorizedUpload.status, 401);
+
+    const uploaded = await fetch(`${base}/admin/resource-recommendations/server-one/logo`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ dataUrl: `data:image/png;base64,${png.toString("base64")}` }),
+    });
+    assert.equal(uploaded.status, 200);
+
+    const publicLogo = await fetch(`${base}/resource-recommendations/server-one/logo`, { headers: { cookie: userCookie } });
+    assert.equal(publicLogo.status, 200);
+    assert.equal(publicLogo.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await publicLogo.arrayBuffer()), png);
+
+    const adminLogo = await fetch(`${base}/admin/resource-recommendations/server-one/logo`, { headers: { cookie: adminCookie } });
+    assert.equal(adminLogo.status, 200);
+    assert.deepEqual(Buffer.from(await adminLogo.arrayBuffer()), png);
+
+    const afterUpload = await fetch(`${base}/admin/settings`, { headers: { cookie: adminCookie } }).then(response => response.json()) as any;
+    assert.equal(afterUpload.settings.recommendations.items.find((entry: any) => entry.id === "server-one").logoUploaded, true);
+
+    const deleted = await fetch(`${base}/admin/resource-recommendations/server-one/logo`, { method: "DELETE", headers: { cookie: adminCookie } });
+    assert.equal(deleted.status, 200);
+    assert.equal((await fetch(`${base}/resource-recommendations/server-one/logo`, { headers: { cookie: userCookie } })).status, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});

@@ -27,7 +27,9 @@ import {
   AlertTriangle,
   Activity,
   Clock,
-  Square
+  Square,
+  Server,
+  ArrowRight
 } from 'lucide-react';
 
 const NODE_DEPLOY_STEPS = [
@@ -54,13 +56,15 @@ interface NodeDeployViewProps {
   onNodeCreated: (result: NodeResult) => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
   entitlements?: Entitlement[];
+  onOpenResources?: () => void;
 }
 
 export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   initialPanelData,
   onNodeCreated,
   showToast,
-  entitlements = []
+  entitlements = [],
+  onOpenResources
 }) => {
   const [form, setForm] = useState<NodeDeployForm>({
     panelAddress: initialPanelData?.host || '',
@@ -415,6 +419,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+      {onOpenResources && <button type="button" className="deploy-resource-link residential" onClick={onOpenResources}><Server /><span>需要服务器或住宅 IP？查看资源推荐</span><ArrowRight /></button>}
       <div className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
         节点权益：{activeCapability(entitlements, 'node').length ? activeCapability(entitlements, 'node').map(item => `${item.planName} ${quotaText(item.nodeMode, item.nodeRemaining)}`).join('；') : '暂无可用次数，请先购买套餐或联系管理员发放'}
       </div>

@@ -3,6 +3,7 @@ import {
   Activity,
   BadgeCheck,
   Boxes,
+  Building2,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
@@ -55,6 +56,8 @@ import {
   EmailSettings,
   Plan,
   RedeemCode,
+  ResourceRecommendation,
+  ResourceRecommendationSettings,
   quotaText,
 } from '../commercial';
 import { copyToClipboard } from '../utils/clipboard';
@@ -63,7 +66,7 @@ import { NumberInput } from './NumberInput';
 import { AdminDialog } from './admin/AdminDialog';
 
 type AdminTab = 'dashboard' | 'orders' | 'plans' | 'redeem-codes' | 'users' | 'entitlements' | 'ledger' | 'deployments' | 'audit' | 'settings' | 'security';
-type SettingsSection = 'general' | 'email' | 'payments';
+type SettingsSection = 'general' | 'recommendations' | 'email' | 'payments';
 type SettingsDialog = 'order' | 'smtp' | 'sender' | 'verification' | 'test-email' | null;
 type AdminUser = { id: string; username: string; email: string | null; emailVerified: boolean; role: 'user' | 'admin'; status: 'active' | 'disabled'; createdAt: string; lastLoginAt?: string };
 type UsageLedgerEntry = { id: string; userId: string; username: string; entitlementId: string; planName: string; deploymentId?: string; capability: 'panel' | 'node'; action: 'grant' | 'reserve' | 'consume' | 'release' | 'adjust'; amount: number; note: string; createdAt: string };
@@ -89,7 +92,7 @@ type Stats = {
   failed: number;
   uncertain: number;
 };
-type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; email: EmailSettings; orderExpiryMinutes: number; adminPath: string; redeemCodePurchaseUrl: string; contact: ContactSettings };
+type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; email: EmailSettings; orderExpiryMinutes: number; adminPath: string; redeemCodePurchaseUrl: string; contact: ContactSettings; recommendations: ResourceRecommendationSettings };
 type CreatedRedeemCode = RedeemCode & { code: string };
 
 const PAGE_SIZE = 10;
@@ -126,6 +129,27 @@ const emptyUser = { username: '', email: '', password: '', role: 'user' as 'user
 const emptyPaymentMethod = (): PaymentMethod => ({ id: `method-${Date.now()}`, name: '易支付', type: 'epay', provider: 'epay', enabled: true, instructions: '', paymentUrl: '', gatewayUrl: '', merchantId: '', merchantSecret: '', merchantSecretConfigured: false, channel: 'alipay', enabledChannels: ['alipay'], currency: 'CNY', sortOrder: 10 });
 const emptyEmailSettings: EmailSettings = { emailEnabled: false, emailVerificationRequired: false, smtpHost: '', smtpPort: 465, smtpEncryption: 'ssl', smtpUsername: '', smtpPassword: '', smtpPasswordConfigured: false, smtpFromName: 'NEXUS CLOUD', smtpFromEmail: '', smtpReplyTo: '', verificationCodeTtlMinutes: 10, verificationResendSeconds: 60, siteName: 'NEXUS CLOUD', publicBaseUrl: '' };
 const emptyContactSettings: ContactSettings = { enabled: false, buttonLabel: '立即咨询', title: '联系站长', description: '', contactText: '', contactUrl: '', qrCodeUrl: '', qrCodeUploaded: false };
+const emptyRecommendationSettings: ResourceRecommendationSettings = { serverEnabled: true, residentialIpEnabled: true, items: [] };
+const emptyRecommendation = (): ResourceRecommendation => ({
+  id: `resource-${Date.now().toString(36)}`,
+  category: 'server',
+  enabled: true,
+  name: '',
+  description: '',
+  logoUrl: '',
+  logoUploaded: false,
+  regions: '',
+  referencePrice: '',
+  badge: '',
+  purchaseUrl: '',
+  buttonLabel: '前往购买',
+  openInNewTab: true,
+  sortOrder: 10,
+  serverConfiguration: '',
+  ipType: '',
+  protocols: '',
+  billingMethod: '',
+});
 const TOKENPAY_CURRENCIES = [
   { value: 'USDT_TRC20', label: 'USDT-TRC20' },
   { value: 'USDT_ERC20', label: 'USDT-ERC20' },
@@ -171,13 +195,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [paymentAttempts, setPaymentAttempts] = useState<PaymentAttempt[]>([]);
   const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
-  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', contact: emptyContactSettings });
+  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', contact: emptyContactSettings, recommendations: emptyRecommendationSettings });
   const [accountUsername, setAccountUsername] = useState(currentUser.username);
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
   const [settingsDialog, setSettingsDialog] = useState<SettingsDialog>(null);
   const [editingPaymentMethod, setEditingPaymentMethod] = useState<{ index: number; method: PaymentMethod } | null>(null);
   const [deletingPaymentMethod, setDeletingPaymentMethod] = useState<{ index: number; method: PaymentMethod } | null>(null);
+  const [editingRecommendation, setEditingRecommendation] = useState<{ index: number; item: ResourceRecommendation } | null>(null);
+  const [deletingRecommendation, setDeletingRecommendation] = useState<{ index: number; item: ResourceRecommendation } | null>(null);
   const [testEmailRecipient, setTestEmailRecipient] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -523,6 +549,84 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     setEditingPaymentMethod(null);
   };
 
+  const updateRecommendation = (index: number, patch: Partial<ResourceRecommendation>) => {
+    setSettingsData(value => ({
+      ...value,
+      recommendations: {
+        ...value.recommendations,
+        items: value.recommendations.items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item),
+      },
+    }));
+  };
+
+  const openNewRecommendation = () => {
+    if (settingsData.recommendations.items.length >= 20) return showToast('已达到推荐数量上限', '服务器与住宅 IP 推荐合计最多 20 项', 'warning');
+    setEditingRecommendation({ index: -1, item: emptyRecommendation() });
+  };
+
+  const saveRecommendationDraft = () => {
+    if (!editingRecommendation) return;
+    const normalized = {
+      ...editingRecommendation.item,
+      id: editingRecommendation.item.id.trim().toLowerCase(),
+      name: editingRecommendation.item.name.trim(),
+      purchaseUrl: editingRecommendation.item.purchaseUrl.trim(),
+      buttonLabel: editingRecommendation.item.buttonLabel.trim() || '前往购买',
+    };
+    const duplicate = settingsData.recommendations.items.some((item, index) => item.id === normalized.id && index !== editingRecommendation.index);
+    if (duplicate) return showToast('推荐项标识重复', '请为每个推荐项填写不同的唯一标识', 'warning');
+    setSettingsData(value => ({
+      ...value,
+      recommendations: {
+        ...value.recommendations,
+        items: editingRecommendation.index < 0
+          ? [...value.recommendations.items, normalized]
+          : value.recommendations.items.map((item, index) => index === editingRecommendation.index ? normalized : item),
+      },
+    }));
+    setEditingRecommendation(null);
+  };
+
+  const removeRecommendation = (index: number) => {
+    setSettingsData(value => ({ ...value, recommendations: { ...value.recommendations, items: value.recommendations.items.filter((_item, itemIndex) => itemIndex !== index) } }));
+  };
+
+  const uploadRecommendationLogo = async (index: number, item: ResourceRecommendation, file?: File) => {
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return showToast('图片格式不支持', '请选择 PNG、JPEG 或 WebP 图片', 'warning');
+    if (file.size > 512 * 1024) return showToast('图片过大', '推荐 Logo 不能超过 512KB', 'warning');
+    if (!settingsData.recommendations.items.some(saved => saved.id === item.id)) return showToast('请先保存推荐项', '点击右上角“保存全部设置”后再上传 Logo', 'warning');
+    setBusy(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('图片读取失败'));
+        reader.onerror = () => reject(new Error('图片读取失败'));
+        reader.readAsDataURL(file);
+      });
+      await api(`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
+      updateRecommendation(index, { logoUploaded: true });
+      showToast('推荐 Logo 已上传', '前台会优先显示上传的图片', 'success');
+    } catch (error) {
+      showToast('Logo 上传失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteRecommendationLogo = async (index: number, item: ResourceRecommendation) => {
+    setBusy(true);
+    try {
+      await api(`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo`, { method: 'DELETE' });
+      updateRecommendation(index, { logoUploaded: false });
+      showToast('推荐 Logo 已删除', item.logoUrl ? '前台将改用填写的 Logo 图片地址' : '前台将显示默认图标', 'success');
+    } catch (error) {
+      showToast('Logo 删除失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openUserDetail = async (user: AdminUser) => {
     setDetailLoading(true);
     try {
@@ -673,6 +777,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               <div className="admin-settings-shell">
                 <aside className="admin-settings-nav" aria-label="设置分类">
                   <button type="button" className={settingsSection === 'general' ? 'active' : ''} onClick={() => setSettingsSection('general')}><Settings /><span><strong>业务设置</strong><small>注册、交付与订单规则</small></span><ChevronRight /></button>
+                  <button type="button" className={settingsSection === 'recommendations' ? 'active' : ''} onClick={() => setSettingsSection('recommendations')}><Building2 /><span><strong>资源推荐</strong><small>{settingsData.recommendations.items.length} / 20 项已配置</small></span><ChevronRight /></button>
                   <button type="button" className={settingsSection === 'email' ? 'active' : ''} onClick={() => setSettingsSection('email')}><Mail /><span><strong>邮箱服务</strong><small>验证码与系统邮件</small></span><ChevronRight /></button>
                   <button type="button" className={settingsSection === 'payments' ? 'active' : ''} onClick={() => setSettingsSection('payments')}><CreditCard /><span><strong>支付渠道</strong><small>{settingsData.paymentMethods.length} 个已配置方式</small></span><ChevronRight /></button>
                 </aside>
@@ -722,6 +827,35 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                           </div>
                           <div><strong>{settingsData.contact.qrCodeUploaded ? '已上传二维码' : '上传二维码图片'}</strong><p>上传图片优先于二维码地址，支持 PNG、JPEG、WebP，最大 1MB。</p><div className="admin-contact-upload-actions"><label className={`admin-button secondary ${busy ? 'disabled' : ''}`}><Upload /> 选择图片<input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(file); }} /></label>{settingsData.contact.qrCodeUploaded && <button type="button" className="admin-button danger" disabled={busy} onClick={() => void deleteContactQr()}><Trash2 /> 删除上传图片</button>}</div></div>
                         </div>
+                      </div>
+                    </section>
+                  </>}
+
+                  {settingsSection === 'recommendations' && <>
+                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Building2 /></span><div><h2>资源推荐</h2><p>在用户工作台提供服务器和住宅 IP 厂商入口，两类推荐合计最多配置 20 项。</p></div></div><div className="admin-settings-head-actions"><span className="admin-resource-count">{settingsData.recommendations.items.length} / 20</span><button type="button" className="admin-button secondary" disabled={settingsData.recommendations.items.length >= 20} onClick={openNewRecommendation}><PackagePlus /> 新增推荐</button></div></header>
+                    <section className="admin-settings-section">
+                      <div className="admin-settings-section-title"><h3>分类展示</h3><p>关闭分类后，该分类的全部推荐会从用户端隐藏，数据仍然保留。</p></div>
+                      <div className="admin-setting-list compact">
+                        <SettingSwitch label="显示服务器厂商推荐" description="用于购买云服务器、VPS 或独立服务器后搭建面板和节点。" checked={settingsData.recommendations.serverEnabled} onChange={serverEnabled => setSettingsData({ ...settingsData, recommendations: { ...settingsData.recommendations, serverEnabled } })} />
+                        <SettingSwitch label="显示住宅 IP 厂商推荐" description="用于住宅网络出口、地区覆盖和 SOCKS 链式转发。" checked={settingsData.recommendations.residentialIpEnabled} onChange={residentialIpEnabled => setSettingsData({ ...settingsData, recommendations: { ...settingsData.recommendations, residentialIpEnabled } })} />
+                      </div>
+                    </section>
+                    <section className="admin-settings-section flush">
+                      <div className="admin-resource-table-wrap">
+                        <table className="admin-payment-table admin-resource-table">
+                          <thead><tr><th>厂商</th><th>分类</th><th>地区 / 类型</th><th>参考价格</th><th>排序</th><th>状态</th><th>Logo</th><th>操作</th></tr></thead>
+                          <tbody>{settingsData.recommendations.items.map((item, index) => <tr key={`${item.id}-${index}`}>
+                            <td><div className="admin-payment-name"><span>{item.logoUploaded ? <img src={`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo`} alt="" /> : item.logoUrl ? <img src={item.logoUrl} alt="" /> : <Building2 />}</span><div><strong>{item.name || '未命名厂商'}</strong><small>{item.id}</small></div></div></td>
+                            <td>{item.category === 'server' ? '服务器' : '住宅 IP'}</td>
+                            <td><span className="admin-result-text">{item.regions || item.ipType || '-'}</span></td>
+                            <td>{item.referencePrice || '-'}</td>
+                            <td>{item.sortOrder}</td>
+                            <td><div className="admin-payment-state"><StatusBadge status={item.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-checked={item.enabled} className={`admin-switch ${item.enabled ? 'on' : ''}`} onClick={() => updateRecommendation(index, { enabled: !item.enabled })}><span /></button></div></td>
+                            <td><div className="admin-resource-logo-actions"><label className={`admin-icon-button small ${busy ? 'disabled' : ''}`} title="上传 Logo"><Upload /><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadRecommendationLogo(index, item, file); }} /></label>{item.logoUploaded && <button type="button" className="admin-icon-button small danger" title="删除上传 Logo" disabled={busy} onClick={() => void deleteRecommendationLogo(index, item)}><Trash2 /></button>}</div></td>
+                            <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑推荐" onClick={() => setEditingRecommendation({ index, item: { ...item } })}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除推荐" onClick={() => setDeletingRecommendation({ index, item })}><X /></button></div></td>
+                          </tr>)}</tbody>
+                        </table>
+                        {!settingsData.recommendations.items.length && <div className="admin-table-empty compact"><Building2 /><strong>暂无资源推荐</strong><span>添加服务器或住宅 IP 厂商后，用户端才会显示“资源推荐”入口。</span></div>}
                       </div>
                     </section>
                   </>}
@@ -854,6 +988,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         {editingPaymentMethod && <PaymentMethodEditor method={editingPaymentMethod.method} onChange={method => setEditingPaymentMethod({ ...editingPaymentMethod, method })} />}
       </AdminDialog>
       <AdminDialog open={Boolean(deletingPaymentMethod)} title="删除支付方式" description={`将从设置草稿中删除“${deletingPaymentMethod?.method.name || '未命名支付方式'}”，保存全部设置后正式生效。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingPaymentMethod(null)} onConfirm={() => { if (deletingPaymentMethod) removePaymentMethod(deletingPaymentMethod.index); setDeletingPaymentMethod(null); }} />
+      <AdminDialog open={Boolean(editingRecommendation)} title={editingRecommendation?.index === -1 ? '新增资源推荐' : '编辑资源推荐'} description="推荐项先保存在当前设置草稿中，点击页面右上角“保存全部设置”后正式生效。" confirmLabel="保存推荐项" busy={busy} confirmDisabled={!editingRecommendation?.item.name.trim() || !editingRecommendation?.item.id.trim() || !editingRecommendation?.item.purchaseUrl.trim()} onClose={() => setEditingRecommendation(null)} onConfirm={saveRecommendationDraft}>
+        {editingRecommendation && <ResourceRecommendationEditor item={editingRecommendation.item} onChange={item => setEditingRecommendation({ ...editingRecommendation, item })} />}
+      </AdminDialog>
+      <AdminDialog open={Boolean(deletingRecommendation)} title="删除资源推荐" description={`将从设置草稿中删除“${deletingRecommendation?.item.name || '未命名厂商'}”。已上传的 Logo 可继续保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingRecommendation(null)} onConfirm={() => { if (deletingRecommendation) removeRecommendation(deletingRecommendation.index); setDeletingRecommendation(null); }} />
       <AdminDialog open={Boolean(paymentOrder)} title="确认人工收款" description="确认后将按照下单时的套餐快照发放权益，此操作会直接改变用户可用次数。" confirmLabel="确认收款并发放权益" tone="success" busy={busy} confirmDisabled={!tradeNo.trim()} onClose={() => { setPaymentOrder(null); setTradeNo(''); }} onConfirm={() => void confirmPayment()}>
         {paymentOrder && <div className="admin-dialog-summary"><div><span>订单号</span><strong>{paymentOrder.orderNo}</strong></div><div><span>用户</span><strong>{paymentOrder.username || '-'}</strong></div><div><span>金额</span><strong>{formatMoney(paymentOrder.amountCents)}</strong></div></div>}
         <label className="admin-field"><span>支付交易号或收款凭证号</span><input value={tradeNo} onChange={event => setTradeNo(event.target.value)} maxLength={128} placeholder="请输入唯一的交易号，便于后续核对" /><small>该编号会写入订单和支付事件记录。</small></label>
@@ -996,6 +1134,30 @@ const QuotaDialog: React.FC<{ value: Entitlement | null; busy: boolean; onChange
   <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={value.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...value, dailyNodeLimit })} /></label>
   <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={value.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...value, concurrencyLimit })} /></label>
 </div>}</AdminDialog>;
+
+const ResourceRecommendationEditor: React.FC<{ item: ResourceRecommendation; onChange: (item: ResourceRecommendation) => void }> = ({ item, onChange }) => {
+  const patch = (value: Partial<ResourceRecommendation>) => onChange({ ...item, ...value });
+  return <div className="admin-form-grid">
+    <label className="admin-field"><span>推荐分类</span><select value={item.category} onChange={event => patch({ category: event.target.value as ResourceRecommendation['category'] })}><option value="server">服务器厂商</option><option value="residential_ip">住宅 IP 厂商</option></select></label>
+    <label className="admin-field"><span>唯一标识</span><input value={item.id} maxLength={40} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>用于 Logo 存储，保存后不建议修改。</small></label>
+    <label className="admin-field"><span>厂商名称</span><input value={item.name} maxLength={80} onChange={event => patch({ name: event.target.value })} /></label>
+    <label className="admin-field"><span>推荐标签</span><input value={item.badge} maxLength={30} onChange={event => patch({ badge: event.target.value })} placeholder="例如：新手推荐" /></label>
+    <label className="admin-field span-2"><span>简短介绍</span><textarea value={item.description} maxLength={500} onChange={event => patch({ description: event.target.value })} placeholder="简要说明厂商特点和适用场景" /><small>{item.description.length} / 500</small></label>
+    <label className="admin-field"><span>可用 / 覆盖地区</span><input value={item.regions} maxLength={200} onChange={event => patch({ regions: event.target.value })} placeholder="香港、美国、日本等" /></label>
+    <label className="admin-field"><span>参考价格</span><input value={item.referencePrice} maxLength={100} onChange={event => patch({ referencePrice: event.target.value })} placeholder="例如：约 5 美元/月起" /></label>
+    {item.category === 'server' ? <label className="admin-field span-2"><span>参考配置</span><input value={item.serverConfiguration} maxLength={300} onChange={event => patch({ serverConfiguration: event.target.value })} placeholder="例如：1 核 1G、20G SSD、1TB 流量" /></label> : <>
+      <label className="admin-field"><span>IP 类型</span><input value={item.ipType} maxLength={200} onChange={event => patch({ ipType: event.target.value })} placeholder="静态住宅 / 动态住宅" /></label>
+      <label className="admin-field"><span>支持协议</span><input value={item.protocols} maxLength={200} onChange={event => patch({ protocols: event.target.value })} placeholder="SOCKS5、HTTP(S)" /></label>
+      <label className="admin-field span-2"><span>计费方式</span><input value={item.billingMethod} maxLength={200} onChange={event => patch({ billingMethod: event.target.value })} placeholder="按流量、按 IP 或按月" /></label>
+    </>}
+    <label className="admin-field span-2"><span>购买链接</span><input type="url" value={item.purchaseUrl} maxLength={1000} onChange={event => patch({ purchaseUrl: event.target.value })} placeholder="https://example.com/buy" /></label>
+    <label className="admin-field"><span>按钮名称</span><input value={item.buttonLabel} maxLength={30} onChange={event => patch({ buttonLabel: event.target.value })} placeholder="前往购买" /></label>
+    <label className="admin-field"><span>显示排序</span><NumberInput min="-9999" max="9999" value={item.sortOrder} onValueChange={sortOrder => patch({ sortOrder })} /></label>
+    <label className="admin-field span-2"><span>Logo 图片地址</span><input type="url" value={item.logoUrl} maxLength={1000} onChange={event => patch({ logoUrl: event.target.value })} placeholder="https://example.com/logo.png" /><small>可选。保存推荐项后，也可以在列表中上传本地 Logo，上传图片优先。</small></label>
+    <label className="admin-checkbox"><input type="checkbox" checked={item.enabled} onChange={event => patch({ enabled: event.target.checked })} /><span><strong>启用此推荐项</strong><small>还需开启对应分类才会在用户端显示。</small></span></label>
+    <label className="admin-checkbox"><input type="checkbox" checked={item.openInNewTab} onChange={event => patch({ openInNewTab: event.target.checked })} /><span><strong>在新窗口打开购买链接</strong><small>建议外部厂商页面保持开启。</small></span></label>
+  </div>;
+};
 
 const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: PaymentMethod) => void }> = ({ method, onChange }) => {
   const provider = paymentProvider(method);

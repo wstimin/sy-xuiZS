@@ -7,6 +7,10 @@ const USER_COOKIE_NAME = "xui_user_session";
 const ADMIN_COOKIE_NAME = "xui_admin_session";
 const CONTACT_QR_MAX_BYTES = 1024 * 1024;
 const CONTACT_QR_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const RESOURCE_LOGO_MAX_BYTES = 512 * 1024;
+const RESOURCE_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const RESOURCE_RECOMMENDATION_LIMIT = 20;
+const RESOURCE_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
 
 type ContactSettingsInput = {
   enabled: boolean;
@@ -16,6 +20,33 @@ type ContactSettingsInput = {
   contactText: string;
   contactUrl: string;
   qrCodeUrl: string;
+};
+
+type ResourceRecommendationCategory = "server" | "residential_ip";
+type ResourceRecommendationItem = {
+  id: string;
+  category: ResourceRecommendationCategory;
+  enabled: boolean;
+  name: string;
+  description: string;
+  logoUrl: string;
+  regions: string;
+  referencePrice: string;
+  badge: string;
+  purchaseUrl: string;
+  buttonLabel: string;
+  openInNewTab: boolean;
+  sortOrder: number;
+  serverConfiguration: string;
+  ipType: string;
+  protocols: string;
+  billingMethod: string;
+};
+
+type ResourceRecommendationSettings = {
+  serverEnabled: boolean;
+  residentialIpEnabled: boolean;
+  items: ResourceRecommendationItem[];
 };
 
 function cookieValue(req: Request, name: string) {
@@ -120,6 +151,108 @@ function validContactQr(mimeType: string, data: Buffer) {
   const isJpeg = mimeType === "image/jpeg" && data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
   const isWebp = mimeType === "image/webp" && data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
   if (!isPng && !isJpeg && !isWebp) throw new Error("二维码图片内容与文件格式不匹配");
+}
+
+function resourceLogoSettingKey(id: string, suffix: "mime" | "data") {
+  if (!RESOURCE_ID_PATTERN.test(id)) throw new Error("推荐项标识格式不正确");
+  return `resource_logo_${id}_${suffix}`;
+}
+
+function validResourceLogo(mimeType: string, data: Buffer) {
+  if (!RESOURCE_LOGO_TYPES.has(mimeType)) throw new Error("推荐 Logo 仅支持 PNG、JPEG 或 WebP 图片");
+  if (!data.length || data.length > RESOURCE_LOGO_MAX_BYTES) throw new Error("推荐 Logo 大小必须在 512KB 以内");
+  const isPng = mimeType === "image/png" && data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isJpeg = mimeType === "image/jpeg" && data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  const isWebp = mimeType === "image/webp" && data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+  if (!isPng && !isJpeg && !isWebp) throw new Error("推荐 Logo 内容与文件格式不匹配");
+}
+
+function resourceRecommendationItem(value: unknown): ResourceRecommendationItem {
+  const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const id = limitedText(input.id, "推荐项标识", 40).toLowerCase();
+  if (!RESOURCE_ID_PATTERN.test(id)) throw new Error("推荐项标识只能包含小写字母、数字、下划线和短横线");
+  const category = input.category === "residential_ip" ? "residential_ip" : input.category === "server" ? "server" : null;
+  if (!category) throw new Error("推荐项分类不正确");
+  const name = limitedText(input.name, "厂商名称", 80);
+  if (!name) throw new Error("请填写推荐厂商名称");
+  const purchaseUrl = optionalHttpUrl(input.purchaseUrl, "购买链接");
+  if (!purchaseUrl) throw new Error(`${name} 必须填写购买链接`);
+  const sortOrder = intValue(input.sortOrder);
+  if (sortOrder < -9999 || sortOrder > 9999) throw new Error("推荐项排序必须在 -9999 到 9999 之间");
+  return {
+    id,
+    category,
+    enabled: input.enabled !== false,
+    name,
+    description: limitedText(input.description, "推荐简介", 500),
+    logoUrl: optionalHttpUrl(input.logoUrl, "Logo 图片地址"),
+    regions: limitedText(input.regions, "可用地区", 200),
+    referencePrice: limitedText(input.referencePrice, "参考价格", 100),
+    badge: limitedText(input.badge, "推荐标签", 30),
+    purchaseUrl,
+    buttonLabel: limitedText(input.buttonLabel, "按钮名称", 30, "前往购买") || "前往购买",
+    openInNewTab: input.openInNewTab !== false,
+    sortOrder,
+    serverConfiguration: limitedText(input.serverConfiguration, "服务器配置", 300),
+    ipType: limitedText(input.ipType, "IP 类型", 200),
+    protocols: limitedText(input.protocols, "支持协议", 200),
+    billingMethod: limitedText(input.billingMethod, "计费方式", 200),
+  };
+}
+
+function resourceRecommendationSettings(store: CommercialStore): ResourceRecommendationSettings {
+  const fallback: ResourceRecommendationSettings = { serverEnabled: true, residentialIpEnabled: true, items: [] };
+  try {
+    const parsed = JSON.parse(store.getSetting("resource_recommendations", JSON.stringify(fallback))) as Record<string, unknown>;
+    const items = Array.isArray(parsed.items) ? parsed.items.slice(0, RESOURCE_RECOMMENDATION_LIMIT).map(resourceRecommendationItem) : [];
+    return {
+      serverEnabled: parsed.serverEnabled !== false,
+      residentialIpEnabled: parsed.residentialIpEnabled !== false,
+      items,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function resourceRecommendationSettingsInput(value: unknown): ResourceRecommendationSettings {
+  const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  if (!Array.isArray(input.items)) throw new Error("推荐项数据格式不正确");
+  if (input.items.length > RESOURCE_RECOMMENDATION_LIMIT) throw new Error(`资源推荐最多只能配置 ${RESOURCE_RECOMMENDATION_LIMIT} 项`);
+  const items = input.items.map(resourceRecommendationItem);
+  if (new Set(items.map(item => item.id)).size !== items.length) throw new Error("推荐项标识不能重复");
+  return {
+    serverEnabled: input.serverEnabled !== false,
+    residentialIpEnabled: input.residentialIpEnabled !== false,
+    items,
+  };
+}
+
+function resourceRecommendationResponse(store: CommercialStore, includeDisabled = false) {
+  const settings = resourceRecommendationSettings(store);
+  const categoryEnabled = (category: ResourceRecommendationCategory) => category === "server" ? settings.serverEnabled : settings.residentialIpEnabled;
+  return {
+    serverEnabled: settings.serverEnabled,
+    residentialIpEnabled: settings.residentialIpEnabled,
+    items: settings.items
+      .filter(item => includeDisabled || (item.enabled && categoryEnabled(item.category)))
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, "zh-CN"))
+      .map(item => ({
+        ...item,
+        logoUploaded: Boolean(store.getSetting(resourceLogoSettingKey(item.id, "data"), "")),
+      })),
+  };
+}
+
+function sendResourceLogo(store: CommercialStore, id: string, res: Response) {
+  const data = store.getSetting(resourceLogoSettingKey(id, "data"), "");
+  const mimeType = store.getSetting(resourceLogoSettingKey(id, "mime"), "");
+  if (!data || !RESOURCE_LOGO_TYPES.has(mimeType)) return res.status(404).json({ success: false, error: "尚未上传推荐 Logo" });
+  const image = Buffer.from(data, "base64");
+  res.setHeader("Content-Type", mimeType);
+  res.setHeader("Content-Length", String(image.length));
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(image);
 }
 
 function planInput(body: Record<string, unknown>): PlanInput {
@@ -422,6 +555,10 @@ export function createCommercialRouter(store: CommercialStore) {
 
   router.get("/plans", (_req, res) => res.json({ plans: store.listPlans() }));
   router.get("/contact-settings", (_req, res) => res.json({ contact: contactSettings(store) }));
+  router.get("/resource-recommendations", requireCommercialUser, (_req, res) => res.json({ recommendations: resourceRecommendationResponse(store) }));
+  router.get("/resource-recommendations/:id/logo", requireCommercialUser, route((req, res) => {
+    sendResourceLogo(store, String(req.params.id || ""), res);
+  }));
   router.get("/contact-qr", (_req, res) => {
     const data = store.getSetting("contact_qr_data", "");
     const mimeType = store.getSetting("contact_qr_mime", "");
@@ -576,6 +713,7 @@ export function createCommercialRouter(store: CommercialStore) {
       adminPath: store.getAdminPath(),
       redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
       contact: contactSettings(store),
+      recommendations: resourceRecommendationResponse(store, true),
     },
   }));
 
@@ -699,6 +837,7 @@ export function createCommercialRouter(store: CommercialStore) {
   }));
   router.put("/admin/settings", requireAdmin, route((req, res) => {
     const nextContact = req.body?.contact === undefined ? null : contactSettingsInput(req.body.contact, contactSettings(store));
+    const nextRecommendations = req.body?.recommendations === undefined ? null : resourceRecommendationSettingsInput(req.body.recommendations);
     if (typeof req.body?.registrationEnabled === "boolean") store.setSetting("registration_enabled", String(req.body.registrationEnabled));
     if (typeof req.body?.panelDeployEnabled === "boolean") store.setSetting("panel_deploy_enabled", String(req.body.panelDeployEnabled));
     if (typeof req.body?.nodeDeployEnabled === "boolean") store.setSetting("node_deploy_enabled", String(req.body.nodeDeployEnabled));
@@ -722,6 +861,7 @@ export function createCommercialRouter(store: CommercialStore) {
       store.setSetting("contact_url", nextContact.contactUrl);
       store.setSetting("contact_qr_url", nextContact.qrCodeUrl);
     }
+    if (nextRecommendations) store.setSetting("resource_recommendations", JSON.stringify(nextRecommendations));
     let adminPath: string | undefined;
     if (req.body?.adminPath !== undefined) adminPath = store.setAdminPath(String(req.body.adminPath));
     store.recordAdminAction(adminUser(res).id, "更新系统设置", "settings", "commercial", JSON.stringify({
@@ -730,6 +870,7 @@ export function createCommercialRouter(store: CommercialStore) {
       nodeDeployEnabled: req.body?.nodeDeployEnabled,
       redeemCodePurchaseUrl: req.body?.redeemCodePurchaseUrl === undefined ? undefined : "[updated]",
       contact: nextContact ? { enabled: nextContact.enabled, qrCodeUrl: nextContact.qrCodeUrl ? "[configured]" : "" } : undefined,
+      recommendations: nextRecommendations ? { count: nextRecommendations.items.length } : undefined,
       adminPath,
     }));
     res.json({ success: true, adminPath: adminPath || store.getAdminPath() });
@@ -754,6 +895,34 @@ export function createCommercialRouter(store: CommercialStore) {
     store.setSetting("contact_qr_data", "");
     store.recordAdminAction(adminUser(res).id, "删除联系二维码", "settings", "contact_qr");
     res.json({ success: true, qrCodeUploaded: false });
+  }));
+
+  router.get("/admin/resource-recommendations/:id/logo", requireAdmin, route((req, res) => {
+    sendResourceLogo(store, String(req.params.id || ""), res);
+  }));
+
+  router.post("/admin/resource-recommendations/:id/logo", requireAdmin, route((req, res) => {
+    const id = String(req.params.id || "");
+    const configured = resourceRecommendationSettings(store).items.some(item => item.id === id);
+    if (!configured) throw new Error("请先保存该推荐项，再上传 Logo");
+    const dataUrl = String(req.body?.dataUrl || "");
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+    if (!match || match[2].length % 4 !== 0) throw new Error("推荐 Logo 图片数据格式不正确");
+    const data = Buffer.from(match[2], "base64");
+    if (data.toString("base64") !== match[2]) throw new Error("推荐 Logo 图片数据格式不正确");
+    validResourceLogo(match[1], data);
+    store.setSetting(resourceLogoSettingKey(id, "mime"), match[1]);
+    store.setSetting(resourceLogoSettingKey(id, "data"), data.toString("base64"));
+    store.recordAdminAction(adminUser(res).id, "上传资源推荐 Logo", "settings", id, `${match[1]} / ${data.length} bytes`);
+    res.json({ success: true, logoUploaded: true });
+  }));
+
+  router.delete("/admin/resource-recommendations/:id/logo", requireAdmin, route((req, res) => {
+    const id = String(req.params.id || "");
+    store.setSetting(resourceLogoSettingKey(id, "mime"), "");
+    store.setSetting(resourceLogoSettingKey(id, "data"), "");
+    store.recordAdminAction(adminUser(res).id, "删除资源推荐 Logo", "settings", id);
+    res.json({ success: true, logoUploaded: false });
   }));
 
   router.post("/admin/settings/test-email", requireAdmin, route(async (req, res) => {

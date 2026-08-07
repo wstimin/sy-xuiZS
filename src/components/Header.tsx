@@ -8,6 +8,7 @@ import {
   History,
   LogOut,
   Network,
+  Server,
   Terminal
 } from 'lucide-react';
 import { CurrentUser } from '../commercial';
@@ -21,6 +22,7 @@ interface HeaderProps {
   historyCount: number;
   user: CurrentUser;
   onLogout: () => void;
+  showResources: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,7 +33,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenHistory,
   historyCount,
   user,
-  onLogout
+  onLogout,
+  showResources
 }) => {
   const navClass = (view: ViewMode, extraClass = '') =>
     `app-header-nav-button${currentView === view ? ' is-active' : ''}${extraClass ? ` ${extraClass}` : ''}`;
@@ -57,6 +60,9 @@ export const Header: React.FC<HeaderProps> = ({
           <button type="button" className={navClass('home', 'app-header-home')} onClick={() => onSelectView('home')}>
             <Cpu /><span>首页</span>
           </button>
+          {showResources && <button type="button" className={navClass('resources', 'app-header-resources')} onClick={() => onSelectView('resources')}>
+            <Server /><span>资源推荐</span>
+          </button>}
           <button type="button" className={navClass('panel', 'app-header-panel')} onClick={() => onSelectView('panel')}>
             <Terminal /><span>搭建面板</span>
           </button>

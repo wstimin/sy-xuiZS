@@ -9,10 +9,11 @@ import { ProtocolMatrixGuideModal } from './components/ProtocolMatrixGuideModal'
 import { SetupGuideModal } from './components/SetupGuideModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { Toast } from './components/Toast';
-import { AccountData, api, CurrentUser, Plan } from './commercial';
+import { AccountData, api, CurrentUser, Plan, ResourceRecommendationSettings } from './commercial';
 import { PricingView } from './components/PricingView';
 import { AccountView } from './components/AccountView';
 import { ContactButton } from './components/ContactButton';
+import { ResourceRecommendationsView } from './components/ResourceRecommendationsView';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('home');
@@ -26,6 +27,7 @@ export default function App() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [account, setAccount] = useState<AccountData | null>(null);
   const [accountLoading, setAccountLoading] = useState(false);
+  const [recommendations, setRecommendations] = useState<ResourceRecommendationSettings>({ serverEnabled: true, residentialIpEnabled: true, items: [] });
 
   // Pre-filled panel login credentials for node deployment
   const [prefilledPanel, setPrefilledPanel] = useState<{
@@ -104,9 +106,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (user) void refreshAccount();
-    else setAccount(null);
+    if (user) {
+      void refreshAccount();
+      void api<{ recommendations: ResourceRecommendationSettings }>('/api/resource-recommendations')
+        .then(result => setRecommendations(result.recommendations))
+        .catch(() => setRecommendations({ serverEnabled: true, residentialIpEnabled: true, items: [] }));
+    } else {
+      setAccount(null);
+      setRecommendations({ serverEnabled: true, residentialIpEnabled: true, items: [] });
+    }
   }, [user?.id]);
+
+  const showResources = recommendations.items.some(item => item.enabled && (
+    (item.category === 'server' && recommendations.serverEnabled)
+    || (item.category === 'residential_ip' && recommendations.residentialIpEnabled)
+  ));
+
+  useEffect(() => {
+    if (currentView === 'resources' && !showResources) setCurrentView('home');
+  }, [currentView, showResources]);
 
   useEffect(() => {
     if (!user) return;
@@ -272,6 +290,7 @@ export default function App() {
         historyCount={historyItems.length}
         user={user}
         onLogout={() => void logout()}
+        showResources={showResources}
       />
 
       {/* Main Body View Switching */}
@@ -284,12 +303,15 @@ export default function App() {
           />
         )}
 
+        {currentView === 'resources' && <ResourceRecommendationsView recommendations={recommendations} />}
+
         {currentView === 'panel' && (
           <PanelDeployView
             onPanelCreated={handlePanelCreated}
             onGoToNodeWithPanel={handleGoToNodeWithPanel}
             showToast={showToast}
             entitlements={account?.entitlements}
+            onOpenResources={showResources ? () => setCurrentView('resources') : undefined}
           />
         )}
 
@@ -299,6 +321,7 @@ export default function App() {
             onNodeCreated={handleNodeCreated}
             showToast={showToast}
             entitlements={account?.entitlements}
+            onOpenResources={showResources ? () => setCurrentView('resources') : undefined}
           />
         )}
 
