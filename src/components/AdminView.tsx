@@ -138,17 +138,11 @@ const emptyRecommendation = (): ResourceRecommendation => ({
   description: '',
   logoUrl: '',
   logoUploaded: false,
-  regions: '',
-  referencePrice: '',
   badge: '',
   purchaseUrl: '',
-  buttonLabel: '前往购买',
+  buttonLabel: '了解详情',
   openInNewTab: true,
   sortOrder: 10,
-  serverConfiguration: '',
-  ipType: '',
-  protocols: '',
-  billingMethod: '',
 });
 const TOKENPAY_CURRENCIES = [
   { value: 'USDT_TRC20', label: 'USDT-TRC20' },
@@ -571,7 +565,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       id: editingRecommendation.item.id.trim().toLowerCase(),
       name: editingRecommendation.item.name.trim(),
       purchaseUrl: editingRecommendation.item.purchaseUrl.trim(),
-      buttonLabel: editingRecommendation.item.buttonLabel.trim() || '前往购买',
+      buttonLabel: editingRecommendation.item.buttonLabel.trim() || '了解详情',
     };
     const duplicate = settingsData.recommendations.items.some((item, index) => item.id === normalized.id && index !== editingRecommendation.index);
     if (duplicate) return showToast('推荐项标识重复', '请为每个推荐项填写不同的唯一标识', 'warning');
@@ -622,6 +616,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       showToast('推荐 Logo 已删除', item.logoUrl ? '前台将改用填写的 Logo 图片地址' : '前台将显示默认图标', 'success');
     } catch (error) {
       showToast('Logo 删除失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fetchRecommendationLogo = async (index: number, item: ResourceRecommendation) => {
+    if (!item.purchaseUrl.trim()) return showToast('请先填写跳转链接', '系统会从厂商网站查找站点图标', 'warning');
+    if (!settingsData.recommendations.items.some(saved => saved.id === item.id)) return showToast('请先保存推荐项', '点击右上角“保存全部设置”后再自动获取 Logo', 'warning');
+    setBusy(true);
+    try {
+      await api(`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo/fetch`, { method: 'POST', body: JSON.stringify({ websiteUrl: item.purchaseUrl }) });
+      updateRecommendation(index, { logoUploaded: true });
+      showToast('Logo 获取成功', '已从厂商网站获取并保存到本站', 'success');
+    } catch (error) {
+      showToast('自动获取失败', error instanceof Error ? error.message : '可改用手动上传或填写 Logo 地址', 'error');
     } finally {
       setBusy(false);
     }
@@ -832,26 +841,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                   </>}
 
                   {settingsSection === 'recommendations' && <>
-                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Building2 /></span><div><h2>资源推荐</h2><p>在用户工作台提供服务器和住宅 IP 厂商入口，两类推荐合计最多配置 20 项。</p></div></div><div className="admin-settings-head-actions"><span className="admin-resource-count">{settingsData.recommendations.items.length} / 20</span><button type="button" className="admin-button secondary" disabled={settingsData.recommendations.items.length >= 20} onClick={openNewRecommendation}><PackagePlus /> 新增推荐</button></div></header>
+                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><Building2 /></span><div><h2>资源推荐</h2><p>为用户提供简洁的服务器和住宅 IP 厂商入口，两类推荐合计最多配置 20 项。</p></div></div><div className="admin-settings-head-actions"><span className="admin-resource-count">{settingsData.recommendations.items.length} / 20</span><button type="button" className="admin-button secondary" disabled={settingsData.recommendations.items.length >= 20} onClick={openNewRecommendation}><PackagePlus /> 新增推荐</button></div></header>
                     <section className="admin-settings-section">
                       <div className="admin-settings-section-title"><h3>分类展示</h3><p>关闭分类后，该分类的全部推荐会从用户端隐藏，数据仍然保留。</p></div>
                       <div className="admin-setting-list compact">
-                        <SettingSwitch label="显示服务器厂商推荐" description="用于购买云服务器、VPS 或独立服务器后搭建面板和节点。" checked={settingsData.recommendations.serverEnabled} onChange={serverEnabled => setSettingsData({ ...settingsData, recommendations: { ...settingsData.recommendations, serverEnabled } })} />
+                        <SettingSwitch label="显示服务器厂商推荐" description="为需要搭建面板或节点的用户提供服务器厂商入口。" checked={settingsData.recommendations.serverEnabled} onChange={serverEnabled => setSettingsData({ ...settingsData, recommendations: { ...settingsData.recommendations, serverEnabled } })} />
                         <SettingSwitch label="显示住宅 IP 厂商推荐" description="用于住宅网络出口、地区覆盖和 SOCKS 链式转发。" checked={settingsData.recommendations.residentialIpEnabled} onChange={residentialIpEnabled => setSettingsData({ ...settingsData, recommendations: { ...settingsData.recommendations, residentialIpEnabled } })} />
                       </div>
                     </section>
                     <section className="admin-settings-section flush">
                       <div className="admin-resource-table-wrap">
                         <table className="admin-payment-table admin-resource-table">
-                          <thead><tr><th>厂商</th><th>分类</th><th>地区 / 类型</th><th>参考价格</th><th>排序</th><th>状态</th><th>Logo</th><th>操作</th></tr></thead>
+                          <thead><tr><th>厂商</th><th>分类</th><th>推荐简介</th><th>排序</th><th>状态</th><th>Logo</th><th>操作</th></tr></thead>
                           <tbody>{settingsData.recommendations.items.map((item, index) => <tr key={`${item.id}-${index}`}>
                             <td><div className="admin-payment-name"><span>{item.logoUploaded ? <img src={`/api/admin/resource-recommendations/${encodeURIComponent(item.id)}/logo`} alt="" /> : item.logoUrl ? <img src={item.logoUrl} alt="" /> : <Building2 />}</span><div><strong>{item.name || '未命名厂商'}</strong><small>{item.id}</small></div></div></td>
                             <td>{item.category === 'server' ? '服务器' : '住宅 IP'}</td>
-                            <td><span className="admin-result-text">{item.regions || item.ipType || '-'}</span></td>
-                            <td>{item.referencePrice || '-'}</td>
+                            <td><span className="admin-result-text">{item.description || '-'}</span></td>
                             <td>{item.sortOrder}</td>
                             <td><div className="admin-payment-state"><StatusBadge status={item.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-checked={item.enabled} className={`admin-switch ${item.enabled ? 'on' : ''}`} onClick={() => updateRecommendation(index, { enabled: !item.enabled })}><span /></button></div></td>
-                            <td><div className="admin-resource-logo-actions"><label className={`admin-icon-button small ${busy ? 'disabled' : ''}`} title="上传 Logo"><Upload /><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadRecommendationLogo(index, item, file); }} /></label>{item.logoUploaded && <button type="button" className="admin-icon-button small danger" title="删除上传 Logo" disabled={busy} onClick={() => void deleteRecommendationLogo(index, item)}><Trash2 /></button>}</div></td>
+                            <td><div className="admin-resource-logo-actions"><button type="button" className="admin-icon-button small" title="从跳转链接自动获取 Logo" disabled={busy} onClick={() => void fetchRecommendationLogo(index, item)}><RefreshCw /></button><label className={`admin-icon-button small ${busy ? 'disabled' : ''}`} title="上传 Logo"><Upload /><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadRecommendationLogo(index, item, file); }} /></label>{item.logoUploaded && <button type="button" className="admin-icon-button small danger" title="删除已保存 Logo" disabled={busy} onClick={() => void deleteRecommendationLogo(index, item)}><Trash2 /></button>}</div></td>
                             <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑推荐" onClick={() => setEditingRecommendation({ index, item: { ...item } })}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除推荐" onClick={() => setDeletingRecommendation({ index, item })}><X /></button></div></td>
                           </tr>)}</tbody>
                         </table>
@@ -1143,19 +1151,12 @@ const ResourceRecommendationEditor: React.FC<{ item: ResourceRecommendation; onC
     <label className="admin-field"><span>厂商名称</span><input value={item.name} maxLength={80} onChange={event => patch({ name: event.target.value })} /></label>
     <label className="admin-field"><span>推荐标签</span><input value={item.badge} maxLength={30} onChange={event => patch({ badge: event.target.value })} placeholder="例如：新手推荐" /></label>
     <label className="admin-field span-2"><span>简短介绍</span><textarea value={item.description} maxLength={500} onChange={event => patch({ description: event.target.value })} placeholder="简要说明厂商特点和适用场景" /><small>{item.description.length} / 500</small></label>
-    <label className="admin-field"><span>可用 / 覆盖地区</span><input value={item.regions} maxLength={200} onChange={event => patch({ regions: event.target.value })} placeholder="香港、美国、日本等" /></label>
-    <label className="admin-field"><span>参考价格</span><input value={item.referencePrice} maxLength={100} onChange={event => patch({ referencePrice: event.target.value })} placeholder="例如：约 5 美元/月起" /></label>
-    {item.category === 'server' ? <label className="admin-field span-2"><span>参考配置</span><input value={item.serverConfiguration} maxLength={300} onChange={event => patch({ serverConfiguration: event.target.value })} placeholder="例如：1 核 1G、20G SSD、1TB 流量" /></label> : <>
-      <label className="admin-field"><span>IP 类型</span><input value={item.ipType} maxLength={200} onChange={event => patch({ ipType: event.target.value })} placeholder="静态住宅 / 动态住宅" /></label>
-      <label className="admin-field"><span>支持协议</span><input value={item.protocols} maxLength={200} onChange={event => patch({ protocols: event.target.value })} placeholder="SOCKS5、HTTP(S)" /></label>
-      <label className="admin-field span-2"><span>计费方式</span><input value={item.billingMethod} maxLength={200} onChange={event => patch({ billingMethod: event.target.value })} placeholder="按流量、按 IP 或按月" /></label>
-    </>}
-    <label className="admin-field span-2"><span>购买链接</span><input type="url" value={item.purchaseUrl} maxLength={1000} onChange={event => patch({ purchaseUrl: event.target.value })} placeholder="https://example.com/buy" /></label>
-    <label className="admin-field"><span>按钮名称</span><input value={item.buttonLabel} maxLength={30} onChange={event => patch({ buttonLabel: event.target.value })} placeholder="前往购买" /></label>
+    <label className="admin-field span-2"><span>跳转链接</span><input type="url" value={item.purchaseUrl} maxLength={1000} onChange={event => patch({ purchaseUrl: event.target.value })} placeholder="https://example.com" /><small>保存后可在推荐列表中点击自动获取 Logo。</small></label>
+    <label className="admin-field"><span>按钮名称</span><input value={item.buttonLabel} maxLength={30} onChange={event => patch({ buttonLabel: event.target.value })} placeholder="了解详情" /></label>
     <label className="admin-field"><span>显示排序</span><NumberInput min="-9999" max="9999" value={item.sortOrder} onValueChange={sortOrder => patch({ sortOrder })} /></label>
-    <label className="admin-field span-2"><span>Logo 图片地址</span><input type="url" value={item.logoUrl} maxLength={1000} onChange={event => patch({ logoUrl: event.target.value })} placeholder="https://example.com/logo.png" /><small>可选。保存推荐项后，也可以在列表中上传本地 Logo，上传图片优先。</small></label>
+    <label className="admin-field span-2"><span>Logo 图片地址</span><input type="url" value={item.logoUrl} maxLength={1000} onChange={event => patch({ logoUrl: event.target.value })} placeholder="https://example.com/logo.png" /><small>可选。也可保存推荐项后自动获取或上传图片，本站保存的图片优先显示。</small></label>
     <label className="admin-checkbox"><input type="checkbox" checked={item.enabled} onChange={event => patch({ enabled: event.target.checked })} /><span><strong>启用此推荐项</strong><small>还需开启对应分类才会在用户端显示。</small></span></label>
-    <label className="admin-checkbox"><input type="checkbox" checked={item.openInNewTab} onChange={event => patch({ openInNewTab: event.target.checked })} /><span><strong>在新窗口打开购买链接</strong><small>建议外部厂商页面保持开启。</small></span></label>
+    <label className="admin-checkbox"><input type="checkbox" checked={item.openInNewTab} onChange={event => patch({ openInNewTab: event.target.checked })} /><span><strong>在新窗口打开跳转链接</strong><small>建议外部厂商页面保持开启。</small></span></label>
   </div>;
 };
 

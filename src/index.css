@@ -3604,7 +3604,7 @@ input {
 .admin-contact-upload-actions input { display: none; }
 .admin-resource-count { min-height: 34px; padding: 0 10px; display: inline-flex; align-items: center; border: 1px solid rgb(251 191 36 / 0.22); border-radius: 6px; color: #fde68a; background: rgb(245 158 11 / 0.07); font-size: 12px; font-weight: 750; }
 .admin-resource-table-wrap { overflow-x: auto; }
-.admin-resource-table { min-width: 1040px; }
+.admin-resource-table { min-width: 900px; }
 .admin-resource-table .admin-payment-name > span { overflow: hidden; background: #f8fafc; }
 .admin-resource-table .admin-payment-name > span img { width: 100%; height: 100%; object-fit: contain; }
 .admin-resource-logo-actions { display: flex; align-items: center; gap: 5px; }
@@ -5229,12 +5229,7 @@ input {
 .resource-card h3 { margin: 0; overflow: hidden; color: #f8fafc; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .resource-badge { width: fit-content; max-width: 100%; margin-top: 6px; padding: 3px 7px; display: inline-flex; align-items: center; gap: 4px; overflow: hidden; border-radius: 4px; color: #fde68a; background: rgb(245 158 11 / 0.11); font-size: 10px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .resource-badge svg { width: 11px; height: 11px; }
-.resource-description { min-height: 44px; margin: 15px 0 0; color: #a7afbb; font-size: 12px; line-height: 1.75; }
-.resource-details { margin: 15px 0 17px; display: grid; gap: 8px; }
-.resource-details > div { min-width: 0; padding-bottom: 8px; display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 9px; border-bottom: 1px solid rgb(255 255 255 / 0.065); }
-.resource-details dt { display: inline-flex; align-items: center; gap: 5px; color: #7f8997; font-size: 11px; }
-.resource-details dt svg { width: 12px; height: 12px; color: #34d399; }
-.resource-details dd { margin: 0; overflow-wrap: anywhere; color: #d1d5db; font-size: 11px; line-height: 1.55; }
+.resource-description { min-height: 44px; margin: 15px 0 18px; color: #a7afbb; font-size: 12px; line-height: 1.75; }
 .resource-purchase-button { min-height: 42px; margin-top: auto; padding: 0 14px; display: inline-flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid rgb(34 211 238 / 0.32); border-radius: 6px; color: #ecfeff; background: rgb(8 145 178 / 0.15); font-size: 13px; font-weight: 750; text-decoration: none; }
 .resource-section.emerald .resource-purchase-button { border-color: rgb(52 211 153 / 0.32); color: #ecfdf5; background: rgb(5 150 105 / 0.13); }
 .resource-purchase-button:hover { border-color: rgb(103 232 249 / 0.62); background: rgb(8 145 178 / 0.24); }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowUpRight, Building2, CheckCircle2, Globe2, Network, Server, Tag } from 'lucide-react';
+import { ArrowUpRight, Building2, Globe2, Network, Server, Tag } from 'lucide-react';
 import { ResourceRecommendation, ResourceRecommendationSettings } from '../commercial';
 
 interface ResourceRecommendationsViewProps {
@@ -15,7 +15,7 @@ export const ResourceRecommendationsView: React.FC<ResourceRecommendationsViewPr
       <div>
         <span className="resource-page-eyebrow"><Globe2 /> RESOURCE DIRECTORY</span>
         <h1>资源推荐</h1>
-        <p>按实际搭建需求选择服务器或住宅 IP 服务，点击按钮可直接前往厂商购买页面。</p>
+        <p>这里整理了适合面板搭建、节点部署和网络需求的第三方服务商，点击即可前往了解。</p>
       </div>
       <div className="resource-page-summary">
         <span><strong>{servers.length}</strong>服务器厂商</span>
@@ -27,7 +27,7 @@ export const ResourceRecommendationsView: React.FC<ResourceRecommendationsViewPr
       icon={Server}
       tone="cyan"
       title="服务器厂商推荐"
-      description="适合部署 xui 面板、节点服务及其他长期运行任务。"
+      description="适合需要服务器搭建面板或节点的用户。"
       items={servers}
     />}
 
@@ -35,7 +35,7 @@ export const ResourceRecommendationsView: React.FC<ResourceRecommendationsViewPr
       icon={Network}
       tone="emerald"
       title="住宅 IP 厂商推荐"
-      description="适合需要住宅网络出口、地区覆盖或 SOCKS 链式转发的场景。"
+      description="适合需要住宅网络出口或地区覆盖的用户。"
       items={residentialIps}
     />}
   </div>;
@@ -60,9 +60,6 @@ const ResourceSection: React.FC<{
 
 const ResourceCard: React.FC<{ item: ResourceRecommendation }> = ({ item }) => {
   const logo = item.logoUploaded ? `/api/resource-recommendations/${encodeURIComponent(item.id)}/logo` : item.logoUrl;
-  const details = item.category === 'server'
-    ? [item.regions && ['可用地区', item.regions], item.serverConfiguration && ['参考配置', item.serverConfiguration], item.referencePrice && ['参考价格', item.referencePrice]]
-    : [item.regions && ['覆盖地区', item.regions], item.ipType && ['IP 类型', item.ipType], item.protocols && ['支持协议', item.protocols], item.billingMethod && ['计费方式', item.billingMethod], item.referencePrice && ['参考价格', item.referencePrice]];
 
   return <article className="resource-card">
     <div className="resource-card-top">
@@ -70,14 +67,8 @@ const ResourceCard: React.FC<{ item: ResourceRecommendation }> = ({ item }) => {
       <div><h3>{item.name}</h3>{item.badge && <span className="resource-badge"><Tag />{item.badge}</span>}</div>
     </div>
     {item.description && <p className="resource-description">{item.description}</p>}
-    <dl className="resource-details">
-      {details.filter(Boolean).map(detail => {
-        const [label, value] = detail as [string, string];
-        return <div key={label}><dt><CheckCircle2 />{label}</dt><dd>{value}</dd></div>;
-      })}
-    </dl>
     <a className="resource-purchase-button" href={item.purchaseUrl} target={item.openInNewTab ? '_blank' : undefined} rel={item.openInNewTab ? 'noreferrer' : undefined}>
-      <span>{item.buttonLabel || '前往购买'}</span><ArrowUpRight />
+      <span>{item.buttonLabel || '了解详情'}</span><ArrowUpRight />
     </a>
   </article>;
 };

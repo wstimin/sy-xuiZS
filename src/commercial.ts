@@ -114,17 +114,11 @@ export interface ResourceRecommendation {
   description: string;
   logoUrl: string;
   logoUploaded: boolean;
-  regions: string;
-  referencePrice: string;
   badge: string;
   purchaseUrl: string;
   buttonLabel: string;
   openInNewTab: boolean;
   sortOrder: number;
-  serverConfiguration: string;
-  ipType: string;
-  protocols: string;
-  billingMethod: string;
 }
 
 export interface ResourceRecommendationSettings {

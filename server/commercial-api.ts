@@ -1,4 +1,6 @@
 import { NextFunction, Request, Response, Router } from "express";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { CommercialStore, DurationUnit, EntitlementGrantInput, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
 import { sendSmtpMail } from "./email-service.js";
 import { getPaymentDriver, PaymentChannelConfig, PaymentProvider } from "./payment-service.js";
@@ -8,7 +10,8 @@ const ADMIN_COOKIE_NAME = "xui_admin_session";
 const CONTACT_QR_MAX_BYTES = 1024 * 1024;
 const CONTACT_QR_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const RESOURCE_LOGO_MAX_BYTES = 512 * 1024;
-const RESOURCE_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const RESOURCE_PAGE_MAX_BYTES = 256 * 1024;
+const RESOURCE_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/x-icon"]);
 const RESOURCE_RECOMMENDATION_LIMIT = 20;
 const RESOURCE_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
 
@@ -30,17 +33,11 @@ type ResourceRecommendationItem = {
   name: string;
   description: string;
   logoUrl: string;
-  regions: string;
-  referencePrice: string;
   badge: string;
   purchaseUrl: string;
   buttonLabel: string;
   openInNewTab: boolean;
   sortOrder: number;
-  serverConfiguration: string;
-  ipType: string;
-  protocols: string;
-  billingMethod: string;
 };
 
 type ResourceRecommendationSettings = {
@@ -159,12 +156,133 @@ function resourceLogoSettingKey(id: string, suffix: "mime" | "data") {
 }
 
 function validResourceLogo(mimeType: string, data: Buffer) {
-  if (!RESOURCE_LOGO_TYPES.has(mimeType)) throw new Error("推荐 Logo 仅支持 PNG、JPEG 或 WebP 图片");
   if (!data.length || data.length > RESOURCE_LOGO_MAX_BYTES) throw new Error("推荐 Logo 大小必须在 512KB 以内");
   const isPng = mimeType === "image/png" && data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   const isJpeg = mimeType === "image/jpeg" && data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
   const isWebp = mimeType === "image/webp" && data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
-  if (!isPng && !isJpeg && !isWebp) throw new Error("推荐 Logo 内容与文件格式不匹配");
+  const isIcon = mimeType === "image/x-icon" && data.length >= 4 && data.subarray(0, 4).equals(Buffer.from([0, 0, 1, 0]));
+  if (!isPng && !isJpeg && !isWebp && !isIcon) throw new Error("推荐 Logo 内容与文件格式不匹配");
+}
+
+function detectedResourceLogoType(data: Buffer) {
+  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return "image/jpeg";
+  if (data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (data.length >= 4 && data.subarray(0, 4).equals(Buffer.from([0, 0, 1, 0]))) return "image/x-icon";
+  throw new Error("网站图标不是支持的 PNG、JPEG、WebP 或 ICO 图片");
+}
+
+function isPrivateIpv4(address: string) {
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b, c] = parts;
+  return a === 0 || a === 10 || a === 127 || a >= 224
+    || (a === 100 && b >= 64 && b <= 127)
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 0 && c === 0)
+    || (a === 192 && b === 0 && c === 2)
+    || (a === 192 && b === 168)
+    || (a === 198 && (b === 18 || b === 19))
+    || (a === 198 && b === 51 && c === 100)
+    || (a === 203 && b === 0 && c === 113);
+}
+
+function isPrivateAddress(address: string) {
+  const normalized = address.toLowerCase().split("%")[0];
+  if (isIP(normalized) === 4) return isPrivateIpv4(normalized);
+  if (isIP(normalized) !== 6) return true;
+  const mappedIpv4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalized);
+  if (mappedIpv4) return isPrivateIpv4(mappedIpv4[1]);
+  return normalized === "::" || normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd")
+    || /^fe[89ab]/.test(normalized) || normalized.startsWith("ff") || normalized.startsWith("2001:db8:");
+}
+
+async function assertPublicResourceUrl(value: string) {
+  const url = new URL(value);
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) throw new Error("只能从公开的 HTTP 或 HTTPS 网站获取 Logo");
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost")) throw new Error("不能从本机或内网地址获取 Logo");
+  const addresses = isIP(hostname) ? [{ address: hostname }] : await lookup(hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(entry => isPrivateAddress(entry.address))) throw new Error("不能从本机或内网地址获取 Logo");
+  return url;
+}
+
+async function readLimitedResponse(response: globalThis.Response, maxBytes: number) {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > maxBytes) {
+      await reader.cancel();
+      throw new Error(`远程内容不能超过 ${Math.round(maxBytes / 1024)}KB`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, length);
+}
+
+async function fetchPublicResource(urlValue: string, maxBytes: number, acceptedContent: "page" | "image") {
+  let current = await assertPublicResourceUrl(urlValue);
+  for (let redirects = 0; redirects <= 3; redirects += 1) {
+    const response = await fetch(current, {
+      headers: { "user-agent": "XUI-Resource-Logo/1.0", accept: acceptedContent === "page" ? "text/html,image/*;q=0.8,*/*;q=0.2" : "image/*,*/*;q=0.2" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location || redirects === 3) throw new Error("网站跳转次数过多，无法获取 Logo");
+      current = await assertPublicResourceUrl(new URL(location, current).toString());
+      continue;
+    }
+    if (!response.ok) throw new Error(`网站返回 HTTP ${response.status}`);
+    const declaredLength = Number(response.headers.get("content-length") || 0);
+    if (declaredLength > maxBytes) throw new Error(`远程内容不能超过 ${Math.round(maxBytes / 1024)}KB`);
+    return { response, data: await readLimitedResponse(response, maxBytes), finalUrl: current };
+  }
+  throw new Error("无法获取网站内容");
+}
+
+function htmlAttributes(tag: string) {
+  const values: Record<string, string> = {};
+  const pattern = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g;
+  for (const match of tag.matchAll(pattern)) values[match[1].toLowerCase()] = match[2] ?? match[3] ?? match[4] ?? "";
+  return values;
+}
+
+function resourceLogoCandidates(html: string, pageUrl: URL) {
+  const declared = Array.from(html.matchAll(/<link\b[^>]*>/gi))
+    .map(match => htmlAttributes(match[0]))
+    .filter(attributes => attributes.href && (attributes.rel || "").toLowerCase().split(/\s+/).some(rel => rel === "icon" || rel === "apple-touch-icon" || rel === "apple-touch-icon-precomposed"))
+    .map(attributes => new URL(attributes.href, pageUrl).toString());
+  return Array.from(new Set([...declared, new URL("/apple-touch-icon.png", pageUrl).toString(), new URL("/favicon-32x32.png", pageUrl).toString(), new URL("/favicon.png", pageUrl).toString(), new URL("/favicon.ico", pageUrl).toString()]));
+}
+
+async function fetchResourceLogo(websiteUrl: string) {
+  const page = await fetchPublicResource(websiteUrl, RESOURCE_PAGE_MAX_BYTES, "page");
+  const directType = page.response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  if (directType?.startsWith("image/")) {
+    const mimeType = detectedResourceLogoType(page.data);
+    validResourceLogo(mimeType, page.data);
+    return { data: page.data, mimeType, sourceUrl: page.finalUrl.toString() };
+  }
+  const html = page.data.toString("utf8");
+  for (const candidate of resourceLogoCandidates(html, page.finalUrl)) {
+    try {
+      const image = await fetchPublicResource(candidate, RESOURCE_LOGO_MAX_BYTES, "image");
+      const mimeType = detectedResourceLogoType(image.data);
+      validResourceLogo(mimeType, image.data);
+      return { data: image.data, mimeType, sourceUrl: image.finalUrl.toString() };
+    } catch {
+      // Try the next declared or conventional site icon.
+    }
+  }
+  throw new Error("没有在该网站找到可用的 Logo，请改用手动上传或填写 Logo 地址");
 }
 
 function resourceRecommendationItem(value: unknown): ResourceRecommendationItem {
@@ -175,8 +293,8 @@ function resourceRecommendationItem(value: unknown): ResourceRecommendationItem 
   if (!category) throw new Error("推荐项分类不正确");
   const name = limitedText(input.name, "厂商名称", 80);
   if (!name) throw new Error("请填写推荐厂商名称");
-  const purchaseUrl = optionalHttpUrl(input.purchaseUrl, "购买链接");
-  if (!purchaseUrl) throw new Error(`${name} 必须填写购买链接`);
+  const purchaseUrl = optionalHttpUrl(input.purchaseUrl, "跳转链接");
+  if (!purchaseUrl) throw new Error(`${name} 必须填写跳转链接`);
   const sortOrder = intValue(input.sortOrder);
   if (sortOrder < -9999 || sortOrder > 9999) throw new Error("推荐项排序必须在 -9999 到 9999 之间");
   return {
@@ -186,17 +304,11 @@ function resourceRecommendationItem(value: unknown): ResourceRecommendationItem 
     name,
     description: limitedText(input.description, "推荐简介", 500),
     logoUrl: optionalHttpUrl(input.logoUrl, "Logo 图片地址"),
-    regions: limitedText(input.regions, "可用地区", 200),
-    referencePrice: limitedText(input.referencePrice, "参考价格", 100),
     badge: limitedText(input.badge, "推荐标签", 30),
     purchaseUrl,
-    buttonLabel: limitedText(input.buttonLabel, "按钮名称", 30, "前往购买") || "前往购买",
+    buttonLabel: limitedText(input.buttonLabel, "按钮名称", 30, "了解详情") || "了解详情",
     openInNewTab: input.openInNewTab !== false,
     sortOrder,
-    serverConfiguration: limitedText(input.serverConfiguration, "服务器配置", 300),
-    ipType: limitedText(input.ipType, "IP 类型", 200),
-    protocols: limitedText(input.protocols, "支持协议", 200),
-    billingMethod: limitedText(input.billingMethod, "计费方式", 200),
   };
 }
 
@@ -915,6 +1027,19 @@ export function createCommercialRouter(store: CommercialStore) {
     store.setSetting(resourceLogoSettingKey(id, "data"), data.toString("base64"));
     store.recordAdminAction(adminUser(res).id, "上传资源推荐 Logo", "settings", id, `${match[1]} / ${data.length} bytes`);
     res.json({ success: true, logoUploaded: true });
+  }));
+
+  router.post("/admin/resource-recommendations/:id/logo/fetch", requireAdmin, route(async (req, res) => {
+    const id = String(req.params.id || "");
+    const item = resourceRecommendationSettings(store).items.find(entry => entry.id === id);
+    if (!item) throw new Error("请先保存该推荐项，再自动获取 Logo");
+    const websiteUrl = optionalHttpUrl(req.body?.websiteUrl || item.purchaseUrl, "跳转链接");
+    if (!websiteUrl) throw new Error("请先填写跳转链接");
+    const logo = await fetchResourceLogo(websiteUrl);
+    store.setSetting(resourceLogoSettingKey(id, "mime"), logo.mimeType);
+    store.setSetting(resourceLogoSettingKey(id, "data"), logo.data.toString("base64"));
+    store.recordAdminAction(adminUser(res).id, "自动获取资源推荐 Logo", "settings", id, `${logo.mimeType} / ${logo.data.length} bytes / ${logo.sourceUrl}`);
+    res.json({ success: true, logoUploaded: true, sourceUrl: logo.sourceUrl });
   }));
 
   router.delete("/admin/resource-recommendations/:id/logo", requireAdmin, route((req, res) => {

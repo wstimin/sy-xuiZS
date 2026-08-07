@@ -708,17 +708,11 @@ test("resource recommendations enforce limits, filtering and protected logo acce
     name: `Vendor ${id}`,
     description: "Recommended provider",
     logoUrl: "",
-    regions: "Hong Kong, United States",
-    referencePrice: "$5/month",
     badge: "Recommended",
     purchaseUrl: `https://example.test/${id}`,
-    buttonLabel: "Buy now",
+    buttonLabel: "Learn more",
     openInNewTab: true,
     sortOrder,
-    serverConfiguration: category === "server" ? "1 vCPU / 1 GB RAM" : "",
-    ipType: category === "residential_ip" ? "Static residential" : "",
-    protocols: category === "residential_ip" ? "SOCKS5, HTTPS" : "",
-    billingMethod: category === "residential_ip" ? "Monthly" : "",
   });
 
   try {
@@ -752,6 +746,7 @@ test("resource recommendations enforce limits, filtering and protected logo acce
     const publicSettings = (await publicResponse.json() as any).recommendations;
     assert.deepEqual(publicSettings.items.map((entry: any) => entry.id), ["residential-one", "server-one"]);
     assert.equal(publicSettings.items[0].logoUploaded, false);
+    assert.equal("referencePrice" in publicSettings.items[0], false);
 
     const adminSettings = await fetch(`${base}/admin/settings`, { headers: { cookie: adminCookie } }).then(response => response.json()) as any;
     assert.equal(adminSettings.settings.recommendations.items.length, 2);
@@ -793,6 +788,14 @@ test("resource recommendations enforce limits, filtering and protected logo acce
       body: JSON.stringify({ dataUrl: `data:image/png;base64,${png.toString("base64")}` }),
     });
     assert.equal(unauthorizedUpload.status, 401);
+
+    const blockedAutomaticFetch = await fetch(`${base}/admin/resource-recommendations/server-one/logo/fetch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ websiteUrl: "http://127.0.0.1/internal" }),
+    });
+    assert.equal(blockedAutomaticFetch.status, 400);
+    assert.match((await blockedAutomaticFetch.json() as any).error, /内网地址/);
 
     const uploaded = await fetch(`${base}/admin/resource-recommendations/server-one/logo`, {
       method: "POST",
