@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Clock3, CreditCard, ExternalLink, Network, ShoppingCart, Terminal } from 'lucide-react';
+import { Check, Clock3, CreditCard, ExternalLink, KeyRound, Network, ShoppingCart, Terminal } from 'lucide-react';
 import { api, formatMoney, Order, PaymentCheckout, PaymentMethod, Plan, quotaText } from '../commercial';
 import { PaymentCheckoutDialog } from './PaymentCheckoutDialog';
 
@@ -8,6 +8,8 @@ interface PricingViewProps {
   onOrderCreated: () => Promise<void> | void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
+
+type PurchaseMode = 'payment' | 'redeem';
 
 function duration(plan: Plan) {
   if (plan.durationUnit === 'lifetime') return '永久有效';
@@ -20,14 +22,29 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [paymentProvider, setPaymentProvider] = useState('');
+  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>('payment');
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemCodePurchaseUrl, setRedeemCodePurchaseUrl] = useState('');
   const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
 
   useEffect(() => {
-    api<{ paymentMethods: PaymentMethod[] }>('/api/payment-methods').then(result => {
+    api<{ paymentMethods: PaymentMethod[]; redeemCodePurchaseUrl: string }>('/api/payment-methods').then(result => {
       setPaymentMethods(result.paymentMethods);
       setPaymentProvider(value => value || result.paymentMethods[0]?.id || '');
-    }).catch(() => setPaymentMethods([]));
+      setRedeemCodePurchaseUrl(result.redeemCodePurchaseUrl || '');
+      if (!result.paymentMethods.length) setPurchaseMode('redeem');
+    }).catch(() => {
+      setPaymentMethods([]);
+      setPurchaseMode('redeem');
+    });
   }, []);
+
+  const openPurchase = (plan: Plan) => {
+    setPurchaseMode(paymentMethods.length ? 'payment' : 'redeem');
+    setRedeemCode('');
+    setSelectedPlan(plan);
+  };
 
   const order = async (plan: Plan) => {
     if (!paymentProvider) {
@@ -61,6 +78,25 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
     }
   };
 
+  const redeem = async (plan: Plan) => {
+    if (!redeemCode.trim()) return;
+    setRedeeming(true);
+    try {
+      const result = await api<{ order: Order; orderNo: string; planName: string }>('/api/redeem-codes/redeem', {
+        method: 'POST',
+        body: JSON.stringify({ code: redeemCode, planId: plan.id }),
+      });
+      setRedeemCode('');
+      setSelectedPlan(null);
+      await onOrderCreated();
+      showToast('卡密兑换成功', `${result.planName} 权益已发放，订单 ${result.orderNo} 已记录`, 'success');
+    } catch (error) {
+      showToast('卡密兑换失败', error instanceof Error ? error.message : '请检查卡密后重试', 'error');
+    } finally {
+      setRedeeming(false);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
       <div className="border-b border-white/10 pb-5">
@@ -82,26 +118,39 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
               <div className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-cyan-400" /><span>每日面板 {plan.dailyPanelLimit || '不限'} 次，节点 {plan.dailyNodeLimit || '不限'} 次</span></div>
               <div className="flex items-center gap-2"><Check className="w-4 h-4 text-cyan-400" />最多并发 {plan.concurrencyLimit} 个任务</div>
             </div>
-            <button onClick={() => setSelectedPlan(plan)} disabled={!paymentMethods.length} className="mt-5 h-10 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-sm font-semibold flex items-center justify-center gap-2">
-              <ShoppingCart className="w-4 h-4" />{paymentMethods.length ? '选择支付方式' : '暂无支付方式'}
+            <button onClick={() => openPurchase(plan)} className="mt-5 h-10 rounded-md bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold flex items-center justify-center gap-2">
+              <ShoppingCart className="w-4 h-4" />购买或兑换
             </button>
           </div>
         ))}
       </div>
       {!plans.length && <div className="py-16 text-center text-zinc-500 border border-dashed border-white/10 rounded-lg">暂无可购买套餐</div>}
-      {selectedPlan && <div className="payment-dialog-backdrop" role="presentation" onMouseDown={() => !ordering && setSelectedPlan(null)}>
+      {selectedPlan && <div className="payment-dialog-backdrop" role="presentation" onMouseDown={() => !ordering && !redeeming && setSelectedPlan(null)}>
         <section className="payment-dialog" role="dialog" aria-modal="true" aria-labelledby="payment-title" onMouseDown={event => event.stopPropagation()}>
-          <header><div><span>PAYMENT METHOD</span><h2 id="payment-title">选择支付方式</h2></div><button type="button" onClick={() => setSelectedPlan(null)} aria-label="关闭">×</button></header>
+          <header><div><span>ORDER CHECKOUT</span><h2 id="payment-title">购买套餐</h2></div><button type="button" disabled={Boolean(ordering) || redeeming} onClick={() => setSelectedPlan(null)} aria-label="关闭">×</button></header>
           <div className="payment-order-summary"><div><span>套餐</span><strong>{selectedPlan.name}</strong></div><div><span>应付金额</span><strong>{formatMoney(selectedPlan.priceCents)}</strong></div></div>
-          <div className="payment-method-list">
-            {paymentMethods.map(method => <label key={method.id} className={paymentProvider === method.id ? 'selected' : ''}>
-              <input type="radio" name="payment-provider" value={method.id} checked={paymentProvider === method.id} onChange={() => setPaymentProvider(method.id)} />
-              <span className="payment-method-icon"><CreditCard /></span>
-              <span><strong>{method.name}</strong><small>{method.instructions || '创建订单后按提示完成付款'}</small></span>
-              {method.paymentUrl && <a href={method.paymentUrl} target="_blank" rel="noreferrer" title="打开付款地址" onClick={event => event.stopPropagation()}><ExternalLink /></a>}
-            </label>)}
+          <div className="payment-mode-tabs" role="tablist" aria-label="购买方式">
+            <button type="button" role="tab" aria-selected={purchaseMode === 'payment'} className={purchaseMode === 'payment' ? 'active' : ''} onClick={() => setPurchaseMode('payment')}><CreditCard />在线支付</button>
+            <button type="button" role="tab" aria-selected={purchaseMode === 'redeem'} className={purchaseMode === 'redeem' ? 'active' : ''} onClick={() => setPurchaseMode('redeem')}><KeyRound />卡密兑换</button>
           </div>
-          <button className="payment-confirm" disabled={ordering === selectedPlan.id || !paymentProvider} onClick={() => void order(selectedPlan)}><ShoppingCart />{ordering === selectedPlan.id ? '正在创建订单...' : '确认创建订单'}</button>
+          {purchaseMode === 'payment' ? <>
+            <div className="payment-method-list">
+              {paymentMethods.map(method => <label key={method.id} className={paymentProvider === method.id ? 'selected' : ''}>
+                <input type="radio" name="payment-provider" value={method.id} checked={paymentProvider === method.id} onChange={() => setPaymentProvider(method.id)} />
+                <span className="payment-method-icon"><CreditCard /></span>
+                <span><strong>{method.name}</strong><small>{method.instructions || '创建订单后按提示完成付款'}</small></span>
+                {method.paymentUrl && <a href={method.paymentUrl} target="_blank" rel="noreferrer" title="打开付款地址" onClick={event => event.stopPropagation()}><ExternalLink /></a>}
+              </label>)}
+              {!paymentMethods.length && <div className="payment-method-empty">管理员尚未启用在线支付，可使用卡密兑换当前套餐。</div>}
+            </div>
+            <button className="payment-confirm" disabled={ordering === selectedPlan.id || !paymentProvider} onClick={() => void order(selectedPlan)}><ShoppingCart />{ordering === selectedPlan.id ? '正在创建订单...' : '确认创建订单'}</button>
+          </> : <div className="payment-redeem-panel">
+            <label htmlFor="redeem-code"><span>套餐卡密</span><div><KeyRound /><input id="redeem-code" value={redeemCode} onChange={event => setRedeemCode(event.target.value.toUpperCase())} maxLength={40} autoComplete="off" placeholder="XUI-XXXX-XXXX-XXXX-XXXX" /></div><small>卡密必须与当前选择的“{selectedPlan.name}”套餐一致，兑换成功后自动生成已支付订单。</small></label>
+            <div className="payment-redeem-actions">
+              {redeemCodePurchaseUrl && <a href={redeemCodePurchaseUrl} target="_blank" rel="noreferrer"><ExternalLink />购买卡密</a>}
+              <button type="button" disabled={redeeming || !redeemCode.trim()} onClick={() => void redeem(selectedPlan)}><KeyRound />{redeeming ? '正在兑换...' : '兑换并创建订单'}</button>
+            </div>
+          </div>}
         </section>
       </div>}
       {checkout && <PaymentCheckoutDialog order={checkout.order} payment={checkout.payment} onClose={() => setCheckout(null)} onPaid={() => {

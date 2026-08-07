@@ -368,7 +368,10 @@ export function createCommercialRouter(store: CommercialStore) {
   }));
 
   router.get("/plans", (_req, res) => res.json({ plans: store.listPlans() }));
-  router.get("/payment-methods", (_req, res) => res.json({ paymentMethods: store.getPaymentMethods() }));
+  router.get("/payment-methods", (_req, res) => res.json({
+    paymentMethods: store.getPaymentMethods(),
+    redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
+  }));
 
   router.get("/payment/paypal/:channelId/return", async (req, res) => {
     const channel = store.getPaymentMethods(true, true, true).find(item => item.id === req.params.channelId && item.provider === "paypal");
@@ -435,7 +438,11 @@ export function createCommercialRouter(store: CommercialStore) {
   });
 
   router.post("/redeem-codes/redeem", requireCommercialUser, route((req, res) => {
-    const result = store.redeemCode(commercialUser(res).id, String(req.body?.code || ""));
+    const result = store.redeemCode(
+      commercialUser(res).id,
+      String(req.body?.code || ""),
+      String(req.body?.planId || ""),
+    );
     res.json({ success: true, ...result });
   }));
 

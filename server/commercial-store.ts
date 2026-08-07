@@ -177,6 +177,7 @@ export interface RedeemCodeRecord {
   note: string;
   redeemedByUserId: string | null;
   redeemedByUsername: string | null;
+  orderId: string | null;
   entitlementId: string | null;
   redeemedAt: string | null;
   expiresAt: string | null;
@@ -381,6 +382,7 @@ export class CommercialStore {
         status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'redeemed', 'disabled')),
         note TEXT NOT NULL DEFAULT '',
         redeemed_by_user_id TEXT REFERENCES users(id),
+        order_id TEXT REFERENCES orders(id),
         entitlement_id TEXT REFERENCES entitlements(id),
         redeemed_at TEXT,
         expires_at TEXT,
@@ -535,6 +537,10 @@ export class CommercialStore {
       this.db.exec("ALTER TABLE payment_attempts ADD COLUMN provider_order_id TEXT");
     }
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_payment_attempts_provider_order ON payment_attempts(provider, provider_order_id)");
+    const redeemCodeColumns = this.db.prepare("PRAGMA table_info(redeem_codes)").all() as Array<{ name: string }>;
+    if (!redeemCodeColumns.some(column => column.name === "order_id")) {
+      this.db.exec("ALTER TABLE redeem_codes ADD COLUMN order_id TEXT REFERENCES orders(id)");
+    }
     this.migratePaymentChannelSchema();
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
 
@@ -1392,6 +1398,7 @@ export class CommercialStore {
       if (!order) throw new Error("订单不存在");
       if (order.status === "refunded") return order;
       if (order.status !== "paid") throw new Error("只有已付款订单可以退款");
+      if (order.paymentProvider === "redeem_code") throw new Error("卡密兑换订单不支持外部退款");
       const activeDeployment = this.db.prepare(`
         SELECT d.id FROM deployments d
         JOIN entitlements e ON e.id = d.entitlement_id
@@ -1557,7 +1564,7 @@ export class CommercialStore {
         json_extract(rc.plan_snapshot, '$.name') AS planName,
         CASE WHEN rc.status = 'active' AND rc.expires_at IS NOT NULL AND rc.expires_at <= ? THEN 'expired' ELSE rc.status END AS status,
         rc.note, rc.redeemed_by_user_id AS redeemedByUserId, u.username AS redeemedByUsername,
-        rc.entitlement_id AS entitlementId, rc.redeemed_at AS redeemedAt,
+        rc.order_id AS orderId, rc.entitlement_id AS entitlementId, rc.redeemed_at AS redeemedAt,
         rc.expires_at AS expiresAt, rc.created_at AS createdAt
       FROM redeem_codes rc
       LEFT JOIN users u ON u.id = rc.redeemed_by_user_id
@@ -1572,7 +1579,7 @@ export class CommercialStore {
     this.db.prepare("UPDATE redeem_codes SET status = ? WHERE id = ?").run(status, id);
   }
 
-  redeemCode(userId: string, value: string) {
+  redeemCode(userId: string, value: string, expectedPlanId = "") {
     const code = normalizeRedeemCode(value);
     if (!/^XUI-[A-Z2-9]{4}(?:-[A-Z2-9]{4}){3}$/.test(code)) throw new Error("卡密格式不正确");
     return this.db.transaction(() => {
@@ -1581,15 +1588,25 @@ export class CommercialStore {
       if (row.status === "redeemed") throw new Error("卡密已经兑换");
       if (row.status === "disabled") throw new Error("卡密已经停用");
       if (row.expires_at && row.expires_at <= nowIso()) throw new Error("卡密已经过期");
+      if (expectedPlanId && row.plan_id !== expectedPlanId) throw new Error("卡密不适用于当前选择的套餐");
       const timestamp = nowIso();
       const updated = this.db.prepare(`UPDATE redeem_codes SET status = 'redeemed', redeemed_by_user_id = ?, redeemed_at = ?
         WHERE id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?)`)
         .run(userId, timestamp, row.id, timestamp);
       if (!updated.changes) throw new Error("卡密已经失效");
       const plan = JSON.parse(row.plan_snapshot);
-      const entitlementId = this.grantPlanEntitlement(userId, plan, null, `卡密 ${row.code_masked} 兑换`);
-      this.db.prepare("UPDATE redeem_codes SET entitlement_id = ? WHERE id = ?").run(entitlementId, row.id);
-      return { entitlementId, planName: plan.name, codeMasked: row.code_masked };
+      const orderId = randomUUID();
+      const orderNo = `XUI${Date.now()}${randomBytes(4).toString("hex").toUpperCase()}`;
+      const tradeNo = `redeem-${row.id}`;
+      this.db.prepare(`INSERT INTO orders
+        (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, payment_provider, payment_channel, payment_trade_no, created_at, paid_at, updated_at)
+        VALUES (?, ?, ?, ?, 'paid', ?, ?, 'redeem_code', '', ?, ?, ?, ?)`)
+        .run(orderId, orderNo, userId, row.plan_id, Number(plan.priceCents) || 0, row.plan_snapshot, tradeNo, timestamp, timestamp, timestamp);
+      this.db.prepare("INSERT INTO payment_events (id, provider, event_key, order_id, payload, created_at) VALUES (?, 'redeem_code', ?, ?, ?, ?)")
+        .run(randomUUID(), `redeem_code:${row.id}`, orderId, JSON.stringify({ codeMasked: row.code_masked }), timestamp);
+      const entitlementId = this.grantPlanEntitlement(userId, plan, orderId, `订单 ${orderNo} / 卡密 ${row.code_masked} 兑换`);
+      this.db.prepare("UPDATE redeem_codes SET order_id = ?, entitlement_id = ? WHERE id = ?").run(orderId, entitlementId, row.id);
+      return { order: this.getOrder(orderId), orderId, orderNo, entitlementId, planId: row.plan_id, planName: plan.name, codeMasked: row.code_masked };
     })();
   }
 
@@ -1623,7 +1640,7 @@ export class CommercialStore {
 
   listEntitlements(userId: string) {
     return this.db.prepare(`
-      SELECT id, plan_name AS planName, starts_at AS startsAt, expires_at AS expiresAt, lifetime,
+      SELECT id, source_order_id AS sourceOrderId, plan_name AS planName, starts_at AS startsAt, expires_at AS expiresAt, lifetime,
         panel_mode AS panelMode, panel_total AS panelTotal, panel_remaining AS panelRemaining,
         panel_reserved AS panelReserved, panel_used AS panelUsed,
         node_mode AS nodeMode, node_total AS nodeTotal, node_remaining AS nodeRemaining,
@@ -1637,7 +1654,7 @@ export class CommercialStore {
 
   listAllEntitlements() {
     return this.db.prepare(`
-      SELECT e.id, e.user_id AS userId, u.username, e.plan_name AS planName,
+      SELECT e.id, e.user_id AS userId, u.username, e.source_order_id AS sourceOrderId, e.plan_name AS planName,
         e.starts_at AS startsAt, e.expires_at AS expiresAt, e.lifetime,
         e.panel_mode AS panelMode, e.panel_total AS panelTotal, e.panel_remaining AS panelRemaining,
         e.panel_reserved AS panelReserved, e.panel_used AS panelUsed,

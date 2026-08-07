@@ -1133,6 +1133,43 @@ input {
   font-size: 14px;
 }
 
+.payment-mode-tabs {
+  margin: 16px 22px 0;
+  padding: 4px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  border: 1px solid rgb(148 163 184 / 0.12);
+  border-radius: 7px;
+  background: #070b12;
+}
+
+.payment-mode-tabs button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #7f8da0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.payment-mode-tabs button.active {
+  border-color: rgb(34 211 238 / 0.3);
+  color: #ecfeff;
+  background: rgb(8 145 178 / 0.13);
+}
+
+.payment-mode-tabs svg {
+  width: 16px;
+  height: 16px;
+}
+
 .payment-method-list {
   display: grid;
   gap: 10px;
@@ -1260,6 +1297,123 @@ input {
   height: 30px;
   place-items: center;
   color: #67e8f9;
+}
+
+.payment-method-empty {
+  min-height: 72px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  border: 1px dashed rgb(148 163 184 / 0.17);
+  border-radius: 6px;
+  color: #7f8da0;
+  background: #090e16;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.payment-redeem-panel {
+  padding: 18px 22px 22px;
+  display: grid;
+  gap: 18px;
+}
+
+.payment-redeem-panel > label {
+  display: grid;
+  gap: 8px;
+}
+
+.payment-redeem-panel > label > span {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.payment-redeem-panel > label > div {
+  min-height: 48px;
+  padding: 0 13px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgb(52 211 153 / 0.3);
+  border-radius: 6px;
+  background: #070d12;
+}
+
+.payment-redeem-panel > label > div:focus-within {
+  border-color: rgb(52 211 153 / 0.65);
+  box-shadow: 0 0 0 3px rgb(16 185 129 / 0.08);
+}
+
+.payment-redeem-panel > label svg {
+  width: 17px;
+  height: 17px;
+  color: #6ee7b7;
+}
+
+.payment-redeem-panel input {
+  min-width: 0;
+  height: 46px;
+  border: 0;
+  outline: 0;
+  color: #f8fafc;
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.payment-redeem-panel small {
+  color: #657386;
+  font-size: 10px;
+  line-height: 1.65;
+}
+
+.payment-redeem-actions {
+  display: grid;
+  grid-template-columns: auto minmax(190px, 1fr);
+  gap: 9px;
+}
+
+.payment-redeem-actions a,
+.payment-redeem-actions button {
+  min-height: 46px;
+  padding: 0 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.payment-redeem-actions a {
+  border: 1px solid rgb(56 189 248 / 0.28);
+  color: #bae6fd;
+  background: rgb(14 165 233 / 0.08);
+}
+
+.payment-redeem-actions button {
+  border: 1px solid #059669;
+  color: #ecfdf5;
+  background: #047857;
+  cursor: pointer;
+}
+
+.payment-redeem-actions button:hover:not(:disabled) {
+  background: #059669;
+}
+
+.payment-redeem-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.payment-redeem-actions svg {
+  width: 16px;
+  height: 16px;
 }
 
 .payment-confirm {
@@ -4715,23 +4869,6 @@ input {
 .account-payment-notice strong { font-size: 13px; }
 .account-payment-notice p { margin: 5px 0 0; color: #d6c38f; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
 
-.account-redeem { margin-top: 16px; padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid rgb(52 211 153 / 0.22); border-radius: 8px; background: rgb(16 185 129 / 0.055); }
-.account-redeem-heading { min-width: 220px; display: flex; align-items: center; gap: 11px; }
-.account-redeem-heading > span { width: 36px; height: 36px; flex: 0 0 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; color: #6ee7b7; background: rgb(16 185 129 / 0.12); }
-.account-redeem-heading svg { width: 18px; height: 18px; }
-.account-redeem-heading strong { color: #f0fdf4; font-size: 14px; }
-.account-redeem-heading p { margin: 3px 0 0; color: #91a39b; font-size: 11px; }
-.account-redeem form { min-width: 0; flex: 1; display: grid; grid-template-columns: minmax(210px, 1fr) auto auto; gap: 8px; }
-.account-redeem input { min-width: 0; height: 42px; padding: 0 12px; border: 1px solid rgb(255 255 255 / 0.13); border-radius: 6px; color: #fff; background: #0d1118; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 0; }
-.account-redeem input:focus { outline: 0; border-color: rgb(52 211 153 / 0.58); box-shadow: 0 0 0 3px rgb(16 185 129 / 0.09); }
-.account-redeem button,
-.account-redeem a { min-height: 42px; padding: 0 13px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 6px; font-size: 12px; font-weight: 750; white-space: nowrap; }
-.account-redeem button { border: 1px solid #059669; color: #ecfdf5; background: #047857; }
-.account-redeem button:disabled { opacity: 0.5; cursor: not-allowed; }
-.account-redeem a { border: 1px solid rgb(56 189 248 / 0.28); color: #bae6fd; background: rgb(14 165 233 / 0.08); }
-.account-redeem button svg,
-.account-redeem a svg { width: 15px; height: 15px; }
-
 .account-tabs { margin: 18px 0 14px; padding: 5px; display: flex; gap: 4px; overflow-x: auto; border: 1px solid rgb(255 255 255 / 0.1); border-radius: 8px; background: #10131a; }
 .account-tabs button { min-height: 40px; padding: 0 14px; display: inline-flex; flex: 1 0 auto; align-items: center; justify-content: center; gap: 8px; border: 1px solid transparent; border-radius: 6px; color: #9ca3af; font-size: 13px; font-weight: 650; }
 .account-tabs button:hover { color: #e5e7eb; background: rgb(255 255 255 / 0.035); }
@@ -4853,9 +4990,6 @@ input {
   .account-refresh,
   .account-logout-button { flex: 1; justify-content: center; }
   .account-entitlement-grid { grid-template-columns: 1fr; padding: 12px; }
-  .account-redeem { align-items: stretch; flex-direction: column; }
-  .account-redeem form { grid-template-columns: minmax(0, 1fr) auto; }
-  .account-redeem a { grid-column: 1 / -1; }
   .account-password-row { grid-template-columns: 1fr; }
   .account-deployment-list article { grid-template-columns: 36px minmax(0, 1fr); }
   .account-deployment-list article > div:last-child { grid-column: 2; justify-items: start; }
@@ -4871,8 +5005,7 @@ input {
   .account-tabs button { padding: 0 11px; }
   .account-tabs button span { display: none; }
   .account-quota-grid { grid-template-columns: 1fr; }
-  .account-redeem form { grid-template-columns: 1fr; }
-  .account-redeem a { grid-column: auto; }
+  .payment-redeem-actions { grid-template-columns: 1fr; }
 }
 
 /* Management console: final operational UI layer. */

@@ -528,9 +528,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                 {filteredOrders.slice(pageStart, pageStart + PAGE_SIZE).map(order => <tr key={order.id}>
                   <td><strong className="admin-primary-text">{order.orderNo}</strong><small className="admin-cell-sub">{planSnapshotName(order)}</small></td>
                   <td>{order.username || '-'}</td><td className="admin-money">{formatMoney(order.amountCents)}</td><td><StatusBadge status={order.status} /></td>
-                  <td>{order.paymentTradeNo ? <><span>{order.paymentProvider || 'manual'}</span><small className="admin-cell-sub">{order.paymentTradeNo}</small></> : <span className="admin-muted">未支付</span>}</td>
+                  <td>{order.paymentTradeNo ? <><span>{paymentProviderName(order.paymentProvider || 'manual')}</span><small className="admin-cell-sub">{order.paymentTradeNo}</small></> : <span className="admin-muted">未支付</span>}</td>
                   <td>{formatDate(order.createdAt)}</td>
-                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" onClick={() => setViewOrder(order)}><Eye /></button>{order.status === 'pending' && <><button className="admin-link success" onClick={() => { setPaymentOrder(order); setTradeNo(''); }}>确认收款</button><button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button></>}{order.status === 'paid' && <button className="admin-link warning" onClick={() => { setRefundOrder(order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}</div></td>
+                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" onClick={() => setViewOrder(order)}><Eye /></button>{order.status === 'pending' && <><button className="admin-link success" onClick={() => { setPaymentOrder(order); setTradeNo(''); }}>确认收款</button><button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button></>}{order.status === 'paid' && order.paymentProvider !== 'redeem_code' && <button className="admin-link warning" onClick={() => { setRefundOrder(order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}</div></td>
                 </tr>)}
               </AdminTable>
               <Pagination total={filteredOrders.length} page={safePage} pageCount={pageCount} onPage={setPage} />
@@ -815,7 +815,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         {viewOrder && <div className="admin-detail-layout">
           <div className="admin-detail-summary"><DetailItem label="订单号" value={viewOrder.orderNo} mono /><DetailItem label="用户" value={viewOrder.username || '-'} /><DetailItem label="订单金额" value={formatMoney(viewOrder.amountCents)} accent /><DetailItem label="订单状态" value={<StatusBadge status={viewOrder.status} />} /></div>
           <DetailBlock title="支付与时间">
-            <div className="admin-detail-grid"><DetailItem label="支付渠道" value={viewOrder.paymentProvider || '未设置'} /><DetailItem label="交易号" value={viewOrder.paymentTradeNo || '未支付'} mono /><DetailItem label="创建时间" value={formatDate(viewOrder.createdAt)} /><DetailItem label="付款时间" value={viewOrder.paidAt ? formatDate(viewOrder.paidAt) : '未付款'} /></div>
+            <div className="admin-detail-grid"><DetailItem label="支付渠道" value={paymentProviderName(viewOrder.paymentProvider || 'manual')} /><DetailItem label="交易号" value={viewOrder.paymentTradeNo || '未支付'} mono /><DetailItem label="创建时间" value={formatDate(viewOrder.createdAt)} /><DetailItem label="付款时间" value={viewOrder.paidAt ? formatDate(viewOrder.paidAt) : '未付款'} /></div>
           </DetailBlock>
           <DetailBlock title="套餐快照"><PlanSnapshotDetails order={viewOrder} /></DetailBlock>
         </div>}
@@ -1098,7 +1098,7 @@ const EPAY_CHANNEL_OPTIONS = [
 ] as const;
 
 function paymentProviderName(provider: string) {
-  const labels: Record<string, string> = { manual: '人工收款', epay: '易支付聚合', mgate: 'MGate', tokenpay: 'USDT / TokenPay', epusdt: 'USDT / Epusdt', paypal: 'PayPal 官方', alipay_official: '支付宝官方', wechat_official: '微信支付官方' };
+  const labels: Record<string, string> = { manual: '人工收款', redeem_code: '卡密兑换', epay: '易支付聚合', mgate: 'MGate', tokenpay: 'USDT / TokenPay', epusdt: 'USDT / Epusdt', paypal: 'PayPal 官方', alipay_official: '支付宝官方', wechat_official: '微信支付官方' };
   return labels[provider] || provider;
 }
 

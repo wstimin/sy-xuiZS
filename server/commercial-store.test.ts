@@ -134,13 +134,46 @@ test("redeem codes store only hashes and grant their plan once", () => {
     assert.equal(store.listRedeemCodes()[0].codeMasked, created.codeMasked);
     assert.equal(JSON.stringify(store.listRedeemCodes()).includes(created.code), false);
 
-    const result = store.redeemCode(user.id, created.code.toLowerCase());
+    const result = store.redeemCode(user.id, created.code.toLowerCase(), plan.id);
     assert.equal(result.planName, "卡密月卡");
+    assert.equal(result.order?.status, "paid");
+    assert.equal(result.order?.paymentProvider, "redeem_code");
+    assert.equal(result.order?.planId, plan.id);
+    assert.equal(store.listOrders(user.id).length, 1);
     const [entitlement]: any[] = store.listEntitlements(user.id);
     assert.equal(entitlement.panelRemaining, 2);
     assert.equal(entitlement.nodeRemaining, 8);
+    assert.equal(entitlement.sourceOrderId, result.orderId);
     assert.equal(store.listRedeemCodes()[0].status, "redeemed");
+    assert.equal(store.listRedeemCodes()[0].orderId, result.orderId);
+    assert.throws(() => store.refundOrder(result.orderId, "测试退款", "REFUND-CODE"), /卡密兑换订单不支持/);
     assert.throws(() => store.redeemCode(user.id, created.code), /已经兑换/);
+  } finally {
+    store.close();
+  }
+});
+
+test("redeem codes must match the selected plan without being consumed on mismatch", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("plan-bound-redeem-user", "strong-password");
+    const [firstPlan, secondPlan] = store.listPlans();
+    const otherPlan = secondPlan || store.createPlan({
+      name: "其他套餐", priceCents: 4900, durationUnit: "months", durationValue: 1,
+      panelMode: "limited", panelLimit: 3, nodeMode: "limited", nodeLimit: 10,
+      dailyPanelLimit: 1, dailyNodeLimit: 5, concurrencyLimit: 1, enabled: true, sortOrder: 2,
+    });
+    const [created]: any[] = store.createRedeemCodes({ planId: firstPlan.id, quantity: 1 });
+
+    assert.throws(() => store.redeemCode(user.id, created.code, otherPlan.id), /不适用于当前选择的套餐/);
+    assert.equal(store.listRedeemCodes()[0].status, "active");
+    assert.equal(store.listOrders(user.id).length, 0);
+    assert.equal(store.listEntitlements(user.id).length, 0);
+
+    const result = store.redeemCode(user.id, created.code, firstPlan.id);
+    assert.equal(result.planId, firstPlan.id);
+    assert.equal(store.listOrders(user.id).length, 1);
+    assert.equal(store.listEntitlements(user.id).length, 1);
   } finally {
     store.close();
   }

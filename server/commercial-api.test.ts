@@ -365,17 +365,38 @@ test("redeem code APIs issue plan benefits once and expose a validated purchase 
     assert.equal("code" in listed.redeemCodes[0], false);
     assert.equal(JSON.stringify(listed).includes(created.code), false);
 
+    const wrongPlan = store.createPlan({
+      name: "API 其他套餐", priceCents: 9900, durationUnit: "months", durationValue: 1,
+      panelMode: "limited", panelLimit: 1, nodeMode: "limited", nodeLimit: 1,
+      dailyPanelLimit: 1, dailyNodeLimit: 1, concurrencyLimit: 1, enabled: true, sortOrder: 9,
+    });
+    const mismatched = await fetch(`${base}/redeem-codes/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: userCookie },
+      body: JSON.stringify({ code: created.code, planId: wrongPlan.id }),
+    });
+    assert.equal(mismatched.status, 400);
+    assert.equal(store.listRedeemCodes()[0].status, "active");
+    assert.equal(store.listOrders(user.id).length, 0);
+
     const redeemResponse = await fetch(`${base}/redeem-codes/redeem`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: userCookie },
-      body: JSON.stringify({ code: created.code.toLowerCase() }),
+      body: JSON.stringify({ code: created.code.toLowerCase(), planId: plan.id }),
     });
     assert.equal(redeemResponse.status, 200);
-    assert.equal((await redeemResponse.json() as any).planName, plan.name);
+    const redeemed = await redeemResponse.json() as any;
+    assert.equal(redeemed.planName, plan.name);
+    assert.equal(redeemed.order.status, "paid");
+    assert.equal(redeemed.order.paymentProvider, "redeem_code");
+    assert.equal(redeemed.orderNo, redeemed.order.orderNo);
 
     const accountAfterRedeem = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
     assert.equal(accountAfterRedeem.entitlements.length, 1);
     assert.equal(accountAfterRedeem.entitlements[0].planName, plan.name);
+    assert.equal(accountAfterRedeem.entitlements[0].sourceOrderId, redeemed.orderId);
+    assert.equal(accountAfterRedeem.orders.length, 1);
+    assert.equal(accountAfterRedeem.orders[0].paymentProvider, "redeem_code");
 
     const repeated = await fetch(`${base}/redeem-codes/redeem`, {
       method: "POST",
@@ -392,6 +413,8 @@ test("redeem code APIs issue plan benefits once and expose a validated purchase 
       body: JSON.stringify({ redeemCodePurchaseUrl: purchaseUrl }),
     });
     assert.equal(settingsResponse.status, 200);
+    const methodsWithLink = await fetch(`${base}/payment-methods`).then(response => response.json()) as any;
+    assert.equal(methodsWithLink.redeemCodePurchaseUrl, purchaseUrl);
     const accountWithLink = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
     assert.equal(accountWithLink.redeemCodePurchaseUrl, purchaseUrl);
 

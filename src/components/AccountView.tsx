@@ -4,7 +4,6 @@ import {
   BadgeCheck,
   CheckCircle2,
   Clock3,
-  ExternalLink,
   KeyRound,
   LogOut,
   Mail,
@@ -42,12 +41,15 @@ function planName(snapshot: string) {
   }
 }
 
+function orderPaymentName(order: Order, methodName?: string) {
+  if (order.paymentProvider === 'redeem_code') return '卡密兑换';
+  return methodName || order.paymentProvider || '-';
+}
+
 export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRefresh, onLoggedOut, onLogout, showToast }) => {
   const [tab, setTab] = useState<AccountTab>('overview');
   const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
   const [payingOrderId, setPayingOrderId] = useState('');
-  const [redeemCode, setRedeemCode] = useState('');
-  const [redeeming, setRedeeming] = useState(false);
   const activeEntitlements = useMemo(() => account?.entitlements.filter(item => item.status === 'active' && (!item.expiresAt || new Date(item.expiresAt).getTime() > Date.now())) || [], [account]);
   const panelQuota = activeEntitlements.some(item => item.panelMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.panelMode === 'limited' ? item.panelRemaining : 0), 0)} 次`;
   const nodeQuota = activeEntitlements.some(item => item.nodeMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.nodeMode === 'limited' ? item.nodeRemaining : 0), 0)} 次`;
@@ -83,22 +85,6 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
     }
   };
 
-  const redeem = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!redeemCode.trim()) return;
-    setRedeeming(true);
-    try {
-      const result = await api<{ planName: string }>('/api/redeem-codes/redeem', { method: 'POST', body: JSON.stringify({ code: redeemCode }) });
-      setRedeemCode('');
-      await onRefresh();
-      showToast('卡密兑换成功', `${result.planName} 权益已经发放到账户`, 'success');
-    } catch (error) {
-      showToast('卡密兑换失败', error instanceof Error ? error.message : '请检查卡密后重试', 'error');
-    } finally {
-      setRedeeming(false);
-    }
-  };
-
   return (
     <div className="account-shell">
       <section className="account-hero">
@@ -130,15 +116,6 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
         </div>
       )}
 
-      <section className="account-redeem">
-        <div className="account-redeem-heading"><span><KeyRound /></span><div><strong>兑换卡密</strong><p>输入卡密后立即发放对应套餐权益。</p></div></div>
-        <form onSubmit={redeem}>
-          <input value={redeemCode} onChange={event => setRedeemCode(event.target.value.toUpperCase())} maxLength={40} autoComplete="off" placeholder="XUI-XXXX-XXXX-XXXX-XXXX" aria-label="卡密" />
-          <button type="submit" disabled={redeeming || !redeemCode.trim()}><KeyRound /> {redeeming ? '兑换中' : '兑换'}</button>
-          {account?.redeemCodePurchaseUrl && <a href={account.redeemCodePurchaseUrl} target="_blank" rel="noreferrer"><ExternalLink /> 购买卡密</a>}
-        </form>
-      </section>
-
       <nav className="account-tabs" aria-label="账户内容">
         <button type="button" className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><BadgeCheck /> 权益概览</button>
         <button type="button" className={tab === 'orders' ? 'active' : ''} onClick={() => setTab('orders')}><ReceiptText /> 订单记录</button>
@@ -164,7 +141,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
         <header><div><span>订单中心</span><h2>订单记录</h2><p>查看套餐、金额、支付状态和付款方式。</p></div></header>
         <div className="account-table-wrap">
           <table className="account-table"><thead><tr><th>订单信息</th><th>金额</th><th>支付方式</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
-            <tbody>{account?.orders.map(order => { const method = paymentMethod(order.paymentProvider, order.paymentOptionId); return <tr key={order.id}><td><strong>{planName(order.planSnapshot)}</strong><small>{order.orderNo}</small></td><td className="account-money">{formatMoney(order.amountCents)}</td><td><span>{method?.name || order.paymentProvider || '-'}</span>{order.status === 'pending' && method?.instructions && <small>{method.instructions}</small>}</td><td><span className={`account-status ${order.status}`}>{orderLabels[order.status] || order.status}</span></td><td>{formatDate(order.createdAt)}</td><td>{order.status === 'pending' ? <div className="account-order-actions"><button type="button" className="account-continue-payment" disabled={payingOrderId === order.id} onClick={() => void continuePayment(order)}><PlayCircle /> {payingOrderId === order.id ? '处理中' : '继续支付'}</button><button type="button" className="account-cancel-order" onClick={() => void cancelOrder(order.id)}>取消</button></div> : <span className="account-muted">-</span>}</td></tr>; })}</tbody>
+            <tbody>{account?.orders.map(order => { const method = paymentMethod(order.paymentProvider, order.paymentOptionId); return <tr key={order.id}><td><strong>{planName(order.planSnapshot)}</strong><small>{order.orderNo}</small></td><td className="account-money">{formatMoney(order.amountCents)}</td><td><span>{orderPaymentName(order, method?.name)}</span>{order.status === 'pending' && method?.instructions && <small>{method.instructions}</small>}</td><td><span className={`account-status ${order.status}`}>{orderLabels[order.status] || order.status}</span></td><td>{formatDate(order.createdAt)}</td><td>{order.status === 'pending' ? <div className="account-order-actions"><button type="button" className="account-continue-payment" disabled={payingOrderId === order.id} onClick={() => void continuePayment(order)}><PlayCircle /> {payingOrderId === order.id ? '处理中' : '继续支付'}</button><button type="button" className="account-cancel-order" onClick={() => void cancelOrder(order.id)}>取消</button></div> : <span className="account-muted">-</span>}</td></tr>; })}</tbody>
           </table>
           {!account?.orders.length && <AccountEmpty icon={ReceiptText} title="暂无订单" description="购买套餐后，订单会显示在这里。" />}
         </div>

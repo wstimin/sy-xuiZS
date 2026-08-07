@@ -115,6 +115,7 @@ export interface Entitlement {
   id: string;
   userId?: string;
   username?: string;
+  sourceOrderId?: string;
   planName: string;
   startsAt: string;
   expiresAt: string | null;
@@ -193,6 +194,7 @@ export interface RedeemCode {
   note: string;
   redeemedByUserId?: string;
   redeemedByUsername?: string;
+  orderId?: string;
   entitlementId?: string;
   redeemedAt?: string;
   expiresAt?: string;
