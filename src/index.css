@@ -4789,9 +4789,9 @@ input {
 
 .app-header-inner {
   width: min(100% - 32px, 1480px);
-  min-height: 72px;
+  min-height: 80px;
   margin: 0 auto;
-  padding: 9px 0;
+  padding: 11px 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -4811,30 +4811,40 @@ input {
 }
 
 .app-header-brand-mark {
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgb(34 211 238 / 0.32);
+  border: 1px solid rgb(34 211 238 / 0.46);
   border-radius: 8px;
   color: #a5f3fc;
-  background: linear-gradient(145deg, rgb(37 99 235 / 0.2), rgb(16 185 129 / 0.1)), #111118;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+  background: linear-gradient(145deg, rgb(37 99 235 / 0.3), rgb(16 185 129 / 0.16)), #111118;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 8px 22px rgb(8 145 178 / 0.12);
 }
 
-.app-header-brand-mark svg { width: 20px; height: 20px; }
+.app-header-brand-mark svg { width: 22px; height: 22px; }
 .app-header-brand-copy { min-width: 0; display: grid; gap: 2px; }
-.app-header-brand-copy strong { overflow: hidden; font-size: 15px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
-.app-header-brand-copy small { color: #8f929e; font-size: 11px; line-height: 16px; }
+.app-header-brand-copy strong { overflow: hidden; font-size: 16px; line-height: 21px; text-overflow: ellipsis; white-space: nowrap; }
+.app-header-brand-copy strong > span { color: #f8fafc; }
+.app-header-brand-copy strong > em {
+  margin-left: 3px;
+  color: #c4b5fd;
+  background: linear-gradient(90deg, #a78bfa, #67e8f9 56%, #6ee7b7);
+  background-clip: text;
+  font-style: normal;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.app-header-brand-copy small { color: #a1a1aa; font-size: 12px; line-height: 17px; }
 
 .app-header-primary-nav,
 .app-header-tools,
 .app-header-session {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 5px;
   flex: 0 0 auto;
 }
 
@@ -4846,18 +4856,18 @@ input {
 
 .app-header-nav-button,
 .app-header-tool-button {
-  min-height: 38px;
-  padding: 0 9px;
+  min-height: 44px;
+  padding: 0 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   border: 1px solid transparent;
   border-radius: 7px;
-  color: #a1a1aa;
-  background: transparent;
-  font-size: 12px;
-  font-weight: 650;
+  color: #b4b4bd;
+  background: rgb(255 255 255 / 0.018);
+  font-size: 14px;
+  font-weight: 700;
   line-height: 1;
   white-space: nowrap;
   transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
@@ -4865,19 +4875,38 @@ input {
 
 .app-header-nav-button svg,
 .app-header-tool-button svg,
-.app-header-logout svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.app-header-logout svg { width: 17px; height: 17px; flex: 0 0 auto; }
 .app-header-nav-button:hover,
-.app-header-tool-button:hover { border-color: rgb(255 255 255 / 0.1); color: #f4f4f5; background: rgb(255 255 255 / 0.055); }
-.app-header-nav-button.is-active { border-color: rgb(99 102 241 / 0.45); color: #fff; background: rgb(79 70 229 / 0.76); box-shadow: 0 8px 20px rgb(79 70 229 / 0.16); }
-.app-header-nav-button.app-header-purchase { color: #fcd34d; }
-.app-header-nav-button.app-header-purchase:hover { border-color: rgb(251 191 36 / 0.32); background: rgb(245 158 11 / 0.09); }
-.app-header-nav-button.app-header-purchase.is-active { border-color: rgb(245 158 11 / 0.48); color: #fff7d6; background: rgb(180 83 9 / 0.75); }
-.app-header-tool-button svg { color: #67e8f9; }
-.app-header-tool-button:nth-child(3) svg { color: #6ee7b7; }
+.app-header-tool-button:hover { color: #f8fafc; }
+.app-header-nav-button.is-active { color: #fff; }
+.app-header-home svg { color: #c4b5fd; }
+.app-header-home:hover { border-color: rgb(139 92 246 / 0.34); background: rgb(124 58 237 / 0.11); }
+.app-header-home.is-active { border-color: rgb(139 92 246 / 0.58); background: linear-gradient(135deg, rgb(109 40 217 / 0.92), rgb(79 70 229 / 0.9)); box-shadow: 0 9px 24px rgb(109 40 217 / 0.24); }
+.app-header-home.is-active svg { color: #fff; }
+.app-header-panel svg { color: #67e8f9; }
+.app-header-panel:hover { border-color: rgb(34 211 238 / 0.32); background: rgb(8 145 178 / 0.1); }
+.app-header-panel.is-active { border-color: rgb(34 211 238 / 0.5); background: linear-gradient(135deg, rgb(8 145 178 / 0.84), rgb(37 99 235 / 0.82)); box-shadow: 0 9px 24px rgb(8 145 178 / 0.2); }
+.app-header-panel.is-active svg { color: #fff; }
+.app-header-node svg { color: #6ee7b7; }
+.app-header-node:hover { border-color: rgb(52 211 153 / 0.32); background: rgb(5 150 105 / 0.1); }
+.app-header-node.is-active { border-color: rgb(52 211 153 / 0.48); background: linear-gradient(135deg, rgb(5 150 105 / 0.86), rgb(8 145 178 / 0.78)); box-shadow: 0 9px 24px rgb(5 150 105 / 0.18); }
+.app-header-node.is-active svg { color: #fff; }
+.app-header-nav-button.app-header-purchase { color: #fcd34d; background: rgb(245 158 11 / 0.035); }
+.app-header-nav-button.app-header-purchase:hover { border-color: rgb(251 191 36 / 0.38); background: rgb(245 158 11 / 0.12); }
+.app-header-nav-button.app-header-purchase.is-active { border-color: rgb(251 191 36 / 0.52); color: #fff7d6; background: linear-gradient(135deg, rgb(180 83 9 / 0.9), rgb(217 119 6 / 0.82)); box-shadow: 0 9px 24px rgb(180 83 9 / 0.2); }
+.app-header-guide { color: #c4b5fd; }
+.app-header-guide svg { color: #a78bfa; }
+.app-header-guide:hover { border-color: rgb(167 139 250 / 0.3); background: rgb(124 58 237 / 0.09); }
+.app-header-protocol { color: #a5f3fc; }
+.app-header-protocol svg { color: #22d3ee; }
+.app-header-protocol:hover { border-color: rgb(34 211 238 / 0.3); background: rgb(8 145 178 / 0.09); }
+.app-header-history { color: #a7f3d0; }
+.app-header-history svg { color: #34d399; }
+.app-header-history:hover { border-color: rgb(52 211 153 / 0.3); background: rgb(5 150 105 / 0.09); }
 
 .app-header-history-count {
-  min-width: 17px;
-  height: 17px;
+  min-width: 19px;
+  height: 19px;
   padding: 0 4px;
   display: inline-flex;
   align-items: center;
@@ -4885,23 +4914,23 @@ input {
   border-radius: 8px;
   color: #fff;
   background: #4f46e5;
-  font-size: 9px;
-  line-height: 17px;
+  font-size: 10px;
+  line-height: 19px;
 }
 
 .app-header-session { min-width: 0; margin-left: auto; }
 .app-header-account {
   min-width: 0;
   max-width: 210px;
-  min-height: 40px;
-  padding: 4px 9px 4px 5px;
+  min-height: 46px;
+  padding: 5px 11px 5px 6px;
   display: flex;
   align-items: center;
   gap: 8px;
   border: 1px solid rgb(255 255 255 / 0.1);
   border-radius: 8px;
   color: #e4e4e7;
-  background: rgb(255 255 255 / 0.035);
+  background: linear-gradient(135deg, rgb(8 145 178 / 0.08), rgb(99 102 241 / 0.045));
   text-align: left;
 }
 
@@ -4909,9 +4938,9 @@ input {
 .app-header-account.is-active { border-color: rgb(34 211 238 / 0.34); color: #fff; background: rgb(8 145 178 / 0.1); }
 .app-header-account.is-active { box-shadow: inset 0 -2px 0 rgb(34 211 238 / 0.55); }
 .app-header-avatar {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4919,17 +4948,17 @@ input {
   border-radius: 6px;
   color: #a5f3fc;
   background: rgb(8 145 178 / 0.1);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
 }
 
-.app-header-account-label { min-width: 0; display: flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
+.app-header-account-label { min-width: 0; display: flex; align-items: center; gap: 5px; font-size: 13px; white-space: nowrap; }
 .app-header-account-label strong { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-header-account-label i { color: #52525b; font-style: normal; }
 .app-header-account-label > span { color: #a1a1aa; }
 .app-header-logout {
-  min-height: 40px;
-  padding: 0 11px;
+  min-height: 46px;
+  padding: 0 14px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4937,7 +4966,7 @@ input {
   border-radius: 8px;
   color: #fda4af;
   background: rgb(244 63 94 / 0.06);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 .app-header-logout:hover { border-color: rgb(251 113 133 / 0.42); color: #fff1f2; background: rgb(244 63 94 / 0.14); }
@@ -5177,13 +5206,13 @@ input {
   .account-quota-grid { grid-template-columns: 1fr; }
   .payment-redeem-actions { grid-template-columns: 1fr; }
   .app-header-brand-copy small { display: none; }
-  .app-header-brand-mark { width: 36px; height: 36px; flex-basis: 36px; }
+  .app-header-brand-mark { width: 38px; height: 38px; flex-basis: 38px; }
   .app-header-account { max-width: 158px; }
   .app-header-account-label strong { max-width: 55px; }
   .app-header-account-label i,
   .app-header-account-label > span { display: none; }
   .app-header-logout span { display: none; }
-  .app-header-logout { width: 40px; padding: 0; justify-content: center; }
+  .app-header-logout { width: 44px; padding: 0; justify-content: center; }
 }
 
 /* Management console: final operational UI layer. */

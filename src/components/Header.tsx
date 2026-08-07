@@ -48,19 +48,19 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <span className="app-header-brand-mark"><Terminal /></span>
           <span className="app-header-brand-copy">
-            <strong>xui面板一键搭建助手</strong>
+            <strong><span>xui面板</span><em>一键搭建助手</em></strong>
             <small>专注面板与节点搭建</small>
           </span>
         </button>
 
         <nav className="app-header-primary-nav" aria-label="主要功能">
-          <button type="button" className={navClass('home')} onClick={() => onSelectView('home')}>
+          <button type="button" className={navClass('home', 'app-header-home')} onClick={() => onSelectView('home')}>
             <Cpu /><span>首页</span>
           </button>
-          <button type="button" className={navClass('panel')} onClick={() => onSelectView('panel')}>
+          <button type="button" className={navClass('panel', 'app-header-panel')} onClick={() => onSelectView('panel')}>
             <Terminal /><span>搭建面板</span>
           </button>
-          <button type="button" className={navClass('node')} onClick={() => onSelectView('node')}>
+          <button type="button" className={navClass('node', 'app-header-node')} onClick={() => onSelectView('node')}>
             <Network /><span>搭建节点</span>
           </button>
           <button type="button" className={navClass('pricing', 'app-header-purchase')} onClick={() => onSelectView('pricing')}>
@@ -70,14 +70,14 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="app-header-tools" aria-label="辅助功能">
           {onOpenSetupGuide && (
-            <button type="button" className="app-header-tool-button" onClick={onOpenSetupGuide} title="查看 xui 面板与节点使用搭建指南">
+            <button type="button" className="app-header-tool-button app-header-guide" onClick={onOpenSetupGuide} title="查看 xui 面板与节点使用搭建指南">
               <BookOpen /><span>使用说明</span>
             </button>
           )}
-          <button type="button" className="app-header-tool-button" onClick={onOpenGuide} title="协议冲突与速查规则">
+          <button type="button" className="app-header-tool-button app-header-protocol" onClick={onOpenGuide} title="协议冲突与速查规则">
             <HelpCircle /><span>协议速查</span>
           </button>
-          <button type="button" className="app-header-tool-button" onClick={onOpenHistory} title="历史生成记录">
+          <button type="button" className="app-header-tool-button app-header-history" onClick={onOpenHistory} title="历史生成记录">
             <History /><span>历史配置</span>
             {historyCount > 0 && <b className="app-header-history-count">{historyCount}</b>}
           </button>
