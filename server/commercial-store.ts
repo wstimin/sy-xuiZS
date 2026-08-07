@@ -862,7 +862,6 @@ export class CommercialStore {
         sortOrder: Number.isFinite(Number(item?.sortOrder)) ? Math.trunc(Number(item.sortOrder)) : index * 10,
       };
     });
-    if (!methods.some(method => method.enabled)) throw new Error("至少需要启用一种支付方式");
     const save = this.db.transaction(() => {
       const existing = new Map((this.db.prepare("SELECT id, merchant_secret_encrypted, private_key_encrypted, api_v3_key_encrypted FROM payment_channels").all() as any[])
         .map(row => [row.id, row]));

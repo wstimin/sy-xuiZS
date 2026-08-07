@@ -1318,6 +1318,49 @@ input {
   gap: 18px;
 }
 
+.payment-redeem-purchase {
+  min-height: 64px;
+  padding: 12px 15px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  color: #fff7ed;
+  background: #c2410c;
+  box-shadow: 0 8px 24px rgb(194 65 12 / 0.22);
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.payment-redeem-purchase:hover {
+  border-color: #fbbf24;
+  background: #ea580c;
+  transform: translateY(-1px);
+}
+
+.payment-redeem-purchase > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.payment-redeem-purchase strong {
+  color: #fff;
+  font-size: 14px;
+}
+
+.payment-redeem-purchase small {
+  color: #ffedd5;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.payment-redeem-purchase svg {
+  width: 18px;
+  height: 18px;
+}
+
 .payment-redeem-panel > label {
   display: grid;
   gap: 8px;
@@ -1372,7 +1415,7 @@ input {
 
 .payment-redeem-actions {
   display: grid;
-  grid-template-columns: auto minmax(190px, 1fr);
+  grid-template-columns: minmax(190px, 1fr);
   gap: 9px;
 }
 

@@ -92,6 +92,23 @@ test("orders persist an enabled payment method and reject disabled methods", () 
   }
 });
 
+test("all online payment methods can be disabled while remaining editable by administrators", () => {
+  const store = createStore();
+  try {
+    store.setPaymentMethods([
+      { id: "alipay", name: "支付宝", type: "alipay", enabled: false, instructions: "", paymentUrl: "", sortOrder: 10 },
+      { id: "wechat", name: "微信支付", type: "wechat", enabled: false, instructions: "", paymentUrl: "", sortOrder: 20 },
+    ]);
+    assert.deepEqual(store.getPaymentMethods(), []);
+    assert.deepEqual(store.getPaymentMethods(true).map(method => ({ id: method.id, enabled: method.enabled })), [
+      { id: "alipay", enabled: false },
+      { id: "wechat", enabled: false },
+    ]);
+  } finally {
+    store.close();
+  }
+});
+
 test("paid order grants the exact plan snapshot", () => {
   const store = createStore();
   const user = store.createUser("buyer", "strong-password");

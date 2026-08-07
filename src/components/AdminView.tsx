@@ -54,6 +54,7 @@ import {
 } from '../commercial';
 import { copyToClipboard } from '../utils/clipboard';
 import { ChangePasswordForm } from './ChangePasswordForm';
+import { NumberInput } from './NumberInput';
 import { AdminDialog } from './admin/AdminDialog';
 
 type AdminTab = 'dashboard' | 'orders' | 'plans' | 'redeem-codes' | 'users' | 'entitlements' | 'ledger' | 'deployments' | 'audit' | 'settings' | 'security';
@@ -736,7 +737,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       <AdminDialog open={redeemCodeDialogOpen} title="生成卡密" description="每张卡密只能兑换一次，并按当前套餐内容创建权益。" confirmLabel="生成卡密" tone="success" busy={busy} confirmDisabled={!redeemCodeDraft.planId || redeemCodeDraft.quantity < 1 || redeemCodeDraft.quantity > 100} onClose={() => setRedeemCodeDialogOpen(false)} onConfirm={() => void createRedeemCodes()}>
         <div className="admin-form-grid">
           <label className="admin-field span-2"><span>绑定套餐</span><select value={redeemCodeDraft.planId} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, planId: event.target.value })}>{plans.filter(plan => plan.enabled).map(plan => <option key={plan.id} value={plan.id}>{plan.name} · {formatMoney(plan.priceCents)}</option>)}</select><small>仅能为当前已上架套餐生成卡密。</small></label>
-          <label className="admin-field"><span>生成数量</span><input type="number" min="1" max="100" value={redeemCodeDraft.quantity} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, quantity: Number(event.target.value) })} /></label>
+          <label className="admin-field"><span>生成数量</span><NumberInput min="1" max="100" value={redeemCodeDraft.quantity} onValueChange={quantity => setRedeemCodeDraft({ ...redeemCodeDraft, quantity })} /></label>
           <label className="admin-field"><span>有效期</span><input type="datetime-local" value={redeemCodeDraft.expiresAt} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, expiresAt: event.target.value })} /><small>留空表示长期有效。</small></label>
           <label className="admin-field span-2"><span>批次备注</span><input value={redeemCodeDraft.note} maxLength={300} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, note: event.target.value })} placeholder="例如：淘宝 8 月批次" /></label>
         </div>
@@ -747,14 +748,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       </AdminDialog>
       <AdminDialog open={settingsDialog === 'order'} title="编辑订单规则" description="设置待付款订单的保留时间和用户付款引导，确认后仍需保存全部设置才会生效。" confirmLabel="完成编辑" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid one">
-          <label className="admin-field"><span>订单有效期（分钟）</span><input type="number" min="5" max="1440" value={settingsData.orderExpiryMinutes} onChange={event => setSettingsData({ ...settingsData, orderExpiryMinutes: Number(event.target.value) })} /><small>超过有效期的未支付订单将不能继续付款。</small></label>
+          <label className="admin-field"><span>订单有效期（分钟）</span><NumberInput min="5" max="1440" value={settingsData.orderExpiryMinutes} onValueChange={orderExpiryMinutes => setSettingsData({ ...settingsData, orderExpiryMinutes })} /><small>超过有效期的未支付订单将不能继续付款。</small></label>
           <label className="admin-field"><span>支付与联系说明</span><textarea value={settingsData.paymentInstructions} maxLength={2000} onChange={event => setSettingsData({ ...settingsData, paymentInstructions: event.target.value })} placeholder="填写收款方式、联系渠道和订单备注要求" /><small>{settingsData.paymentInstructions.length} / 2000</small></label>
         </div>
       </AdminDialog>
       <AdminDialog open={settingsDialog === 'smtp'} title="配置 SMTP 连接" description="填写邮件服务商提供的服务器、账号和授权码，密码保存后不会回传明文。" confirmLabel="完成编辑" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid">
           <label className="admin-field"><span>SMTP 主机</span><input value={settingsData.email.smtpHost} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpHost: event.target.value } })} placeholder="smtp.example.com" /></label>
-          <label className="admin-field"><span>SMTP 端口</span><input type="number" min="1" max="65535" value={settingsData.email.smtpPort} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpPort: Number(event.target.value) } })} /></label>
+          <label className="admin-field"><span>SMTP 端口</span><NumberInput min="1" max="65535" value={settingsData.email.smtpPort} onValueChange={smtpPort => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpPort } })} /></label>
           <label className="admin-field"><span>连接加密</span><select value={settingsData.email.smtpEncryption} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpEncryption: event.target.value as EmailSettings['smtpEncryption'] } })}><option value="ssl">SSL / TLS</option><option value="starttls">STARTTLS</option><option value="none">不加密</option></select></label>
           <label className="admin-field"><span>SMTP 用户名</span><input value={settingsData.email.smtpUsername} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpUsername: event.target.value } })} /></label>
           <label className="admin-field span-2"><span>SMTP 密码或授权码</span><input type="password" value={settingsData.email.smtpPassword || ''} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpPassword: event.target.value } })} placeholder={settingsData.email.smtpPasswordConfigured ? '已配置，留空保持不变' : '填写密码或授权码'} /><small>保存后不会再向前端回传明文。</small></label>
@@ -771,8 +772,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       </AdminDialog>
       <AdminDialog open={settingsDialog === 'verification'} title="配置验证码规则" description="设置邮箱验证码的有效时间与重复发送间隔。" confirmLabel="完成编辑" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid">
-          <label className="admin-field"><span>验证码有效期（分钟）</span><input type="number" min="3" max="60" value={settingsData.email.verificationCodeTtlMinutes} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, verificationCodeTtlMinutes: Number(event.target.value) } })} /></label>
-          <label className="admin-field"><span>重发间隔（秒）</span><input type="number" min="30" max="600" value={settingsData.email.verificationResendSeconds} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, verificationResendSeconds: Number(event.target.value) } })} /></label>
+          <label className="admin-field"><span>验证码有效期（分钟）</span><NumberInput min="3" max="60" value={settingsData.email.verificationCodeTtlMinutes} onValueChange={verificationCodeTtlMinutes => setSettingsData({ ...settingsData, email: { ...settingsData.email, verificationCodeTtlMinutes } })} /></label>
+          <label className="admin-field"><span>重发间隔（秒）</span><NumberInput min="30" max="600" value={settingsData.email.verificationResendSeconds} onValueChange={verificationResendSeconds => setSettingsData({ ...settingsData, email: { ...settingsData.email, verificationResendSeconds } })} /></label>
         </div>
       </AdminDialog>
       <AdminDialog open={settingsDialog === 'test-email'} title="发送测试邮件" description="测试接口使用已经保存到后端的 SMTP 设置，请先保存全部设置。" confirmLabel="发送测试邮件" busy={busy} confirmDisabled={!testEmailRecipient.trim()} onClose={() => setSettingsDialog(null)} onConfirm={() => void testEmail()}>
@@ -887,18 +888,18 @@ const SettingSwitch: React.FC<{ label: string; description: string; checked: boo
 
 const PlanDialog: React.FC<{ plan: (Omit<Plan, 'id'> & { id?: string }) | null; busy: boolean; onChange: (plan: (Omit<Plan, 'id'> & { id?: string }) | null) => void; onClose: () => void; onSave: () => void }> = ({ plan, busy, onChange, onClose, onSave }) => <AdminDialog open={Boolean(plan)} title={plan?.id ? '编辑套餐' : '新增套餐'} description="套餐会在用户端用于创建订单，已创建订单继续使用下单时保存的套餐快照。" confirmLabel="保存套餐" busy={busy} confirmDisabled={!plan?.name.trim()} onClose={onClose} onConfirm={onSave}>{plan && <div className="admin-form-grid">
   <label className="admin-field"><span>套餐名称</span><input value={plan.name} onChange={event => onChange({ ...plan, name: event.target.value })} maxLength={80} /></label>
-  <label className="admin-field"><span>价格（元）</span><input type="number" min="0" step="0.01" value={plan.priceCents / 100} onChange={event => onChange({ ...plan, priceCents: Math.round(Number(event.target.value) * 100) })} /></label>
+  <label className="admin-field"><span>价格（元）</span><NumberInput min="0" step="0.01" value={plan.priceCents / 100} onValueChange={price => onChange({ ...plan, priceCents: Math.round(price * 100) })} /></label>
   <label className="admin-field span-2"><span>套餐说明</span><input value={plan.description} onChange={event => onChange({ ...plan, description: event.target.value })} maxLength={300} /></label>
   <label className="admin-field"><span>有效期单位</span><select value={plan.durationUnit} onChange={event => onChange({ ...plan, durationUnit: event.target.value as Plan['durationUnit'] })}><option value="days">天</option><option value="months">月</option><option value="years">年</option><option value="lifetime">永久</option></select></label>
-  <label className="admin-field"><span>有效期数值</span><input type="number" min="0" disabled={plan.durationUnit === 'lifetime'} value={plan.durationValue} onChange={event => onChange({ ...plan, durationValue: Number(event.target.value) })} /></label>
+  <label className="admin-field"><span>有效期数值</span><NumberInput min="0" disabled={plan.durationUnit === 'lifetime'} value={plan.durationValue} onValueChange={durationValue => onChange({ ...plan, durationValue })} /></label>
   <label className="admin-field"><span>面板权益</span><select value={plan.panelMode} onChange={event => onChange({ ...plan, panelMode: event.target.value as Plan['panelMode'] })}><option value="none">不包含</option><option value="limited">限制次数</option><option value="unlimited">不限次数</option></select></label>
-  <label className="admin-field"><span>面板总次数</span><input type="number" min="0" disabled={plan.panelMode !== 'limited'} value={plan.panelLimit} onChange={event => onChange({ ...plan, panelLimit: Number(event.target.value) })} /></label>
+  <label className="admin-field"><span>面板总次数</span><NumberInput min="0" disabled={plan.panelMode !== 'limited'} value={plan.panelLimit} onValueChange={panelLimit => onChange({ ...plan, panelLimit })} /></label>
   <label className="admin-field"><span>节点权益</span><select value={plan.nodeMode} onChange={event => onChange({ ...plan, nodeMode: event.target.value as Plan['nodeMode'] })}><option value="none">不包含</option><option value="limited">限制次数</option><option value="unlimited">不限次数</option></select></label>
-  <label className="admin-field"><span>节点总次数</span><input type="number" min="0" disabled={plan.nodeMode !== 'limited'} value={plan.nodeLimit} onChange={event => onChange({ ...plan, nodeLimit: Number(event.target.value) })} /></label>
-  <label className="admin-field"><span>每日面板上限</span><input type="number" min="0" value={plan.dailyPanelLimit} onChange={event => onChange({ ...plan, dailyPanelLimit: Number(event.target.value) })} /><small>0 表示不限制</small></label>
-  <label className="admin-field"><span>每日节点上限</span><input type="number" min="0" value={plan.dailyNodeLimit} onChange={event => onChange({ ...plan, dailyNodeLimit: Number(event.target.value) })} /><small>0 表示不限制</small></label>
-  <label className="admin-field"><span>并发任务上限</span><input type="number" min="1" value={plan.concurrencyLimit} onChange={event => onChange({ ...plan, concurrencyLimit: Number(event.target.value) })} /></label>
-  <label className="admin-field"><span>显示排序</span><input type="number" value={plan.sortOrder} onChange={event => onChange({ ...plan, sortOrder: Number(event.target.value) })} /></label>
+  <label className="admin-field"><span>节点总次数</span><NumberInput min="0" disabled={plan.nodeMode !== 'limited'} value={plan.nodeLimit} onValueChange={nodeLimit => onChange({ ...plan, nodeLimit })} /></label>
+  <label className="admin-field"><span>每日面板上限</span><NumberInput min="0" value={plan.dailyPanelLimit} onValueChange={dailyPanelLimit => onChange({ ...plan, dailyPanelLimit })} /><small>0 表示不限制</small></label>
+  <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={plan.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...plan, dailyNodeLimit })} /><small>0 表示不限制</small></label>
+  <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={plan.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...plan, concurrencyLimit })} /></label>
+  <label className="admin-field"><span>显示排序</span><NumberInput value={plan.sortOrder} onValueChange={sortOrder => onChange({ ...plan, sortOrder })} /></label>
   <label className="admin-checkbox span-2"><input type="checkbox" checked={plan.enabled} onChange={event => onChange({ ...plan, enabled: event.target.checked })} /><span><strong>在用户端上架此套餐</strong><small>下架后不能新建订单，已有订单和权益不受影响。</small></span></label>
 </div>}</AdminDialog>;
 
@@ -906,23 +907,23 @@ const GrantDialog: React.FC<{ open: boolean; busy: boolean; users: AdminUser[]; 
   <label className="admin-field"><span>用户</span><select value={value.userId} onChange={event => onChange({ ...value, userId: event.target.value })}>{users.map(user => <option key={user.id} value={user.id}>{user.username}</option>)}</select></label>
   <label className="admin-field"><span>权益名称</span><input value={value.name} onChange={event => onChange({ ...value, name: event.target.value })} maxLength={80} /></label>
   <label className="admin-field"><span>有效期单位</span><select value={value.durationUnit} onChange={event => onChange({ ...value, durationUnit: event.target.value })}><option value="days">天</option><option value="months">月</option><option value="years">年</option><option value="lifetime">永久</option></select></label>
-  <label className="admin-field"><span>有效期数值</span><input type="number" min="0" disabled={value.durationUnit === 'lifetime'} value={value.durationValue} onChange={event => onChange({ ...value, durationValue: Number(event.target.value) })} /></label>
+  <label className="admin-field"><span>有效期数值</span><NumberInput min="0" disabled={value.durationUnit === 'lifetime'} value={value.durationValue} onValueChange={durationValue => onChange({ ...value, durationValue })} /></label>
   <label className="admin-field"><span>面板权益</span><select value={value.panelMode} onChange={event => onChange({ ...value, panelMode: event.target.value })}><option value="none">不包含</option><option value="limited">限制次数</option><option value="unlimited">不限次数</option></select></label>
-  <label className="admin-field"><span>面板次数</span><input type="number" min="0" disabled={value.panelMode !== 'limited'} value={value.panelLimit} onChange={event => onChange({ ...value, panelLimit: Number(event.target.value) })} /></label>
+  <label className="admin-field"><span>面板次数</span><NumberInput min="0" disabled={value.panelMode !== 'limited'} value={value.panelLimit} onValueChange={panelLimit => onChange({ ...value, panelLimit })} /></label>
   <label className="admin-field"><span>节点权益</span><select value={value.nodeMode} onChange={event => onChange({ ...value, nodeMode: event.target.value })}><option value="none">不包含</option><option value="limited">限制次数</option><option value="unlimited">不限次数</option></select></label>
-  <label className="admin-field"><span>节点次数</span><input type="number" min="0" disabled={value.nodeMode !== 'limited'} value={value.nodeLimit} onChange={event => onChange({ ...value, nodeLimit: Number(event.target.value) })} /></label>
-  <label className="admin-field"><span>每日面板上限</span><input type="number" min="0" value={value.dailyPanelLimit} onChange={event => onChange({ ...value, dailyPanelLimit: Number(event.target.value) })} /></label>
-  <label className="admin-field"><span>每日节点上限</span><input type="number" min="0" value={value.dailyNodeLimit} onChange={event => onChange({ ...value, dailyNodeLimit: Number(event.target.value) })} /></label>
-  <label className="admin-field"><span>并发任务上限</span><input type="number" min="1" value={value.concurrencyLimit} onChange={event => onChange({ ...value, concurrencyLimit: Number(event.target.value) })} /></label>
+  <label className="admin-field"><span>节点次数</span><NumberInput min="0" disabled={value.nodeMode !== 'limited'} value={value.nodeLimit} onValueChange={nodeLimit => onChange({ ...value, nodeLimit })} /></label>
+  <label className="admin-field"><span>每日面板上限</span><NumberInput min="0" value={value.dailyPanelLimit} onValueChange={dailyPanelLimit => onChange({ ...value, dailyPanelLimit })} /></label>
+  <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={value.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...value, dailyNodeLimit })} /></label>
+  <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={value.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...value, concurrencyLimit })} /></label>
 </div></AdminDialog>;
 
 const QuotaDialog: React.FC<{ value: Entitlement | null; busy: boolean; onChange: (value: Entitlement | null) => void; onClose: () => void; onSave: () => void }> = ({ value, busy, onChange, onClose, onSave }) => <AdminDialog open={Boolean(value)} title="调整权益额度" description="修改剩余额度时，系统会保留已使用和已冻结数量，并重新计算总额度。" confirmLabel="保存额度调整" busy={busy} onClose={onClose} onConfirm={onSave}>{value && <div className="admin-form-grid">
   <div className="admin-form-context span-2"><strong>{value.username}</strong><span>{value.planName}</span></div>
-  <label className="admin-field"><span>面板剩余次数</span><input type="number" min="0" disabled={value.panelMode !== 'limited'} value={value.panelRemaining} onChange={event => onChange({ ...value, panelRemaining: Number(event.target.value) })} /><small>{value.panelMode === 'limited' ? `已用 ${value.panelUsed}，冻结 ${value.panelReserved}` : '该权益不是限次模式'}</small></label>
-  <label className="admin-field"><span>节点剩余次数</span><input type="number" min="0" disabled={value.nodeMode !== 'limited'} value={value.nodeRemaining} onChange={event => onChange({ ...value, nodeRemaining: Number(event.target.value) })} /><small>{value.nodeMode === 'limited' ? `已用 ${value.nodeUsed}，冻结 ${value.nodeReserved}` : '该权益不是限次模式'}</small></label>
-  <label className="admin-field"><span>每日面板上限</span><input type="number" min="0" value={value.dailyPanelLimit} onChange={event => onChange({ ...value, dailyPanelLimit: Number(event.target.value) })} /></label>
-  <label className="admin-field"><span>每日节点上限</span><input type="number" min="0" value={value.dailyNodeLimit} onChange={event => onChange({ ...value, dailyNodeLimit: Number(event.target.value) })} /></label>
-  <label className="admin-field"><span>并发任务上限</span><input type="number" min="1" value={value.concurrencyLimit} onChange={event => onChange({ ...value, concurrencyLimit: Number(event.target.value) })} /></label>
+  <label className="admin-field"><span>面板剩余次数</span><NumberInput min="0" disabled={value.panelMode !== 'limited'} value={value.panelRemaining} onValueChange={panelRemaining => onChange({ ...value, panelRemaining })} /><small>{value.panelMode === 'limited' ? `已用 ${value.panelUsed}，冻结 ${value.panelReserved}` : '该权益不是限次模式'}</small></label>
+  <label className="admin-field"><span>节点剩余次数</span><NumberInput min="0" disabled={value.nodeMode !== 'limited'} value={value.nodeRemaining} onValueChange={nodeRemaining => onChange({ ...value, nodeRemaining })} /><small>{value.nodeMode === 'limited' ? `已用 ${value.nodeUsed}，冻结 ${value.nodeReserved}` : '该权益不是限次模式'}</small></label>
+  <label className="admin-field"><span>每日面板上限</span><NumberInput min="0" value={value.dailyPanelLimit} onValueChange={dailyPanelLimit => onChange({ ...value, dailyPanelLimit })} /></label>
+  <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={value.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...value, dailyNodeLimit })} /></label>
+  <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={value.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...value, concurrencyLimit })} /></label>
 </div>}</AdminDialog>;
 
 const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: PaymentMethod) => void }> = ({ method, onChange }) => {
@@ -944,7 +945,7 @@ const PaymentMethodEditor: React.FC<{ method: PaymentMethod; onChange: (method: 
       <option value="alipay_official">支付宝官方</option>
       <option value="wechat_official">微信支付官方</option>
     </select></label>
-    <label className="admin-field"><span>显示排序</span><input type="number" value={method.sortOrder} onChange={event => patch({ sortOrder: Number(event.target.value) })} /></label>
+    <label className="admin-field"><span>显示排序</span><NumberInput value={method.sortOrder} onValueChange={sortOrder => patch({ sortOrder })} /></label>
 
     {provider === 'manual' && <>
       <label className="admin-field span-2"><span>付款地址</span><input type="url" value={method.paymentUrl} maxLength={1000} placeholder="可选，例如付款码页面或联系客服页面" onChange={event => patch({ paymentUrl: event.target.value })} /></label>
