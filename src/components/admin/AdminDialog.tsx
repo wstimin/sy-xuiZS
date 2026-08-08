@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useId, useRef } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 
 interface AdminDialogProps {
@@ -30,24 +30,38 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
   onClose,
   onConfirm,
 }) => {
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useRef<HTMLElement>(null);
+
   useEffect(() => {
     if (!open) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busy) onClose();
     };
+    const focusFirstControl = window.requestAnimationFrame(() => {
+      const firstControl = dialogRef.current?.querySelector<HTMLElement>('input, select, textarea, button:not([disabled])');
+      firstControl?.focus();
+    });
     document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFirstControl);
+      document.removeEventListener('keydown', closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [busy, onClose, open]);
 
   if (!open) return null;
 
   return (
     <div className="admin-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-      <section className={`admin-dialog ${size === 'wide' ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title">
+      <section ref={dialogRef} className={`admin-dialog ${size === 'wide' ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}>
         <header>
           <div className="admin-dialog-heading">
             {tone === 'danger' || tone === 'warning' ? <span className={`admin-dialog-alert ${tone}`}><AlertTriangle /></span> : null}
-            <div><h2 id="admin-dialog-title">{title}</h2>{description && <p>{description}</p>}</div>
+            <div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div>
           </div>
           <button type="button" className="admin-icon-button" onClick={onClose} disabled={busy} title="关闭"><X /></button>
         </header>

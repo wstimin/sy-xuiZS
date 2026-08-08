@@ -7,6 +7,7 @@ import { LandingPage } from './components/LandingPage.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { api } from './commercial.ts';
 import './index.css';
+import './admin.css';
 
 function normalizedPath() {
   return window.location.pathname.replace(/\/+$/, '') || '/';

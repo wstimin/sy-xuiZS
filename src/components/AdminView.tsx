@@ -964,7 +964,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
             const Icon = item.icon;
             return <React.Fragment key={item.id}>
               {item.section && <div className="admin-nav-section">{item.section}</div>}
-              <button type="button" className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><span className={`admin-nav-icon ${item.tone}`}><Icon /></span><span>{item.label}</span>{item.id === 'orders' && Boolean(stats?.pendingOrders) && <b>{stats?.pendingOrders}</b>}{item.id === 'deployments' && Boolean(stats?.uncertain) && <b className="warning">{stats?.uncertain}</b>}</button>
+              <button type="button" className={tab === item.id ? 'active' : ''} onClick={() => { setTab(item.id); setMobileNavOpen(false); }}><span className={`admin-nav-icon ${item.tone}`}><Icon /></span><span>{item.label}</span>{item.id === 'orders' && Boolean(stats?.pendingOrders) && <b>{stats?.pendingOrders}</b>}{item.id === 'deployments' && Boolean(stats?.uncertain) && <b className="warning">{stats?.uncertain}</b>}</button>
             </React.Fragment>;
           })}
         </nav>
