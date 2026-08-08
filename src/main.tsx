@@ -8,6 +8,7 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { api } from './commercial.ts';
 import './index.css';
 import './admin.css';
+import './admin-redesign.css';
 
 function normalizedPath() {
   return window.location.pathname.replace(/\/+$/, '') || '/';

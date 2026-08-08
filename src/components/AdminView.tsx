@@ -958,7 +958,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   return (
     <div className="admin-workspace">
       <aside className={`admin-sidebar ${mobileNavOpen ? 'open' : ''}`}>
-        <div className="admin-sidebar-brand"><span><Terminal /></span><div><strong>NEXUS CONTROL</strong><small>运营管理后台</small></div></div>
+        <div className="admin-sidebar-brand">
+          <span className="admin-brand-mark"><Terminal /></span>
+          <div><strong>X-UI CONTROL</strong><small>运营管理系统</small></div>
+        </div>
         <nav className="admin-navigation">
           {navigation.map(item => {
             const Icon = item.icon;
@@ -968,13 +971,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
             </React.Fragment>;
           })}
         </nav>
-        <div className="admin-sidebar-account"><div className="admin-avatar">{currentUser.username.slice(0, 1).toUpperCase()}</div><div><strong>{currentUser.username}</strong><small>系统管理员</small></div><button type="button" className="admin-sidebar-logout" title="退出管理端" onClick={onLogout}><LogOut /><span>退出</span></button></div>
+        <div className="admin-sidebar-footer">
+          <div className="admin-sidebar-account"><div className="admin-avatar">{currentUser.username.slice(0, 1).toUpperCase()}</div><div><strong>{currentUser.username}</strong><small>系统管理员</small></div><button type="button" className="admin-sidebar-logout" title="退出管理端" onClick={onLogout}><LogOut /><span>退出</span></button></div>
+        </div>
       </aside>
       {mobileNavOpen && <button type="button" className="admin-sidebar-overlay" onClick={() => setMobileNavOpen(false)} aria-label="关闭导航" />}
 
       <div className="admin-main">
         <header className="admin-topbar">
-          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div><span>NEXUS CONTROL / {currentMeta.area}</span><h1>{currentTitle}</h1><p>{currentMeta.description}</p></div></div>
+          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div><div className="admin-topbar-page"><h1>{currentTitle}</h1><p>{currentMeta.description}</p></div><span><b>管理后台</b><ChevronRight />{currentMeta.area}<ChevronRight />{currentTitle}</span></div></div>
           <div className="admin-topbar-actions">
             <span className="admin-topbar-context"><i />{currentContext}</span>
             {activeList.length > 0 && <button type="button" className="admin-button secondary admin-export-button" onClick={exportCurrent}><Download /> 导出当前列表</button>}
@@ -1420,7 +1425,7 @@ const Dashboard: React.FC<{
   const recentOrders = orders.slice(0, 5);
   const recentDeployments = deployments.slice(0, 5);
   return <div className="admin-dashboard">
-    <div className="admin-page-heading"><div><h2>运营概览</h2><p>当前业务数据库的实时汇总与待处理事项。</p></div><span className="admin-live"><i /> 实时数据</span></div>
+    <div className="admin-dashboard-strip"><div><span className="admin-live"><i /> 实时数据</span><p>业务指标、异常队列与最近活动已同步</p></div><small>数据来自当前业务数据库</small></div>
     <div className="admin-stat-grid">
       <Stat icon={Users} label="用户总数" value={stats?.users || 0} detail={`${stats?.activeUsers || 0} 正常 / ${stats?.disabledUsers || 0} 禁用`} tone="cyan" />
       <Stat icon={CircleDollarSign} label="实际收入" value={formatMoney(stats?.revenueCents || 0)} detail={`${stats?.paidOrders || 0} 笔已付款订单`} tone="green" />
@@ -1450,11 +1455,26 @@ const Dashboard: React.FC<{
 
 const DiagnosisBadge: React.FC<{ diagnosis: OrderDetail['diagnosis'] }> = ({ diagnosis }) => <span className={`admin-diagnosis-badge ${diagnosis.severity}`} title={diagnosis.recommendedAction}><i />{diagnosis.processingLabel}</span>;
 
-const AdminSection: React.FC<{ title: string; description: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => <div className="admin-section"><div className="admin-page-heading"><div><h2>{title}</h2><p>{description}</p></div>{action}</div>{children}</div>;
-const AdminToolbar: React.FC<{ query: string; onQuery: (value: string) => void; placeholder: string; filter: string; onFilter: (value: string) => void; options: Array<[string, string]> }> = ({ query, onQuery, placeholder, filter, onFilter, options }) => <div className="admin-toolbar"><label className="admin-search"><Search /><input value={query} onChange={event => onQuery(event.target.value)} placeholder={placeholder} /></label><label className="admin-filter"><SlidersHorizontal /><select value={filter} onChange={event => onFilter(event.target.value)}>{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>;
+type AdminToolbarProps = { query: string; onQuery: (value: string) => void; placeholder: string; filter: string; onFilter: (value: string) => void; options: Array<[string, string]>; title?: string; description?: string; action?: React.ReactNode };
+
+const AdminSection: React.FC<{ title: string; description: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => {
+  const childList = React.Children.toArray(children);
+  const hasDataTable = childList.some(child => React.isValidElement(child) && child.type === AdminToolbar);
+  const sectionChildren = hasDataTable ? childList.map(child => React.isValidElement<AdminToolbarProps>(child) && child.type === AdminToolbar
+    ? React.cloneElement(child, { title, description, action })
+    : child) : childList;
+  return <div className="admin-section">
+    {!hasDataTable && <div className="admin-section-intro"><span>{title}</span><p>{description}</p>{action && <div className="admin-page-actions">{action}</div>}</div>}
+    <div className={hasDataTable ? 'admin-data-card' : 'admin-section-body'}>{sectionChildren}</div>
+  </div>;
+};
+const AdminToolbar: React.FC<AdminToolbarProps> = ({ query, onQuery, placeholder, filter, onFilter, options, title, description, action }) => <div className="admin-toolbar"><div className="admin-toolbar-heading"><span><SlidersHorizontal /></span><div><strong>{title || '数据列表'}</strong><small>{description || '搜索与状态条件会同时生效'}</small></div></div><div className="admin-toolbar-controls"><label className="admin-search"><Search /><input value={query} onChange={event => onQuery(event.target.value)} placeholder={placeholder} />{query && <button type="button" title="清除搜索" onClick={() => onQuery('')}><X /></button>}</label><label className="admin-filter"><select aria-label="状态筛选" value={filter} onChange={event => onFilter(event.target.value)}>{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><ChevronRight /></label>{action && <div className="admin-toolbar-actions">{action}</div>}</div></div>;
 const AdminTable: React.FC<{ columns: string[]; empty: string; children: React.ReactNode }> = ({ columns, empty, children }) => <div className="admin-table-wrap"><table className="admin-table"><thead><tr>{columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{children}</tbody></table>{React.Children.count(children) === 0 && <div className="admin-table-empty"><Search /><strong>{empty}</strong><span>调整搜索词或筛选条件后再试。</span></div>}</div>;
-const Pagination: React.FC<{ total: number; page: number; pageCount: number; onPage: (page: number) => void }> = ({ total, page, pageCount, onPage }) => <div className="admin-pagination"><span>共 {total} 条记录</span><div><button className="admin-icon-button small" disabled={page <= 1} onClick={() => onPage(page - 1)} title="上一页"><ChevronLeft /></button><span>第 {page} / {pageCount} 页</span><button className="admin-icon-button small" disabled={page >= pageCount} onClick={() => onPage(page + 1)} title="下一页"><ChevronRight /></button></div></div>;
-const Stat: React.FC<{ icon: React.ElementType; label: string; value: React.ReactNode; detail: string; tone: string }> = ({ icon: Icon, label, value, detail, tone }) => <div className="admin-stat"><span className={tone}><Icon /></span><div><small>{label}</small><strong>{value}</strong><p>{detail}</p></div></div>;
+const Pagination: React.FC<{ total: number; page: number; pageCount: number; onPage: (page: number) => void }> = ({ total, page, pageCount, onPage }) => {
+  const pages = Array.from({ length: pageCount }, (_, index) => index + 1).filter(item => item === 1 || item === pageCount || Math.abs(item - page) <= 1);
+  return <div className="admin-pagination"><span>共 <strong>{total}</strong> 条记录</span><div className="admin-page-buttons"><button className="admin-icon-button small" disabled={page <= 1} onClick={() => onPage(page - 1)} title="上一页"><ChevronLeft /></button>{pages.map((item, index) => <React.Fragment key={item}>{index > 0 && item - pages[index - 1] > 1 && <span className="admin-page-gap">...</span>}<button type="button" className={`admin-page-number ${item === page ? 'active' : ''}`} aria-current={item === page ? 'page' : undefined} onClick={() => onPage(item)}>{item}</button></React.Fragment>)}<button className="admin-icon-button small" disabled={page >= pageCount} onClick={() => onPage(page + 1)} title="下一页"><ChevronRight /></button></div></div>;
+};
+const Stat: React.FC<{ icon: React.ElementType; label: string; value: React.ReactNode; detail: string; tone: string }> = ({ icon: Icon, label, value, detail, tone }) => <div className={`admin-stat ${tone}`}><div className="admin-stat-head"><span className="admin-stat-icon"><Icon /></span><span className="admin-stat-signal"><i /> 实时</span></div><strong>{value}</strong><small>{label}</small><p>{detail}</p></div>;
 const EmptyInline: React.FC<{ text: string }> = ({ text }) => <div className="admin-empty-inline">{text}</div>;
 const AdminPageLoading = () => <div className="admin-page-loading"><RefreshCw /><p>正在读取管理数据...</p></div>;
 const DetailBlock: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => <section className="admin-detail-block"><header><FileText /><h3>{title}</h3></header>{children}</section>;

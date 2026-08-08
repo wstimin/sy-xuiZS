@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef } from 'react';
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, PanelsTopLeft, X } from 'lucide-react';
 
 interface AdminDialogProps {
   open: boolean;
@@ -60,7 +60,7 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
       <section ref={dialogRef} className={`admin-dialog ${size === 'wide' ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}>
         <header>
           <div className="admin-dialog-heading">
-            {tone === 'danger' || tone === 'warning' ? <span className={`admin-dialog-alert ${tone}`}><AlertTriangle /></span> : null}
+            <span className={`admin-dialog-symbol ${tone}`}>{tone === 'danger' || tone === 'warning' ? <AlertTriangle /> : <PanelsTopLeft />}</span>
             <div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div>
           </div>
           <button type="button" className="admin-icon-button" onClick={onClose} disabled={busy} title="关闭"><X /></button>
