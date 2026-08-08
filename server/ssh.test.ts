@@ -123,6 +123,7 @@ test("parseServerInspectionOutput reports a compatible systemd server", () => {
       "__DISK_FREE_KB__=10485760",
       "__CPU__=2",
       "__UID__=0",
+      "__SUDO__=not-required",
       "__CURL__=yes",
       "__PKG_MANAGER__=apt",
     ].join("\n"),
@@ -133,7 +134,53 @@ test("parseServerInspectionOutput reports a compatible systemd server", () => {
   assert.equal(details.totalRamMb, 1024);
   assert.equal(details.diskFreeMb, 10240);
   assert.equal(details.packageManager, "apt");
+  assert.equal(details.canInstall, true);
+  assert.equal(details.hasPasswordlessSudo, false);
   assert.deepEqual(details.warnings, []);
+});
+
+test("parseServerInspectionOutput accepts a non-root user with passwordless sudo", () => {
+  const details = parseServerInspectionOutput(
+    { host: "203.0.113.12", port: 22, user: "debian", fingerprint: "SHA256:test", latencyMs: 42 },
+    [
+      "__OS__=Debian GNU/Linux 12 (bookworm)",
+      "__SYSTEMD_ACTIVE__=yes",
+      "__RAM_KB__=1048576",
+      "__DISK_FREE_KB__=10485760",
+      "__UID__=1000",
+      "__SUDO__=yes",
+      "__CURL__=yes",
+      "__PKG_MANAGER__=apt",
+    ].join("\n"),
+  );
+
+  assert.equal(details.isRoot, false);
+  assert.equal(details.hasPasswordlessSudo, true);
+  assert.equal(details.canInstall, true);
+  assert.equal(details.status, "warning");
+  assert.match(details.warnings.join("\n"), /自动通过免密 sudo/);
+});
+
+test("parseServerInspectionOutput rejects a non-root user without passwordless sudo", () => {
+  const details = parseServerInspectionOutput(
+    { host: "203.0.113.13", port: 22, user: "ubuntu", fingerprint: "SHA256:test", latencyMs: 42 },
+    [
+      "__OS__=Ubuntu 24.04 LTS",
+      "__SYSTEMD_ACTIVE__=yes",
+      "__RAM_KB__=1048576",
+      "__DISK_FREE_KB__=10485760",
+      "__UID__=1000",
+      "__SUDO__=no",
+      "__CURL__=yes",
+      "__PKG_MANAGER__=apt",
+    ].join("\n"),
+  );
+
+  assert.equal(details.isRoot, false);
+  assert.equal(details.hasPasswordlessSudo, false);
+  assert.equal(details.canInstall, false);
+  assert.equal(details.status, "incompatible");
+  assert.match(details.warnings.join("\n"), /无法执行部署/);
 });
 
 test("parseServerInspectionOutput rejects systems where systemd is not PID 1", () => {
@@ -148,6 +195,7 @@ test("parseServerInspectionOutput rejects systems where systemd is not PID 1", (
       "__DISK_FREE_KB__=10485760",
       "__CPU__=2",
       "__UID__=0",
+      "__SUDO__=not-required",
       "__CURL__=yes",
       "__PKG_MANAGER__=apt",
     ].join("\n"),

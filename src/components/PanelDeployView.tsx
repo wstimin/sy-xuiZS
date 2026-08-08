@@ -34,6 +34,8 @@ interface SshTestDetails {
   cpuCores: number;
   packageManager: string;
   isRoot: boolean;
+  hasPasswordlessSudo: boolean;
+  canInstall: boolean;
   hasCurl: boolean;
   warnings: string[];
   status: 'compatible' | 'warning' | 'incompatible';
@@ -47,7 +49,7 @@ const DEPLOY_STEPS_INFO = [
   { step: 5, title: '安装程序处理中', desc: '由官方安装器安装程序并写入面板配置' },
   { step: 6, title: '面板配置初始化', desc: '初始化管理员、数据库及 API 访问设置' },
   { step: 7, title: '服务状态验证', desc: '检查 x-ui systemd 服务并读取安装结果' },
-  { step: 8, title: '读取访问参数', desc: '从仅 root 可读的结果文件提取访问信息' },
+  { step: 8, title: '读取访问参数', desc: '通过部署权限读取受保护的面板访问信息' },
   { step: 9, title: '部署完成', desc: '确认服务已启动并返回一次性登录凭据' }
 ];
 
@@ -207,7 +209,13 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       setSshTestResult(data.details);
       sshSessionIdRef.current = data.sshSessionId || '';
       setForm(prev => ({ ...prev, sshSessionId: data.sshSessionId || '' }));
-      showToast('SSH 连接及系统环境检测成功！', `网络延迟 ${data.details.latencyMs}ms | ${data.details.osName}`, 'success');
+      if (data.details.status === 'incompatible') {
+        showToast('SSH 已连接，但当前环境无法部署', data.details.warnings?.[0] || '请检查 systemd 和 SSH 用户权限', 'warning');
+      } else if (data.details.status === 'warning') {
+        showToast('SSH 与部署权限检测完成', `可以继续部署，请留意 ${data.details.warnings.length} 项提示`, 'warning');
+      } else {
+        showToast('SSH 连接及系统环境检测成功！', `网络延迟 ${data.details.latencyMs}ms | ${data.details.osName}`, 'success');
+      }
     } catch (err: any) {
       const errMsg = err?.name === 'AbortError'
         ? '连接检测未返回结果，请确认部署助手服务运行正常后重试'
@@ -242,6 +250,11 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
     if (form.authType === 'privateKey' && !form.sshPrivateKey) {
       showToast('请输入 SSH 私钥内容', '请粘贴完整的 id_rsa 或 pem 私钥', 'warning');
+      return;
+    }
+
+    if (sshTestResult?.status === 'incompatible') {
+      showToast('当前服务器无法开始部署', sshTestResult.warnings?.[0] || '请先解决系统环境或 SSH 权限问题', 'warning');
       return;
     }
 
@@ -574,7 +587,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 <div className="relative">
                   <input
                     type="password"
-                    placeholder="输入 root 密码"
+                    placeholder="输入 SSH 登录密码"
                     value={form.sshPassword || ''}
                     onChange={e => updateSshConnection({ sshPassword: e.target.value })}
                     className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-sm placeholder-zinc-500 outline-none transition-all pr-10"
@@ -647,6 +660,12 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 <div className="system-status-card system-status-card--lime">
                   <span className="text-zinc-500 font-mono block">安装依赖</span>
                   <span className="system-status-card__value">{sshTestResult.packageManager} / curl {sshTestResult.hasCurl ? '可用' : '缺失'}</span>
+                </div>
+                <div className={`system-status-card ${sshTestResult.canInstall ? 'system-status-card--violet' : 'system-status-card--rose'}`}>
+                  <span className="text-zinc-500 font-mono block">部署权限</span>
+                  <span className="system-status-card__value">
+                    {sshTestResult.isRoot ? 'root' : sshTestResult.hasPasswordlessSudo ? '免密 sudo' : '权限不足'}
+                  </span>
                 </div>
               </div>
 

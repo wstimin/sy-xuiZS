@@ -348,7 +348,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                     请按以下点进行自查：
                     <ol className="list-decimal pl-4 mt-1 space-y-1 text-zinc-400">
                       <li>确认云服务商控制台（阿里云 / 腾讯云 / AWS / 搬瓦工等）安全组入站规则中，已经开启了 SSH 端口（默认 22）。</li>
-                      <li>确认输入的 IP 地址与 root 密码/密钥正确无误。</li>
+                      <li>确认 IP 地址和 SSH 凭据正确；可使用 root，或具备免密 sudo 权限的普通用户。</li>
                     </ol>
                   </div>
                 </div>

@@ -283,10 +283,11 @@ async function startServer() {
         systemInfo = await inspectServer(session);
         write({ type: "log", step: 2, message: `[OS] ${systemInfo.osName} / ${systemInfo.arch}` });
       }
-      if (systemInfo.status === "incompatible") throw new Error("服务器没有可用的 systemd，无法安装 3x-ui 服务");
+      if (!systemInfo.systemdAvailable) throw new Error("服务器没有可用的 systemd，无法安装 3x-ui 服务");
+      if (!systemInfo.canInstall) throw new Error("当前 SSH 用户不是 root，且没有可用的免密 sudo 权限，无法安装 3x-ui");
       if (!systemInfo.isRoot) {
-        const sudo = await execSsh(session.client, "sudo -n true", { timeoutMs: 10_000 });
-        if (sudo.code !== 0) throw new Error("当前 SSH 用户不是 root，且没有免密 sudo 权限");
+        const sudo = await execSsh(session.client, "sudo -n env sh -c 'test \"$(id -u)\" = \"0\"'", { timeoutMs: 10_000 });
+        if (sudo.code !== 0) throw new Error("当前 SSH 用户的免密 sudo 权限不可用，请重新检测服务器权限");
       }
 
       const scriptLabel = scriptType === "recommended" ? "推荐兼容脚本" : scriptType === "official" ? "官方脚本" : "自定义脚本";

@@ -261,9 +261,12 @@ export function parseServerInspectionOutput(
     if (match) values.set(match[1], match[2].trim());
   }
   const isRoot = values.get("UID") === "0";
+  const hasPasswordlessSudo = values.get("SUDO") === "yes";
+  const canInstall = isRoot || hasPasswordlessSudo;
   const systemdAvailable = values.get("SYSTEMD_ACTIVE") === "yes";
   const warnings: string[] = [];
-  if (!isRoot) warnings.push("当前用户不是 root，部署时要求具备免密 sudo 权限。");
+  if (!isRoot && hasPasswordlessSudo) warnings.push("当前用户不是 root，部署时将自动通过免密 sudo 提权。");
+  if (!canInstall) warnings.push("当前用户不是 root，且没有可用的免密 sudo 权限，无法执行部署。");
   if (values.get("CURL") !== "yes") warnings.push("服务器尚未安装 curl，安装脚本可能无法启动。");
   const totalRamMb = Math.round(Number(values.get("RAM_KB") || 0) / 1024);
   if (totalRamMb && totalRamMb < 512) warnings.push("服务器内存低于 512MB，建议先配置 Swap。");
@@ -288,9 +291,11 @@ export function parseServerInspectionOutput(
     cpuCores: Number(values.get("CPU") || 1),
     packageManager: values.get("PKG_MANAGER") || "unknown",
     isRoot,
+    hasPasswordlessSudo,
+    canInstall,
     hasCurl: values.get("CURL") === "yes",
     warnings,
-    status: !systemdAvailable ? "incompatible" : warnings.length ? "warning" : "compatible",
+    status: !systemdAvailable || !canInstall ? "incompatible" : warnings.length ? "warning" : "compatible",
   };
 }
 
@@ -307,6 +312,7 @@ export async function inspectServer(
     "printf '__RAM_KB__='; awk '/MemTotal/{print $2}' /proc/meminfo",
     "printf '__DISK_FREE_KB__='; df -Pk / 2>/dev/null | awk 'NR==2 {print $4}'",
     "printf '__UID__='; id -u",
+    "printf '__SUDO__='; if [ \"$(id -u)\" = \"0\" ]; then echo not-required; elif command -v sudo >/dev/null 2>&1 && [ \"$(sudo -n env sh -c 'id -u' 2>/dev/null)\" = \"0\" ]; then echo yes; else echo no; fi",
     "printf '__CURL__='; command -v curl >/dev/null && echo yes || echo no",
     "printf '__PKG_MANAGER__='; if command -v apt-get >/dev/null; then echo apt; elif command -v dnf >/dev/null; then echo dnf; elif command -v yum >/dev/null; then echo yum; else echo unknown; fi",
   ].join("; ");
