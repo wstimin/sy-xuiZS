@@ -520,6 +520,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       });
       await api(`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
       updateContactMethod(index, { qrCodeUploaded: true });
+      setEditingContactMethod(current => current && current.index === index
+        ? { ...current, method: { ...current.method, qrCodeUploaded: true } }
+        : current);
       showToast(`${method.name}二维码已上传`, '前台会优先显示上传的图片', 'success');
     } catch (error) {
       showToast('二维码上传失败', error instanceof Error ? error.message : '请稍后重试', 'error');
@@ -533,6 +536,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     try {
       await api(`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`, { method: 'DELETE' });
       updateContactMethod(index, { qrCodeUploaded: false });
+      setEditingContactMethod(current => current && current.index === index
+        ? { ...current, method: { ...current.method, qrCodeUploaded: false } }
+        : current);
       showToast('已删除上传的二维码', method.qrCodeUrl ? '前台将改用填写的二维码图片地址' : '该联系方式将不再显示二维码', 'success');
     } catch (error) {
       showToast('二维码删除失败', error instanceof Error ? error.message : '请稍后重试', 'error');
@@ -1266,7 +1272,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               <td>{contactTypeLabels[method.type]}</td>
               <td><span className="admin-result-text">{method.value || '-'}</span></td>
               <td><div className="admin-payment-state"><StatusBadge status={method.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-checked={method.enabled} className={`admin-switch ${method.enabled ? 'on' : ''}`} onClick={() => updateContactMethod(index, { enabled: !method.enabled })}><span /></button></div></td>
-              <td><div className="admin-contact-qr-actions"><span className={`admin-contact-qr-preview ${method.qrCodeUploaded || method.qrCodeUrl ? 'has-image' : ''}`}>{method.qrCodeUploaded ? <img src={`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`} alt="" /> : method.qrCodeUrl ? <img src={method.qrCodeUrl} alt="" /> : <QrCode />}</span><label className={`admin-icon-button small ${busy ? 'disabled' : ''}`} title="上传二维码"><Upload /><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(index, method, file); }} /></label>{method.qrCodeUploaded && <button type="button" className="admin-icon-button small danger" title="删除已上传二维码" disabled={busy} onClick={() => void deleteContactQr(index, method)}><Trash2 /></button>}</div></td>
+              <td><div className="admin-contact-qr-actions"><span className={`admin-contact-qr-preview ${method.qrCodeUploaded || method.qrCodeUrl ? 'has-image' : ''}`}>{method.qrCodeUploaded ? <img src={`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`} alt="" /> : method.qrCodeUrl ? <img src={method.qrCodeUrl} alt="" /> : <QrCode />}</span><label className={`admin-button secondary compact ${busy ? 'disabled' : ''}`} title="上传二维码"><Upload /> 上传<input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(index, method, file); }} /></label>{method.qrCodeUploaded && <button type="button" className="admin-icon-button small danger" title="删除已上传二维码" disabled={busy} onClick={() => void deleteContactQr(index, method)}><Trash2 /></button>}</div></td>
               <td><div className="admin-row-actions"><button type="button" className="admin-icon-button small" title="编辑联系方式" onClick={() => openContactMethodEditor(index, method)}><Pencil /></button><button type="button" className="admin-icon-button small danger" title="删除联系方式" onClick={() => openContactMethodDelete(index, method)}><X /></button></div></td>
             </tr>)}</tbody>
           </table>
@@ -1317,8 +1323,29 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         </>}
       </AdminDialog>
       <AdminDialog open={Boolean(deletingRecommendation)} title="删除资源推荐" description={`将从设置草稿中删除“${deletingRecommendation?.item.name || '未命名厂商'}”。已上传的 Logo 可继续保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={() => setDeletingRecommendation(null)} onConfirm={() => { if (deletingRecommendation) removeRecommendation(deletingRecommendation.index); setDeletingRecommendation(null); }} />
-      <AdminDialog open={Boolean(editingContactMethod)} title={editingContactMethod?.index === -1 ? '新增联系方式' : '编辑联系方式'} description="账号、链接和二维码会绑定在同一条联系方式中；完成编辑后仍需保存更改才会生效。" confirmLabel="保存联系方式" busy={busy} confirmDisabled={!editingContactMethod?.method.name.trim() || !editingContactMethod?.method.id.trim()} onClose={returnToContactSettings} onConfirm={saveContactMethodDraft}>
-        {editingContactMethod && <ContactMethodEditor method={editingContactMethod.method} idLocked={editingContactMethod.index >= 0} onChange={method => setEditingContactMethod({ ...editingContactMethod, method })} />}
+      <AdminDialog open={Boolean(editingContactMethod)} size="wide" title={editingContactMethod?.index === -1 ? '新增联系方式' : '编辑联系方式'} description="账号、链接和二维码会绑定在同一条联系方式中；完成编辑后仍需保存更改才会生效。" confirmLabel="保存联系方式" busy={busy} confirmDisabled={!editingContactMethod?.method.name.trim() || !editingContactMethod?.method.id.trim()} onClose={returnToContactSettings} onConfirm={saveContactMethodDraft}>
+        {editingContactMethod && <>
+          <ContactMethodEditor method={editingContactMethod.method} idLocked={editingContactMethod.index >= 0} onChange={method => setEditingContactMethod({ ...editingContactMethod, method })} />
+          <div className="admin-contact-qr-manager">
+            <div className="admin-contact-qr-manager-info">
+              <span className={`admin-contact-qr-manager-preview ${editingContactMethod.method.qrCodeUploaded || editingContactMethod.method.qrCodeUrl ? 'has-image' : ''}`}>
+                {editingContactMethod.method.qrCodeUploaded
+                  ? <img src={`/api/admin/contact-methods/${encodeURIComponent(editingContactMethod.method.id)}/qr`} alt={`${editingContactMethod.method.name || '联系方式'}二维码`} />
+                  : editingContactMethod.method.qrCodeUrl
+                    ? <img src={editingContactMethod.method.qrCodeUrl} alt={`${editingContactMethod.method.name || '联系方式'}二维码`} />
+                    : <QrCode />}
+              </span>
+              <div><strong>二维码图片</strong><small>{editingContactMethod.index >= 0 && savedContactMethodIds.includes(editingContactMethod.method.id) ? '支持 PNG、JPEG 或 WebP，图片不能超过 1MB；本地上传优先于图片地址。' : '新增联系方式需先保存联系方式并点击页面右上角“保存更改”，之后重新编辑即可上传。'}</small></div>
+            </div>
+            <div className="admin-resource-logo-actions">
+              <label className={`admin-button secondary ${busy || editingContactMethod.index < 0 || !savedContactMethodIds.includes(editingContactMethod.method.id) ? 'disabled' : ''}`}>
+                <Upload /> 上传二维码
+                <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || editingContactMethod.index < 0 || !savedContactMethodIds.includes(editingContactMethod.method.id)} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(editingContactMethod.index, editingContactMethod.method, file); }} />
+              </label>
+              {editingContactMethod.method.qrCodeUploaded && <button type="button" className="admin-button danger" disabled={busy} onClick={() => void deleteContactQr(editingContactMethod.index, editingContactMethod.method)}><Trash2 /> 删除二维码</button>}
+            </div>
+          </div>
+        </>}
       </AdminDialog>
       <AdminDialog open={Boolean(deletingContactMethod)} title="删除联系方式" description={`将从设置草稿中删除“${deletingContactMethod?.method.name || '未命名联系方式'}”。已上传的二维码会保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={returnToContactSettings} onConfirm={() => { if (deletingContactMethod) removeContactMethod(deletingContactMethod.index); returnToContactSettings(); }} />
       <AdminDialog open={Boolean(paymentOrder)} title="确认人工收款" description="确认后将按照下单时的套餐快照发放权益，此操作会直接改变用户可用次数。" confirmLabel="确认收款并发放权益" tone="success" busy={busy} confirmDisabled={!tradeNo.trim()} onClose={() => { setPaymentOrder(null); setTradeNo(''); }} onConfirm={() => void confirmPayment()}>

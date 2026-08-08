@@ -925,6 +925,37 @@
 .admin-field textarea:focus { border-color: #6b62c8; background: #101820; box-shadow: 0 0 0 2px rgba(124, 114, 232, .12); }
 .admin-field > small,
 .admin-checkbox small { color: var(--admin-text-muted); font-size: 9px; line-height: 1.5; }
+.admin-contact-qr-manager {
+  margin-top: 18px;
+  padding: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--admin-line-soft);
+  border-radius: 7px;
+  background: #0f161e;
+}
+.admin-contact-qr-manager-info { min-width: 0; display: flex; align-items: center; gap: 13px; }
+.admin-contact-qr-manager-info > div { min-width: 0; display: grid; gap: 4px; }
+.admin-contact-qr-manager-info strong { color: var(--admin-text); font-size: 11px; }
+.admin-contact-qr-manager-info small { color: var(--admin-text-muted); font-size: 9px; line-height: 1.5; }
+.admin-contact-qr-manager-preview {
+  width: 58px;
+  height: 58px;
+  flex: 0 0 58px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--admin-line);
+  border-radius: 6px;
+  color: var(--admin-text-muted);
+  background: #0b1117;
+}
+.admin-contact-qr-manager-preview.has-image { padding: 3px; background: #fff; }
+.admin-contact-qr-manager-preview img { width: 100%; height: 100%; object-fit: contain; }
+.admin-contact-qr-manager-preview svg { width: 24px; height: 24px; }
+.admin-contact-qr-manager .admin-resource-logo-actions { flex: 0 0 auto; }
 .admin-dialog-summary > div,
 .admin-form-context,
 .admin-checkbox,
@@ -1004,6 +1035,8 @@
   .admin-form-grid,
   .admin-form-grid.one { grid-template-columns: 1fr; }
   .admin-form-grid .span-2 { grid-column: auto; }
+  .admin-contact-qr-manager { align-items: stretch; flex-direction: column; }
+  .admin-contact-qr-manager .admin-resource-logo-actions { justify-content: flex-start; }
 }
 
 @media (max-width: 520px) {
