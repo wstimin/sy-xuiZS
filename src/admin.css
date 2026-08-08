@@ -2924,19 +2924,43 @@
 .admin-button:focus-visible, .admin-icon-button:focus-visible, .admin-link:focus-visible, .admin-navigation button:focus-visible, .admin-switch:focus-visible, .admin-settings-nav button:focus-visible { outline: 0; box-shadow: 0 0 0 3px rgba(124, 111, 240, 0.22); }
 
 .admin-dialog-backdrop { padding: 20px; background: rgba(3, 4, 8, 0.76); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
-.admin-dialog { width: min(100%, 760px); max-height: min(780px, calc(100vh - 40px)); overflow: hidden; border: 1px solid var(--admin-border-strong); border-radius: 16px; background: var(--admin-surface-solid); box-shadow: 0 28px 80px rgba(0,0,0,0.52); animation: admin-dialog-in 180ms ease both; }
+.admin-dialog { width: min(100%, 760px); max-height: min(780px, calc(100vh - 40px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--admin-border-strong); border-radius: 16px; background: var(--admin-surface-solid); box-shadow: 0 28px 80px rgba(0,0,0,0.52); animation: admin-dialog-in 180ms ease both; }
 .admin-dialog.wide { width: min(100%, 980px); }
-.admin-dialog > header, .admin-dialog > footer { min-height: 68px; padding: 16px 20px; border-color: var(--admin-border); background: rgba(7, 9, 15, 0.38); }
+.admin-dialog > header, .admin-dialog > footer { min-height: 68px; padding: 16px 20px; flex: 0 0 auto; border-color: var(--admin-border); background: rgba(7, 9, 15, 0.38); }
 .admin-dialog-heading { gap: 12px; }
 .admin-dialog-heading h2 { color: var(--admin-text); font-size: 17px; }
 .admin-dialog-heading p { margin-top: 4px; color: var(--admin-muted); font-size: 11px; line-height: 1.55; }
-.admin-dialog-body { max-height: calc(100vh - 176px); padding: 22px; overflow-y: auto; }
+.admin-dialog-body { min-height: 0; max-height: none; padding: 22px; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
 .admin-dialog-summary > div, .admin-form-context, .admin-checkbox { border-color: var(--admin-border); border-radius: 10px; background: var(--admin-surface-soft); }
 .admin-dialog-summary span, .admin-form-context span { color: var(--admin-muted); font-size: 10px; }
 .admin-dialog-summary strong, .admin-form-context strong { color: var(--admin-text); font-size: 12px; }
 .admin-form-grid { gap: 16px; }
 .admin-field > span { margin-bottom: 7px; color: #d9dfeb; font-size: 11px; font-weight: 650; }
 .admin-field input, .admin-field select, .admin-field textarea { border-color: var(--admin-border); border-radius: 10px; color: var(--admin-text); background: rgba(7, 9, 15, 0.35); font-size: 12px; }
+.admin-filter select,
+.admin-field select {
+  color-scheme: dark;
+  color: var(--admin-text);
+  background-color: #0c1019;
+}
+.admin-filter select option,
+.admin-field select option,
+.admin-filter select optgroup,
+.admin-field select optgroup {
+  color: #f0f3fa;
+  background-color: #101624;
+}
+.admin-filter select option:checked,
+.admin-field select option:checked {
+  color: #ffffff;
+  background-color: #6d5ee8;
+}
+.admin-filter select:disabled,
+.admin-field select:disabled {
+  color: var(--admin-subtle);
+  background-color: rgba(7, 9, 15, 0.55);
+  opacity: 1;
+}
 .admin-field input, .admin-field select { height: 42px; }
 .admin-field textarea { min-height: 116px; }
 .admin-field > small, .admin-checkbox small { color: var(--admin-subtle); font-size: 10px; line-height: 1.55; }
@@ -3043,7 +3067,7 @@
   .admin-settings-section { padding: 18px; }
   .admin-dialog-backdrop { padding: 10px; }
   .admin-dialog { max-height: calc(100vh - 20px); border-radius: 14px; }
-  .admin-dialog-body { max-height: calc(100vh - 156px); padding: 18px 16px; }
+  .admin-dialog-body { max-height: none; padding: 18px 16px; }
   .admin-form-grid, .admin-form-grid.one { grid-template-columns: 1fr; }
   .admin-form-grid .span-2 { grid-column: auto; }
   .admin-dialog-summary { grid-template-columns: 1fr; }
