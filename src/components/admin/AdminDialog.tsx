@@ -33,13 +33,18 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLElement>(null);
+  const busyRef = useRef(busy);
+  const onCloseRef = useRef(onClose);
+
+  busyRef.current = busy;
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !busy) onClose();
+      if (event.key === 'Escape' && !busyRef.current) onCloseRef.current();
     };
     const focusFirstControl = window.requestAnimationFrame(() => {
       const firstControl = dialogRef.current?.querySelector<HTMLElement>('input, select, textarea, button:not([disabled])');
@@ -51,7 +56,7 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
       document.removeEventListener('keydown', closeOnEscape);
       document.body.style.overflow = previousOverflow;
     };
-  }, [busy, onClose, open]);
+  }, [open]);
 
   if (!open) return null;
 
