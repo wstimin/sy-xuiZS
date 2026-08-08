@@ -13,8 +13,8 @@ const CONTACT_QR_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const CONTACT_METHOD_LIMIT = 10;
 const CONTACT_METHOD_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
 const CONTACT_METHOD_TYPES = new Set(["wechat", "qq", "telegram", "whatsapp", "wecom", "email", "phone", "discord", "line", "custom"]);
-const RESOURCE_LOGO_MAX_BYTES = 512 * 1024;
-const RESOURCE_PAGE_MAX_BYTES = 256 * 1024;
+const RESOURCE_LOGO_MAX_BYTES = 1024 * 1024;
+const RESOURCE_PAGE_MAX_BYTES = 1024 * 1024;
 const RESOURCE_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/x-icon"]);
 const RESOURCE_RECOMMENDATION_LIMIT = 20;
 const RESOURCE_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
@@ -272,7 +272,7 @@ function resourceLogoSettingKey(id: string, suffix: "mime" | "data") {
 }
 
 function validResourceLogo(mimeType: string, data: Buffer) {
-  if (!data.length || data.length > RESOURCE_LOGO_MAX_BYTES) throw new Error("推荐 Logo 大小必须在 512KB 以内");
+  if (!data.length || data.length > RESOURCE_LOGO_MAX_BYTES) throw new Error("推荐 Logo 大小必须在 1MB 以内");
   const isPng = mimeType === "image/png" && data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   const isJpeg = mimeType === "image/jpeg" && data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
   const isWebp = mimeType === "image/webp" && data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";

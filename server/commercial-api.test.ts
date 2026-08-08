@@ -1035,21 +1035,33 @@ test("resource recommendations enforce limits, filtering and protected logo acce
     assert.equal(blockedAutomaticFetch.status, 400);
     assert.match((await blockedAutomaticFetch.json() as any).error, /内网地址/);
 
+    const maximumLogo = Buffer.alloc(1024 * 1024);
+    png.copy(maximumLogo);
     const uploaded = await fetch(`${base}/admin/resource-recommendations/server-one/logo`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: adminCookie },
-      body: JSON.stringify({ dataUrl: `data:image/png;base64,${png.toString("base64")}` }),
+      body: JSON.stringify({ dataUrl: `data:image/png;base64,${maximumLogo.toString("base64")}` }),
     });
     assert.equal(uploaded.status, 200);
+
+    const oversizedLogo = Buffer.alloc(1024 * 1024 + 1);
+    png.copy(oversizedLogo);
+    const oversizedUpload = await fetch(`${base}/admin/resource-recommendations/server-one/logo`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ dataUrl: `data:image/png;base64,${oversizedLogo.toString("base64")}` }),
+    });
+    assert.equal(oversizedUpload.status, 400);
+    assert.match((await oversizedUpload.json() as any).error, /1MB/);
 
     const publicLogo = await fetch(`${base}/resource-recommendations/server-one/logo`, { headers: { cookie: userCookie } });
     assert.equal(publicLogo.status, 200);
     assert.equal(publicLogo.headers.get("content-type"), "image/png");
-    assert.deepEqual(Buffer.from(await publicLogo.arrayBuffer()), png);
+    assert.deepEqual(Buffer.from(await publicLogo.arrayBuffer()), maximumLogo);
 
     const adminLogo = await fetch(`${base}/admin/resource-recommendations/server-one/logo`, { headers: { cookie: adminCookie } });
     assert.equal(adminLogo.status, 200);
-    assert.deepEqual(Buffer.from(await adminLogo.arrayBuffer()), png);
+    assert.deepEqual(Buffer.from(await adminLogo.arrayBuffer()), maximumLogo);
 
     const afterUpload = await fetch(`${base}/admin/settings`, { headers: { cookie: adminCookie } }).then(response => response.json()) as any;
     assert.equal(afterUpload.settings.recommendations.items.find((entry: any) => entry.id === "server-one").logoUploaded, true);
