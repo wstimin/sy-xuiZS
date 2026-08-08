@@ -9,6 +9,7 @@ import { api } from './commercial.ts';
 import './index.css';
 import './admin.css';
 import './admin-redesign.css';
+import './admin-console.css';
 
 function normalizedPath() {
   return window.location.pathname.replace(/\/+$/, '') || '/';

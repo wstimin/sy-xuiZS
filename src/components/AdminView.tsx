@@ -979,7 +979,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
       <div className="admin-main">
         <header className="admin-topbar">
-          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div><div className="admin-topbar-page"><h1>{currentTitle}</h1><p>{currentMeta.description}</p></div><span><b>管理后台</b><ChevronRight />{currentMeta.area}<ChevronRight />{currentTitle}</span></div></div>
+          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div className="admin-breadcrumb"><span>管理后台</span><ChevronRight /><strong>{currentMeta.area}</strong><ChevronRight /><b>{currentTitle}</b></div></div>
           <div className="admin-topbar-actions">
             <span className="admin-topbar-context"><i />{currentContext}</span>
             {activeList.length > 0 && <button type="button" className="admin-button secondary admin-export-button" onClick={exportCurrent}><Download /> 导出当前列表</button>}
@@ -1425,7 +1425,8 @@ const Dashboard: React.FC<{
   const recentOrders = orders.slice(0, 5);
   const recentDeployments = deployments.slice(0, 5);
   return <div className="admin-dashboard">
-    <div className="admin-dashboard-strip"><div><span className="admin-live"><i /> 实时数据</span><p>业务指标、异常队列与最近活动已同步</p></div><small>数据来自当前业务数据库</small></div>
+    <header className="admin-page-heading admin-dashboard-heading"><div><h2>运营概览</h2><p>集中查看核心业务指标、异常队列和最近发生的订单与交付活动。</p></div><span className="admin-live"><i /> 数据已同步</span></header>
+    <div className="admin-dashboard-strip"><div><strong>业务健康度</strong><p>支付、权益与交付链路的当前运行摘要</p></div><small>数据来自当前业务数据库</small></div>
     <div className="admin-stat-grid">
       <Stat icon={Users} label="用户总数" value={stats?.users || 0} detail={`${stats?.activeUsers || 0} 正常 / ${stats?.disabledUsers || 0} 禁用`} tone="cyan" />
       <Stat icon={CircleDollarSign} label="实际收入" value={formatMoney(stats?.revenueCents || 0)} detail={`${stats?.paidOrders || 0} 笔已付款订单`} tone="green" />
@@ -1458,17 +1459,12 @@ const DiagnosisBadge: React.FC<{ diagnosis: OrderDetail['diagnosis'] }> = ({ dia
 type AdminToolbarProps = { query: string; onQuery: (value: string) => void; placeholder: string; filter: string; onFilter: (value: string) => void; options: Array<[string, string]>; title?: string; description?: string; action?: React.ReactNode };
 
 const AdminSection: React.FC<{ title: string; description: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => {
-  const childList = React.Children.toArray(children);
-  const hasDataTable = childList.some(child => React.isValidElement(child) && child.type === AdminToolbar);
-  const sectionChildren = hasDataTable ? childList.map(child => React.isValidElement<AdminToolbarProps>(child) && child.type === AdminToolbar
-    ? React.cloneElement(child, { title, description, action })
-    : child) : childList;
   return <div className="admin-section">
-    {!hasDataTable && <div className="admin-section-intro"><span>{title}</span><p>{description}</p>{action && <div className="admin-page-actions">{action}</div>}</div>}
-    <div className={hasDataTable ? 'admin-data-card' : 'admin-section-body'}>{sectionChildren}</div>
+    <header className="admin-page-heading"><div><h2>{title}</h2><p>{description}</p></div>{action && <div className="admin-page-actions">{action}</div>}</header>
+    <div className="admin-section-body">{children}</div>
   </div>;
 };
-const AdminToolbar: React.FC<AdminToolbarProps> = ({ query, onQuery, placeholder, filter, onFilter, options, title, description, action }) => <div className="admin-toolbar"><div className="admin-toolbar-heading"><span><SlidersHorizontal /></span><div><strong>{title || '数据列表'}</strong><small>{description || '搜索与状态条件会同时生效'}</small></div></div><div className="admin-toolbar-controls"><label className="admin-search"><Search /><input value={query} onChange={event => onQuery(event.target.value)} placeholder={placeholder} />{query && <button type="button" title="清除搜索" onClick={() => onQuery('')}><X /></button>}</label><label className="admin-filter"><select aria-label="状态筛选" value={filter} onChange={event => onFilter(event.target.value)}>{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><ChevronRight /></label>{action && <div className="admin-toolbar-actions">{action}</div>}</div></div>;
+const AdminToolbar: React.FC<AdminToolbarProps> = ({ query, onQuery, placeholder, filter, onFilter, options, title, description, action }) => <div className="admin-toolbar"><div className="admin-toolbar-heading"><span><SlidersHorizontal /></span><div><strong>{title || '筛选与查询'}</strong><small>{description || '搜索词和状态条件会同时生效'}</small></div></div><div className="admin-toolbar-controls"><label className="admin-search"><Search /><input value={query} onChange={event => onQuery(event.target.value)} placeholder={placeholder} />{query && <button type="button" title="清除搜索" onClick={() => onQuery('')}><X /></button>}</label><label className="admin-filter"><select aria-label="状态筛选" value={filter} onChange={event => onFilter(event.target.value)}>{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><ChevronRight /></label>{action && <div className="admin-toolbar-actions">{action}</div>}</div></div>;
 const AdminTable: React.FC<{ columns: string[]; empty: string; children: React.ReactNode }> = ({ columns, empty, children }) => <div className="admin-table-wrap"><table className="admin-table"><thead><tr>{columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{children}</tbody></table>{React.Children.count(children) === 0 && <div className="admin-table-empty"><Search /><strong>{empty}</strong><span>调整搜索词或筛选条件后再试。</span></div>}</div>;
 const Pagination: React.FC<{ total: number; page: number; pageCount: number; onPage: (page: number) => void }> = ({ total, page, pageCount, onPage }) => {
   const pages = Array.from({ length: pageCount }, (_, index) => index + 1).filter(item => item === 1 || item === pageCount || Math.abs(item - page) <= 1);
