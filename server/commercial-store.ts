@@ -8,7 +8,7 @@ import type { PaymentProvider } from "./payment-service.js";
 export type UserRole = "user" | "admin";
 export type Capability = "panel" | "node";
 export type QuotaMode = "none" | "limited" | "unlimited";
-export type DurationUnit = "days" | "months" | "years" | "lifetime";
+export type DurationUnit = "days" | "months" | "quarters" | "years" | "lifetime";
 
 export interface SessionUser {
   id: string;
@@ -279,6 +279,7 @@ function addDuration(start: Date, unit: DurationUnit, value: number): string | n
   const result = new Date(start);
   if (unit === "days") result.setUTCDate(result.getUTCDate() + value);
   if (unit === "months") result.setUTCMonth(result.getUTCMonth() + value);
+  if (unit === "quarters") result.setUTCMonth(result.getUTCMonth() + value * 3);
   if (unit === "years") result.setUTCFullYear(result.getUTCFullYear() + value);
   return result.toISOString();
 }
@@ -445,7 +446,7 @@ export class CommercialStore {
         name TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
         price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
-        duration_unit TEXT NOT NULL CHECK (duration_unit IN ('days', 'months', 'years', 'lifetime')),
+        duration_unit TEXT NOT NULL CHECK (duration_unit IN ('days', 'months', 'quarters', 'years', 'lifetime')),
         duration_value INTEGER NOT NULL DEFAULT 1 CHECK (duration_value >= 0),
         panel_mode TEXT NOT NULL CHECK (panel_mode IN ('none', 'limited', 'unlimited')),
         panel_limit INTEGER NOT NULL DEFAULT 0 CHECK (panel_limit >= 0),
@@ -680,6 +681,7 @@ export class CommercialStore {
     if (!redeemCodeColumns.some(column => column.name === "order_id")) {
       this.db.exec("ALTER TABLE redeem_codes ADD COLUMN order_id TEXT REFERENCES orders(id)");
     }
+    const migratedPlanDurationSchema = this.migratePlanDurationSchema();
     this.migratePaymentChannelSchema();
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
 
@@ -719,6 +721,46 @@ export class CommercialStore {
 
     const count = Number((this.db.prepare("SELECT COUNT(*) AS count FROM plans").get() as any).count);
     if (count === 0) this.seedPlans();
+    else if (migratedPlanDurationSchema) this.ensureQuarterlyPlan();
+  }
+
+  private migratePlanDurationSchema() {
+    const tableSql = String((this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'plans'").get() as any)?.sql || "");
+    if (/['"]quarters['"]/i.test(tableSql)) return false;
+    this.db.pragma("foreign_keys = OFF");
+    try {
+      this.db.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE plans_next (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+            duration_unit TEXT NOT NULL CHECK (duration_unit IN ('days', 'months', 'quarters', 'years', 'lifetime')),
+            duration_value INTEGER NOT NULL DEFAULT 1 CHECK (duration_value >= 0),
+            panel_mode TEXT NOT NULL CHECK (panel_mode IN ('none', 'limited', 'unlimited')),
+            panel_limit INTEGER NOT NULL DEFAULT 0 CHECK (panel_limit >= 0),
+            node_mode TEXT NOT NULL CHECK (node_mode IN ('none', 'limited', 'unlimited')),
+            node_limit INTEGER NOT NULL DEFAULT 0 CHECK (node_limit >= 0),
+            daily_panel_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_panel_limit >= 0),
+            daily_node_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_node_limit >= 0),
+            concurrency_limit INTEGER NOT NULL DEFAULT 1 CHECK (concurrency_limit >= 1),
+            enabled INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+          INSERT INTO plans_next SELECT * FROM plans;
+          DROP TABLE plans;
+          ALTER TABLE plans_next RENAME TO plans;
+        `);
+      }).immediate();
+    } finally {
+      this.db.pragma("foreign_keys = ON");
+    }
+    const foreignKeyErrors = this.db.prepare("PRAGMA foreign_key_check").all();
+    if (foreignKeyErrors.length) throw new Error("套餐周期数据库升级失败");
+    return true;
   }
 
   private migratePaymentChannelSchema() {
@@ -822,6 +864,22 @@ export class CommercialStore {
         sortOrder: 20,
       },
       {
+        name: "季度会员",
+        description: "3 个月有效，适合中期使用，包含更多搭建与节点配置额度。",
+        priceCents: 7900,
+        durationUnit: "quarters",
+        durationValue: 1,
+        panelMode: "limited",
+        panelLimit: 12,
+        nodeMode: "limited",
+        nodeLimit: 90,
+        dailyPanelLimit: 4,
+        dailyNodeLimit: 20,
+        concurrencyLimit: 1,
+        enabled: true,
+        sortOrder: 25,
+      },
+      {
         name: "年度会员",
         description: "一年有效，适合长期使用。",
         priceCents: 9900,
@@ -855,6 +913,27 @@ export class CommercialStore {
       },
     ];
     for (const plan of samples) this.createPlan(plan);
+  }
+
+  private ensureQuarterlyPlan() {
+    const exists = this.db.prepare("SELECT 1 FROM plans WHERE duration_unit = 'quarters' LIMIT 1").get();
+    if (exists) return;
+    this.createPlan({
+      name: "季度会员",
+      description: "3 个月有效，适合中期使用，包含更多搭建与节点配置额度。",
+      priceCents: 7900,
+      durationUnit: "quarters",
+      durationValue: 1,
+      panelMode: "limited",
+      panelLimit: 12,
+      nodeMode: "limited",
+      nodeLimit: 90,
+      dailyPanelLimit: 4,
+      dailyNodeLimit: 20,
+      concurrencyLimit: 1,
+      enabled: true,
+      sortOrder: 25,
+    });
   }
 
   hasUsers() {

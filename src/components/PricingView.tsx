@@ -13,7 +13,7 @@ type PurchaseMode = 'payment' | 'redeem';
 
 function duration(plan: Plan) {
   if (plan.durationUnit === 'lifetime') return '永久有效';
-  const units = { days: '天', months: '个月', years: '年' };
+  const units = { days: '天', months: '个月', quarters: '个季度', years: '年' };
   return `${plan.durationValue} ${units[plan.durationUnit]}`;
 }
 

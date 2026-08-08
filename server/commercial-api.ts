@@ -111,7 +111,7 @@ function quotaMode(value: unknown): QuotaMode {
 }
 
 function durationUnit(value: unknown): DurationUnit {
-  return value === "months" || value === "years" || value === "lifetime" ? value : "days";
+  return value === "months" || value === "quarters" || value === "years" || value === "lifetime" ? value : "days";
 }
 
 function optionalHttpUrl(value: unknown, label: string) {

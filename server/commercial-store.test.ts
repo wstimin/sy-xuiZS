@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { CommercialStore } from "./commercial-store.js";
@@ -13,6 +16,7 @@ test("only one initial administrator can be bootstrapped", () => {
     assert.equal(admin?.role, "admin");
     assert.equal(duplicate, null);
     assert.equal(store.listUsers().length, 1);
+    assert.equal(store.listPlans().some(plan => plan.durationUnit === "quarters"), true);
   } finally {
     store.close();
   }
@@ -136,6 +140,98 @@ test("paid order grants the exact plan snapshot", () => {
   assert.equal(entitlement.panelRemaining, 8);
   assert.equal(entitlement.nodeRemaining, 80);
   store.close();
+});
+
+test("quarterly plans grant three months of access", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("quarterly-buyer", "strong-password");
+    const plan = store.createPlan({
+      name: "季度套餐",
+      priceCents: 5900,
+      durationUnit: "quarters",
+      durationValue: 1,
+      panelMode: "limited",
+      panelLimit: 10,
+      nodeMode: "limited",
+      nodeLimit: 60,
+      dailyPanelLimit: 2,
+      dailyNodeLimit: 10,
+      concurrencyLimit: 1,
+      enabled: true,
+      sortOrder: 25,
+    });
+    const order = store.createOrder(user.id, plan.id);
+    store.markOrderPaid(order.id, "manual", "quarterly-trade");
+    const [entitlement]: any[] = store.listEntitlements(user.id);
+    const expectedExpiry = new Date(entitlement.startsAt);
+    expectedExpiry.setUTCMonth(expectedExpiry.getUTCMonth() + 3);
+
+    assert.equal(plan.durationUnit, "quarters");
+    assert.equal(entitlement.expiresAt, expectedExpiry.toISOString());
+  } finally {
+    store.close();
+  }
+});
+
+test("existing plan databases migrate to support quarterly durations", () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "xui-quarter-migration-"));
+  const databasePath = path.join(temporaryDirectory, "app.db");
+  try {
+    const seededStore = new CommercialStore(databasePath, { recoverInterruptedDeployments: false });
+    const existingPlan = seededStore.listPlans()[0];
+    const existingUser = seededStore.createUser("migration-user", "strong-password");
+    const existingOrder = seededStore.createOrder(existingUser.id, existingPlan.id);
+    seededStore.db.prepare("DELETE FROM plans WHERE duration_unit = 'quarters'").run();
+    seededStore.close();
+
+    const legacyDatabase = new Database(databasePath);
+    legacyDatabase.pragma("foreign_keys = OFF");
+    legacyDatabase.exec(`
+      CREATE TABLE plans_legacy_constraint (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+        duration_unit TEXT NOT NULL CHECK (duration_unit IN ('days', 'months', 'years', 'lifetime')),
+        duration_value INTEGER NOT NULL DEFAULT 1 CHECK (duration_value >= 0),
+        panel_mode TEXT NOT NULL CHECK (panel_mode IN ('none', 'limited', 'unlimited')),
+        panel_limit INTEGER NOT NULL DEFAULT 0 CHECK (panel_limit >= 0),
+        node_mode TEXT NOT NULL CHECK (node_mode IN ('none', 'limited', 'unlimited')),
+        node_limit INTEGER NOT NULL DEFAULT 0 CHECK (node_limit >= 0),
+        daily_panel_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_panel_limit >= 0),
+        daily_node_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_node_limit >= 0),
+        concurrency_limit INTEGER NOT NULL DEFAULT 1 CHECK (concurrency_limit >= 1),
+        enabled INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO plans_legacy_constraint SELECT * FROM plans;
+      DROP TABLE plans;
+      ALTER TABLE plans_legacy_constraint RENAME TO plans;
+    `);
+    legacyDatabase.close();
+
+    const migratedStore = new CommercialStore(databasePath, { recoverInterruptedDeployments: false });
+    try {
+      assert.equal(migratedStore.getPlan(existingPlan.id)?.name, existingPlan.name);
+      assert.equal(migratedStore.getOrder(existingOrder.id)?.planId, existingPlan.id);
+      assert.equal(migratedStore.listPlans().some(plan => plan.durationUnit === "quarters"), true);
+      assert.deepEqual(migratedStore.db.prepare("PRAGMA foreign_key_check").all(), []);
+      const quarterlyPlan = migratedStore.createPlan({
+        ...existingPlan,
+        name: "迁移后的季度套餐",
+        durationUnit: "quarters",
+        durationValue: 1,
+      });
+      assert.equal(quarterlyPlan.durationUnit, "quarters");
+    } finally {
+      migratedStore.close();
+    }
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 test("redeem codes store only hashes and grant their plan once", () => {

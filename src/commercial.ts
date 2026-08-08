@@ -1,6 +1,6 @@
 export type UserRole = 'user' | 'admin';
 export type QuotaMode = 'none' | 'limited' | 'unlimited';
-export type DurationUnit = 'days' | 'months' | 'years' | 'lifetime';
+export type DurationUnit = 'days' | 'months' | 'quarters' | 'years' | 'lifetime';
 export type PaymentProvider = 'manual' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'paypal' | 'alipay_official' | 'wechat_official';
 export type PaymentMethodType = 'manual' | 'alipay' | 'wechat' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'paypal';
 

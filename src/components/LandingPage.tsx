@@ -46,7 +46,7 @@ const services = [
 ];
 
 const capabilities = [
-  ['01', '注册并购买搭建权益', '选择单次、月度、年度或永久套餐，面板搭建次数、节点配置次数和有效期在购买前清晰展示。'],
+  ['01', '注册并购买搭建权益', '选择单次、月度、季度、年度或永久套餐，面板搭建次数、节点配置次数和有效期在购买前清晰展示。'],
   ['02', '提交服务器搭建任务', '登录用户端填写服务器连接信息，系统先校验可用权益，再锁定本次面板或节点任务额度。'],
   ['03', '系统自动执行搭建', '沿用已经验证的自动化搭建流程执行安装和配置，任务状态、失败原因与额度变化全程留痕。'],
   ['04', '查看结果并继续配置', '搭建完成后在用户端查看交付结果和历史记录，并根据剩余权益继续创建节点或新的面板任务。'],
@@ -54,7 +54,7 @@ const capabilities = [
 
 function planDuration(plan: Plan) {
   if (plan.durationUnit === 'lifetime') return '永久有效';
-  const units = { days: '天', months: '个月', years: '年' };
+  const units = { days: '天', months: '个月', quarters: '个季度', years: '年' };
   return `${plan.durationValue} ${units[plan.durationUnit]}`;
 }
 
@@ -63,7 +63,7 @@ export const LandingPage: React.FC = () => {
 
   useEffect(() => {
     api<{ plans: Plan[] }>('/api/plans')
-      .then(result => setPlans(result.plans.filter(plan => plan.enabled).slice(0, 4)))
+      .then(result => setPlans(result.plans.filter(plan => plan.enabled).slice(0, 5)))
       .catch(() => setPlans([]));
   }, []);
 

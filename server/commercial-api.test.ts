@@ -129,6 +129,15 @@ test("admin management endpoints create users and expose protected operational r
     });
     const adminCookie = sessionCookie(adminResponse);
 
+    const basePlan = store.listPlans()[0];
+    const quarterlyPlanResponse = await fetch(`${base}/admin/plans`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ ...basePlan, name: "API 季度套餐", durationUnit: "quarters", durationValue: 1 }),
+    });
+    assert.equal(quarterlyPlanResponse.status, 201);
+    assert.equal((await quarterlyPlanResponse.json() as any).plan.durationUnit, "quarters");
+
     const createResponse = await fetch(`${base}/admin/users`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: adminCookie },
