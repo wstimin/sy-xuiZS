@@ -112,7 +112,7 @@ export const LandingPage: React.FC = () => {
 
         <div className="hero-content">
           <div className="hero-kicker"><Sparkles className="h-4 w-4" /> 服务器面板与网络节点自助搭建</div>
-          <h1>购买搭建权益，<br /><span>在线完成面板与节点部署</span></h1>
+          <h1>购买搭建权益，<br /><span>告别繁琐步骤，一键完成面板与节点部署</span></h1>
           <p>
             面向跨境业务、AI 应用和多区域网络使用场景，提供服务器面板安装、网络节点配置与任务记录管理。
             用户购买权益后即可在工作台发起搭建，面板次数与节点次数独立计算，执行结果清晰可查。

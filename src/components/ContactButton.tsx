@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ExternalLink, Headphones, QrCode, X } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Headphones, QrCode, X } from 'lucide-react';
 import { api, ContactMethod, ContactSettings } from '../commercial';
 
 const contactTypeLabels: Record<ContactMethod['type'], string> = {
@@ -18,6 +18,7 @@ const contactTypeLabels: Record<ContactMethod['type'], string> = {
 export const ContactButton: React.FC = () => {
   const [contact, setContact] = useState<ContactSettings | null>(null);
   const [open, setOpen] = useState(false);
+  const [selectedMethod, setSelectedMethod] = useState<ContactMethod | null>(null);
 
   useEffect(() => {
     api<{ contact: ContactSettings }>('/api/contact-settings')
@@ -27,43 +28,69 @@ export const ContactButton: React.FC = () => {
 
   useEffect(() => {
     if (!open) return undefined;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (selectedMethod) setSelectedMethod(null);
+      else setOpen(false);
+    };
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [open]);
+  }, [open, selectedMethod]);
 
   if (!contact?.enabled) return null;
   const methods = contact.methods.filter(method => method.enabled && (method.value || method.contactUrl || method.qrCodeUrl || method.qrCodeUploaded));
   if (!methods.length) return null;
 
+  const closeDialog = () => {
+    setSelectedMethod(null);
+    setOpen(false);
+  };
+
+  const selectedQrCodeSrc = selectedMethod
+    ? selectedMethod.qrCodeUploaded
+      ? `/api/contact-methods/${encodeURIComponent(selectedMethod.id)}/qr`
+      : selectedMethod.qrCodeUrl
+    : '';
+
   return <>
-    <button type="button" className="contact-floating-button" onClick={() => setOpen(true)} aria-haspopup="dialog" title={contact.buttonLabel || '立即咨询'}>
+    <button type="button" className="contact-floating-button" onClick={() => { setSelectedMethod(null); setOpen(true); }} aria-haspopup="dialog" title={contact.buttonLabel || '立即咨询'}>
       <Headphones /> <span>{contact.buttonLabel || '立即咨询'}</span>
     </button>
-    {open && <div className="contact-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setOpen(false); }}>
-      <section className="contact-dialog" role="dialog" aria-modal="true" aria-labelledby="contact-dialog-title">
+    {open && <div className="contact-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeDialog(); }}>
+      <section className={`contact-dialog ${selectedMethod ? 'contact-method-detail-dialog' : ''}`} role="dialog" aria-modal="true" aria-labelledby="contact-dialog-title">
         <header>
-          <span className="contact-dialog-icon"><Headphones /></span>
-          <div><small>SUPPORT</small><h2 id="contact-dialog-title">{contact.title || '联系站长'}</h2></div>
-          <button type="button" onClick={() => setOpen(false)} title="关闭"><X /></button>
+          <span className="contact-dialog-icon">{selectedMethod ? <QrCode /> : <Headphones />}</span>
+          <div><small>{selectedMethod ? contactTypeLabels[selectedMethod.type] : 'SUPPORT'}</small><h2 id="contact-dialog-title">{selectedMethod?.name || contact.title || '联系站长'}</h2></div>
+          <button type="button" onClick={closeDialog} title="关闭"><X /></button>
         </header>
-        <div className="contact-dialog-body">
+        {selectedMethod ? <div className="contact-dialog-body contact-method-detail">
+          <button type="button" className="contact-method-back" onClick={() => setSelectedMethod(null)} title="返回联系方式列表"><ArrowLeft /> 返回</button>
+          <div className="contact-method-detail-main">
+            <span className="contact-method-type">{contactTypeLabels[selectedMethod.type]}</span>
+            <h3>{selectedMethod.name}</h3>
+            {selectedMethod.value && <p>{selectedMethod.value}</p>}
+          </div>
+          {selectedQrCodeSrc && <div className="contact-method-detail-qr"><img src={selectedQrCodeSrc} alt={`${selectedMethod.name}二维码`} /></div>}
+          {selectedQrCodeSrc && <span className="contact-method-detail-hint"><QrCode /> 请使用手机扫码联系</span>}
+          {selectedMethod.contactUrl && <a className="contact-method-detail-link" href={selectedMethod.contactUrl} target={selectedMethod.contactUrl.startsWith('http') ? '_blank' : undefined} rel="noreferrer">联系此方式 <ExternalLink /></a>}
+        </div> : <div className="contact-dialog-body">
           {contact.description && <p className="contact-dialog-description">{contact.description}</p>}
           <div className="contact-method-list">
             {methods.map(method => {
               const qrCodeSrc = method.qrCodeUploaded ? `/api/contact-methods/${encodeURIComponent(method.id)}/qr` : method.qrCodeUrl;
               return <article className="contact-method" key={method.id}>
-                <div className="contact-method-main">
-                  <span className="contact-method-type">{contactTypeLabels[method.type]}</span>
-                  <div><h3>{method.name}</h3>{method.value && <p>{method.value}</p>}</div>
-                </div>
-                {qrCodeSrc && <div className="contact-method-qr"><img src={qrCodeSrc} alt={`${method.name}二维码`} /></div>}
+                <button type="button" className="contact-method-preview" onClick={() => setSelectedMethod(method)} aria-label={`查看${method.name}联系方式`}>
+                  <div className="contact-method-main">
+                    <span className="contact-method-type">{contactTypeLabels[method.type]}</span>
+                    <div><h3>{method.name}</h3>{method.value && <p>{method.value}</p>}<span className="contact-method-open-hint"><QrCode /> {qrCodeSrc ? '点击放大二维码' : '点击查看联系方式'}</span></div>
+                  </div>
+                  {qrCodeSrc && <div className="contact-method-qr"><img src={qrCodeSrc} alt={`${method.name}二维码`} /></div>}
+                </button>
                 {method.contactUrl && <a href={method.contactUrl} target={method.contactUrl.startsWith('http') ? '_blank' : undefined} rel="noreferrer">联系此方式 <ExternalLink /></a>}
-                {!qrCodeSrc && !method.contactUrl && <span className="contact-method-hint"><QrCode /> 请使用上方账号联系</span>}
               </article>;
             })}
           </div>
-        </div>
+        </div>}
       </section>
     </div>}
   </>;
