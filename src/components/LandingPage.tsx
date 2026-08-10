@@ -118,8 +118,8 @@ export const LandingPage: React.FC = () => {
             <span className="hero-title-final-line">一键完成面板与节点部署</span>
           </h1>
           <p>
-            面向跨境业务、AI 应用和多区域网络使用场景，提供服务器面板安装、网络节点配置与任务记录管理。
-            用户购买权益后即可在工作台发起搭建，面板次数与节点次数独立计算，执行结果清晰可查。
+            面向跨境业务、AI 应用和多区域网络场景，提供服务器面板安装与网络节点配置服务。
+            选择合适的套餐，即可在线发起搭建，并随时查看执行进度与交付结果。
           </p>
           <div className="hero-actions">
             <a href="/register" className="hero-primary">
@@ -145,9 +145,9 @@ export const LandingPage: React.FC = () => {
         <div className="section-heading">
           <div>
             <span className="section-index">01 / BUILD SERVICES</span>
-            <h2>用户真正可以购买和执行的搭建服务</h2>
+            <h2>面板与节点搭建服务</h2>
           </div>
-          <p>不展示底层面板品牌，但明确展示实际交付内容：服务器面板安装、节点配置、任务执行和结果管理。</p>
+          <p>提供服务器面板安装、网络节点配置、任务执行与结果管理，满足不同场景下的网络环境搭建需求。</p>
         </div>
 
         <div className="service-grid">
@@ -167,9 +167,9 @@ export const LandingPage: React.FC = () => {
         <div className="section-heading">
           <div>
             <span className="section-index">02 / SERVICE PLANS</span>
-            <h2>按搭建次数和使用期限购买</h2>
+            <h2>按次数和使用期限灵活购买</h2>
           </div>
-          <p>以下内容直接读取当前系统套餐。管理员修改价格、有效期、面板次数或节点次数后，首页会同步显示。</p>
+          <p>根据使用需求选择合适的套餐，搭建次数、节点额度、有效期和价格清晰可见。</p>
         </div>
         <div className="landing-plan-grid">
           {plans.map(plan => (
@@ -191,8 +191,8 @@ export const LandingPage: React.FC = () => {
       <section id="workflow" className="landing-section workflow-section">
         <div className="workflow-intro">
           <span className="section-index">03 / BUILD WORKFLOW</span>
-          <h2>从购买次数到完成搭建，<br />都在用户端执行</h2>
-          <p>账户统一管理套餐、面板次数、节点次数、订单和搭建记录。每次任务执行前校验权益，成功后扣减，失败则按系统规则处理额度。</p>
+          <h2>从购买套餐到完成部署，<br />全程在线自助完成</h2>
+          <p>账户统一管理套餐、剩余额度、订单和搭建记录，无需繁琐操作，即可快速发起新的搭建任务。</p>
           <div className="workflow-icons">
             <span><CloudCog className="h-5 w-5" /> 自动执行</span>
             <span><ShieldCheck className="h-5 w-5" /> 权益校验</span>
