@@ -9,11 +9,12 @@ import { ProtocolMatrixGuideModal } from './components/ProtocolMatrixGuideModal'
 import { SetupGuideModal } from './components/SetupGuideModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { Toast } from './components/Toast';
-import { AccountData, api, CurrentUser, Plan, ResourceRecommendationSettings } from './commercial';
+import { AccountData, activeCapability, api, CurrentUser, Plan, ResourceRecommendationSettings } from './commercial';
 import { PricingView } from './components/PricingView';
 import { AccountView } from './components/AccountView';
 import { ContactButton } from './components/ContactButton';
 import { ResourceRecommendationsView } from './components/ResourceRecommendationsView';
+import { CustomerNoticeDialog } from './components/CustomerNoticeDialog';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('home');
@@ -27,6 +28,8 @@ export default function App() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [account, setAccount] = useState<AccountData | null>(null);
   const [accountLoading, setAccountLoading] = useState(false);
+  const [quotaRequired, setQuotaRequired] = useState<'panel' | 'node' | null>(null);
+  const [purchaseNotice, setPurchaseNotice] = useState<{ title: string; description: string } | null>(null);
   const [recommendations, setRecommendations] = useState<ResourceRecommendationSettings>({ serverEnabled: true, residentialIpEnabled: true, items: [] });
 
   // Pre-filled panel login credentials for node deployment
@@ -94,14 +97,29 @@ export default function App() {
   };
 
   const refreshAccount = async () => {
-    if (!user) return;
+    if (!user) return null;
     setAccountLoading(true);
     try {
       const result = await api<AccountData>('/api/account');
       setAccount(result);
+      return result;
     } finally {
       setAccountLoading(false);
     }
+  };
+
+  const hasAvailableCapability = async (capability: 'panel' | 'node') => {
+    try {
+      const latestAccount = await refreshAccount();
+      return Boolean(latestAccount && activeCapability(latestAccount.entitlements, capability).length);
+    } catch {
+      // Let the deployment endpoint perform the authoritative check if account refresh is temporarily unavailable.
+      return true;
+    }
+  };
+
+  const showPurchaseSuccess = (title = '套餐购买成功', description = '套餐权益已经自动发放到账户，现在可以继续搭建。') => {
+    setPurchaseNotice({ title, description });
   };
 
   useEffect(() => {
@@ -150,7 +168,7 @@ export default function App() {
         if (result.order.status === 'paid') {
           await refreshAccount();
           setCurrentView('account');
-          showToast('支付成功', '套餐权益已经自动发放到账户', 'success');
+          showPurchaseSuccess();
           window.history.replaceState({}, '', '/console');
           return;
         }
@@ -321,6 +339,8 @@ export default function App() {
             onGoToNodeWithPanel={handleGoToNodeWithPanel}
             showToast={showToast}
             entitlements={account?.entitlements}
+            onCheckCapability={() => hasAvailableCapability('panel')}
+            onQuotaRequired={() => setQuotaRequired('panel')}
             onOpenResources={showResources ? () => setCurrentView('resources') : undefined}
           />
         )}
@@ -331,12 +351,14 @@ export default function App() {
             onNodeCreated={handleNodeCreated}
             showToast={showToast}
             entitlements={account?.entitlements}
+            onCheckCapability={() => hasAvailableCapability('node')}
+            onQuotaRequired={() => setQuotaRequired('node')}
             onOpenResources={showResources ? () => setCurrentView('resources') : undefined}
           />
         )}
 
-        {currentView === 'pricing' && <PricingView plans={plans} onOrderCreated={refreshAccount} showToast={showToast} />}
-        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={() => void refreshAccount()} onLoggedOut={() => { setUser(null); window.location.assign('/'); }} onLogout={() => void logout()} showToast={showToast} />}
+        {currentView === 'pricing' && <PricingView plans={plans} onOrderCreated={refreshAccount} onPurchaseSuccess={showPurchaseSuccess} showToast={showToast} />}
+        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={refreshAccount} onPurchaseSuccess={showPurchaseSuccess} onLoggedOut={() => { setUser(null); window.location.assign('/'); }} onLogout={() => void logout()} showToast={showToast} />}
       </main>
 
       {/* Footer */}
@@ -371,6 +393,27 @@ export default function App() {
       </footer>
 
       <ContactButton />
+
+      <CustomerNoticeDialog
+        open={Boolean(quotaRequired)}
+        tone="warning"
+        title="套餐额度不足"
+        description={`当前没有可用的${quotaRequired === 'node' ? '节点搭建' : '面板搭建'}次数，请先购买套餐后再继续。`}
+        confirmLabel="购买套餐"
+        cancelLabel="暂不购买"
+        onClose={() => setQuotaRequired(null)}
+        onConfirm={() => { setQuotaRequired(null); setCurrentView('pricing'); }}
+      />
+
+      <CustomerNoticeDialog
+        open={Boolean(purchaseNotice)}
+        tone="success"
+        title={purchaseNotice?.title || '套餐购买成功'}
+        description={purchaseNotice?.description || '套餐权益已经自动发放到账户，现在可以继续搭建。'}
+        confirmLabel="知道了"
+        onClose={() => setPurchaseNotice(null)}
+        onConfirm={() => setPurchaseNotice(null)}
+      />
 
       {/* Modals & Overlays */}
       <SetupGuideModal

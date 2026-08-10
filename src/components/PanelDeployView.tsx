@@ -14,6 +14,8 @@ interface PanelDeployViewProps {
   onGoToNodeWithPanel: (result: PanelResult) => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
   entitlements?: Entitlement[];
+  onCheckCapability: () => Promise<boolean>;
+  onQuotaRequired: () => void;
   onOpenResources?: () => void;
 }
 
@@ -58,6 +60,8 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
   onGoToNodeWithPanel,
   showToast,
   entitlements = [],
+  onCheckCapability,
+  onQuotaRequired,
   onOpenResources
 }) => {
   const [form, setForm] = useState<PanelDeployForm>({
@@ -78,6 +82,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
   });
 
   const [isDeploying, setIsDeploying] = useState(false);
+  const [isCheckingQuota, setIsCheckingQuota] = useState(false);
   const [deployLogs, setDeployLogs] = useState<string[]>([]);
   const [deployStep, setDeployStep] = useState<number>(0);
   const [deployError, setDeployError] = useState<string | null>(null);
@@ -231,6 +236,16 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    setIsCheckingQuota(true);
+    try {
+      if (!await onCheckCapability()) {
+        onQuotaRequired();
+        return;
+      }
+    } finally {
+      setIsCheckingQuota(false);
+    }
+
     const cleanIp = cleanHostStr(form.ipOrDomain);
     if (!cleanIp) {
       showToast('请输入服务器 IP 或域名', '这是 SSH 连接的必需字段', 'warning');
@@ -308,13 +323,15 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
       if (!res.ok) {
         let errText = '后端接口响应异常';
+        let errCode = '';
         try {
           const errJson = await res.json();
           if (errJson?.error) errText = errJson.error;
+          if (errJson?.code) errCode = errJson.code;
         } catch {
           // ignore
         }
-        throw new Error(errText);
+        throw Object.assign(new Error(errText), { code: errCode, status: res.status });
       }
 
       if (!res.body) throw new Error('浏览器未收到部署日志流');
@@ -379,6 +396,13 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       setResultModal(backendResult);
       showToast('搭建成功！', '3x-ui 已安装并通过服务状态验证', 'success');
     } catch (err: any) {
+      if (err?.code === 'PAYMENT_REQUIRED' || err?.status === 402) {
+        setDeployLogs([]);
+        setDeployStep(0);
+        setDeployError(null);
+        onQuotaRequired();
+        return;
+      }
       const message = err?.name === 'AbortError'
         ? '部署连接未在规定时间内返回，请检查助手服务或服务器 SSH 状态后重试'
         : err?.message || '请检查后端通信与网络连接';
@@ -890,12 +914,17 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
         <div className="pt-2">
           <button
             type="submit"
-            disabled={isDeploying}
+            disabled={isDeploying || isCheckingQuota}
             className={`w-full py-3.5 px-6 rounded-2xl font-bold text-base text-white bg-indigo-600 hover:bg-indigo-500 shadow-xl shadow-indigo-500/20 transition-all duration-300 flex items-center justify-center gap-2 ${
-              isDeploying ? 'opacity-80 cursor-not-allowed' : 'hover:scale-[1.005]'
+              isDeploying || isCheckingQuota ? 'opacity-80 cursor-not-allowed' : 'hover:scale-[1.005]'
             }`}
           >
-            {isDeploying ? (
+            {isCheckingQuota ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>正在验证套餐...</span>
+              </>
+            ) : isDeploying ? (
               <>
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 <span>正在自动化部署 xui面板 ({deployStep}/9)...</span>

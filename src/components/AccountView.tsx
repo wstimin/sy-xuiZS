@@ -22,7 +22,8 @@ import { PaymentCheckoutDialog } from './PaymentCheckoutDialog';
 interface AccountViewProps {
   account: AccountData | null;
   loading: boolean;
-  onRefresh: () => void;
+  onRefresh: () => Promise<unknown> | void;
+  onPurchaseSuccess: () => void;
   onLoggedOut: () => void;
   onLogout: () => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
@@ -46,7 +47,7 @@ function orderPaymentName(order: Order, methodName?: string) {
   return methodName || order.paymentProvider || '-';
 }
 
-export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRefresh, onLoggedOut, onLogout, showToast }) => {
+export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRefresh, onPurchaseSuccess, onLoggedOut, onLogout, showToast }) => {
   const [tab, setTab] = useState<AccountTab>('overview');
   const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
   const [payingOrderId, setPayingOrderId] = useState('');
@@ -168,8 +169,10 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       </section>}
       {checkout && <PaymentCheckoutDialog order={checkout.order} payment={checkout.payment} onClose={() => setCheckout(null)} onPaid={() => {
         setCheckout(null);
-        onRefresh();
-        showToast('支付成功', '套餐权益已经自动发放到账户', 'success');
+        void Promise.resolve(onRefresh()).then(
+          () => onPurchaseSuccess(),
+          () => onPurchaseSuccess(),
+        );
       }} />}
     </div>
   );

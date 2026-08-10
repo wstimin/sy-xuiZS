@@ -5,7 +5,8 @@ import { PaymentCheckoutDialog } from './PaymentCheckoutDialog';
 
 interface PricingViewProps {
   plans: Plan[];
-  onOrderCreated: () => Promise<void> | void;
+  onOrderCreated: () => Promise<unknown> | void;
+  onPurchaseSuccess: (title?: string, description?: string) => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
@@ -17,7 +18,7 @@ function duration(plan: Plan) {
   return `${plan.durationValue} ${units[plan.durationUnit]}`;
 }
 
-export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated, showToast }) => {
+export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated, onPurchaseSuccess, showToast }) => {
   const [ordering, setOrdering] = useState('');
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -95,7 +96,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       setRedeemCode('');
       setSelectedPlan(null);
       await onOrderCreated();
-      showToast('卡密兑换成功', `${result.planName} 权益已发放，订单 ${result.orderNo} 已记录`, 'success');
+      onPurchaseSuccess('套餐兑换成功', `${result.planName} 权益已经发放到账户，现在可以继续搭建。`);
     } catch (error) {
       showToast('卡密兑换失败', error instanceof Error ? error.message : '请检查卡密后重试', 'error');
     } finally {
@@ -161,8 +162,10 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       </div>}
       {checkout && <PaymentCheckoutDialog order={checkout.order} payment={checkout.payment} onClose={() => setCheckout(null)} onPaid={() => {
         setCheckout(null);
-        void onOrderCreated();
-        showToast('支付成功', '套餐权益已经自动发放到账户', 'success');
+        void Promise.resolve(onOrderCreated()).then(
+          () => onPurchaseSuccess(),
+          () => onPurchaseSuccess(),
+        );
       }} />}
     </div>
   );

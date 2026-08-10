@@ -56,6 +56,8 @@ interface NodeDeployViewProps {
   onNodeCreated: (result: NodeResult) => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
   entitlements?: Entitlement[];
+  onCheckCapability: () => Promise<boolean>;
+  onQuotaRequired: () => void;
   onOpenResources?: () => void;
 }
 
@@ -64,6 +66,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   onNodeCreated,
   showToast,
   entitlements = [],
+  onCheckCapability,
+  onQuotaRequired,
   onOpenResources
 }) => {
   const [form, setForm] = useState<NodeDeployForm>({
@@ -97,6 +101,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   });
 
   const [isDeploying, setIsDeploying] = useState(false);
+  const [isCheckingQuota, setIsCheckingQuota] = useState(false);
   const [isFetchingTls, setIsFetchingTls] = useState(false);
   const [tlsStatus, setTlsStatus] = useState<string | null>(null);
   const [resultModal, setResultModal] = useState<NodeResult | null>(null);
@@ -278,6 +283,16 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    setIsCheckingQuota(true);
+    try {
+      if (!await onCheckCapability()) {
+        onQuotaRequired();
+        return;
+      }
+    } finally {
+      setIsCheckingQuota(false);
+    }
+
     const cleanAddress = cleanHostStr(form.panelAddress);
     if (!cleanAddress) {
       showToast('请输入 3-xui 面板地址', '例: 192.0.2.1 或 xui.example.com', 'warning');
@@ -333,7 +348,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       });
       if (!res.ok) {
         const errorBody = await res.json().catch(() => ({}));
-        throw new Error(errorBody.error || `节点创建请求失败，HTTP ${res.status}`);
+        throw Object.assign(new Error(errorBody.error || `节点创建请求失败，HTTP ${res.status}`), { code: errorBody.code, status: res.status });
       }
       if (!res.body) throw new Error('浏览器未收到节点创建日志流');
 
@@ -392,7 +407,12 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       setResultModal(result);
       showToast('节点创建成功', '已通过 3x-ui API 快速创建入站', 'success');
     } catch (err: any) {
-      if (err?.name === 'AbortError') {
+      if (err?.code === 'PAYMENT_REQUIRED' || err?.status === 402) {
+        setDeployStep(0);
+        setDeployMessage('');
+        setDeployError(null);
+        onQuotaRequired();
+      } else if (err?.name === 'AbortError') {
         setDeployMessage('已终止创建，后端正在回滚本次变更');
         setDeployError('创建操作已由你终止');
         showToast('已终止节点创建', '已通知后端取消请求并回滚本次创建的入站与路由', 'info');
@@ -918,12 +938,17 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
         <div className="flex gap-3">
           <button
             type="submit"
-            disabled={isDeploying}
+            disabled={isDeploying || isCheckingQuota}
             className={`flex-1 min-w-0 py-3.5 px-4 sm:px-6 rounded-2xl font-bold text-sm sm:text-base text-white bg-indigo-600 hover:bg-indigo-500 shadow-xl shadow-indigo-500/20 transition-all duration-300 flex items-center justify-center gap-2 ${
-              isDeploying ? 'opacity-80 cursor-not-allowed' : 'hover:scale-[1.005]'
+              isDeploying || isCheckingQuota ? 'opacity-80 cursor-not-allowed' : 'hover:scale-[1.005]'
             }`}
           >
-            {isDeploying ? (
+            {isCheckingQuota ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
+                <span className="truncate">正在验证套餐...</span>
+              </>
+            ) : isDeploying ? (
               <>
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
                 <span className="truncate">{deployMessage || '正在创建节点...'}</span>

@@ -1157,7 +1157,7 @@
   overflow: hidden;
 }
 
-.admin-contact-upload-preview img { width: 100%; height: 100%; object-fit: contain; }
+.admin-contact-upload-preview img { width: 100%; height: 100%; object-fit: contain; border-radius: 7px; }
 .admin-contact-upload-preview > span { display: grid; justify-items: center; gap: 7px; }
 .admin-contact-upload-preview svg { width: 30px; height: 30px; }
 .admin-contact-upload p { margin: 6px 0 12px; }
@@ -1175,7 +1175,7 @@
 .admin-contact-qr-actions input { display: none; }
 .admin-contact-qr-preview { width: 34px; height: 34px; display: grid; place-items: center; overflow: hidden; }
 .admin-contact-qr-preview.has-image { padding: 2px; }
-.admin-contact-qr-preview img { width: 100%; height: 100%; object-fit: contain; }
+.admin-contact-qr-preview img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; }
 .admin-contact-qr-preview svg { width: 16px; height: 16px; }
 .admin-resource-count { min-height: 34px; padding: 0 10px; display: inline-flex; align-items: center; }
 .admin-resource-table-wrap { overflow-x: auto; }
