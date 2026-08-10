@@ -161,6 +161,7 @@ export interface Plan {
   dailyNodeLimit: number;
   concurrencyLimit: number;
   enabled: boolean;
+  homepageVisible: boolean;
   sortOrder: number;
 }
 

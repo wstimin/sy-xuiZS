@@ -176,6 +176,7 @@ export interface PlanInput {
   dailyNodeLimit: number;
   concurrencyLimit: number;
   enabled: boolean;
+  homepageVisible?: boolean;
   sortOrder: number;
 }
 
@@ -300,6 +301,7 @@ function publicPlan(row: any) {
     dailyNodeLimit: row.daily_node_limit,
     concurrencyLimit: row.concurrency_limit,
     enabled: Boolean(row.enabled),
+    homepageVisible: Boolean(row.homepage_visible),
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -456,6 +458,7 @@ export class CommercialStore {
         daily_node_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_node_limit >= 0),
         concurrency_limit INTEGER NOT NULL DEFAULT 1 CHECK (concurrency_limit >= 1),
         enabled INTEGER NOT NULL DEFAULT 1,
+        homepage_visible INTEGER NOT NULL DEFAULT 1,
         sort_order INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -682,6 +685,10 @@ export class CommercialStore {
       this.db.exec("ALTER TABLE redeem_codes ADD COLUMN order_id TEXT REFERENCES orders(id)");
     }
     const migratedPlanDurationSchema = this.migratePlanDurationSchema();
+    const planColumns = this.db.prepare("PRAGMA table_info(plans)").all() as Array<{ name: string }>;
+    if (!planColumns.some(column => column.name === "homepage_visible")) {
+      this.db.exec("ALTER TABLE plans ADD COLUMN homepage_visible INTEGER NOT NULL DEFAULT 1");
+    }
     this.migratePaymentChannelSchema();
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL");
 
@@ -727,6 +734,8 @@ export class CommercialStore {
   private migratePlanDurationSchema() {
     const tableSql = String((this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'plans'").get() as any)?.sql || "");
     if (/['"]quarters['"]/i.test(tableSql)) return false;
+    const columns = this.db.prepare("PRAGMA table_info(plans)").all() as Array<{ name: string }>;
+    const hasHomepageVisible = columns.some(column => column.name === "homepage_visible");
     this.db.pragma("foreign_keys = OFF");
     try {
       this.db.transaction(() => {
@@ -746,11 +755,22 @@ export class CommercialStore {
             daily_node_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_node_limit >= 0),
             concurrency_limit INTEGER NOT NULL DEFAULT 1 CHECK (concurrency_limit >= 1),
             enabled INTEGER NOT NULL DEFAULT 1,
+            homepage_visible INTEGER NOT NULL DEFAULT 1,
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
           );
-          INSERT INTO plans_next SELECT * FROM plans;
+          INSERT INTO plans_next (
+            id, name, description, price_cents, duration_unit, duration_value,
+            panel_mode, panel_limit, node_mode, node_limit, daily_panel_limit,
+            daily_node_limit, concurrency_limit, enabled, homepage_visible,
+            sort_order, created_at, updated_at
+          ) SELECT
+            id, name, description, price_cents, duration_unit, duration_value,
+            panel_mode, panel_limit, node_mode, node_limit, daily_panel_limit,
+            daily_node_limit, concurrency_limit, enabled, ${hasHomepageVisible ? "homepage_visible" : "1"},
+            sort_order, created_at, updated_at
+          FROM plans;
           DROP TABLE plans;
           ALTER TABLE plans_next RENAME TO plans;
         `);
@@ -1469,13 +1489,13 @@ export class CommercialStore {
       INSERT INTO plans (
         id, name, description, price_cents, duration_unit, duration_value,
         panel_mode, panel_limit, node_mode, node_limit, daily_panel_limit,
-        daily_node_limit, concurrency_limit, enabled, sort_order, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        daily_node_limit, concurrency_limit, enabled, homepage_visible, sort_order, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, input.name.trim(), input.description?.trim() || "", input.priceCents, input.durationUnit,
       input.durationValue, input.panelMode, input.panelLimit, input.nodeMode, input.nodeLimit,
       input.dailyPanelLimit, input.dailyNodeLimit, input.concurrencyLimit, input.enabled ? 1 : 0,
-      input.sortOrder, timestamp, timestamp,
+      input.homepageVisible !== false ? 1 : 0, input.sortOrder, timestamp, timestamp,
     );
     return this.getPlan(id, true)!;
   }
@@ -1485,13 +1505,13 @@ export class CommercialStore {
     this.db.prepare(`
       UPDATE plans SET name = ?, description = ?, price_cents = ?, duration_unit = ?, duration_value = ?,
         panel_mode = ?, panel_limit = ?, node_mode = ?, node_limit = ?, daily_panel_limit = ?,
-        daily_node_limit = ?, concurrency_limit = ?, enabled = ?, sort_order = ?, updated_at = ?
+        daily_node_limit = ?, concurrency_limit = ?, enabled = ?, homepage_visible = ?, sort_order = ?, updated_at = ?
       WHERE id = ?
     `).run(
       input.name.trim(), input.description?.trim() || "", input.priceCents, input.durationUnit,
       input.durationValue, input.panelMode, input.panelLimit, input.nodeMode, input.nodeLimit,
       input.dailyPanelLimit, input.dailyNodeLimit, input.concurrencyLimit, input.enabled ? 1 : 0,
-      input.sortOrder, nowIso(), id,
+      input.homepageVisible !== false ? 1 : 0, input.sortOrder, nowIso(), id,
     );
     return this.getPlan(id, true);
   }

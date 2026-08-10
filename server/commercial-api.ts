@@ -629,6 +629,7 @@ function planInput(body: Record<string, unknown>): PlanInput {
     dailyNodeLimit: intValue(body.dailyNodeLimit),
     concurrencyLimit: intValue(body.concurrencyLimit, 1),
     enabled: body.enabled !== false,
+    homepageVisible: body.homepageVisible !== false,
     sortOrder: intValue(body.sortOrder),
   };
 }

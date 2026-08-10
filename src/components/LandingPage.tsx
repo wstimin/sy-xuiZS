@@ -63,7 +63,7 @@ export const LandingPage: React.FC = () => {
 
   useEffect(() => {
     api<{ plans: Plan[] }>('/api/plans')
-      .then(result => setPlans(result.plans.filter(plan => plan.enabled).slice(0, 5)))
+      .then(result => setPlans(result.plans.filter(plan => plan.enabled && plan.homepageVisible)))
       .catch(() => setPlans([]));
   }, []);
 

@@ -130,8 +130,11 @@ test("paid order grants the exact plan snapshot", () => {
     dailyNodeLimit: 10,
     concurrencyLimit: 1,
     enabled: true,
+    homepageVisible: false,
     sortOrder: 1,
   });
+  assert.equal(plan.homepageVisible, false);
+  assert.equal(store.listPlans().find(item => item.id === plan.id)?.panelLimit, 8);
   const order = store.createOrder(user.id, plan.id);
   store.updatePlan(plan.id, { ...plan, name: "修改后的年卡", panelLimit: 1, nodeLimit: 1 });
   store.markOrderPaid(order.id, "test", "trade-1");
@@ -207,7 +210,15 @@ test("existing plan databases migrate to support quarterly durations", () => {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      INSERT INTO plans_legacy_constraint SELECT * FROM plans;
+      INSERT INTO plans_legacy_constraint (
+        id, name, description, price_cents, duration_unit, duration_value,
+        panel_mode, panel_limit, node_mode, node_limit, daily_panel_limit,
+        daily_node_limit, concurrency_limit, enabled, sort_order, created_at, updated_at
+      ) SELECT
+        id, name, description, price_cents, duration_unit, duration_value,
+        panel_mode, panel_limit, node_mode, node_limit, daily_panel_limit,
+        daily_node_limit, concurrency_limit, enabled, sort_order, created_at, updated_at
+      FROM plans;
       DROP TABLE plans;
       ALTER TABLE plans_legacy_constraint RENAME TO plans;
     `);
@@ -216,6 +227,7 @@ test("existing plan databases migrate to support quarterly durations", () => {
     const migratedStore = new CommercialStore(databasePath, { recoverInterruptedDeployments: false });
     try {
       assert.equal(migratedStore.getPlan(existingPlan.id)?.name, existingPlan.name);
+      assert.equal(migratedStore.getPlan(existingPlan.id)?.homepageVisible, true);
       assert.equal(migratedStore.getOrder(existingOrder.id)?.planId, existingPlan.id);
       assert.equal(migratedStore.listPlans().some(plan => plan.durationUnit === "quarters"), true);
       assert.deepEqual(migratedStore.db.prepare("PRAGMA foreign_key_check").all(), []);

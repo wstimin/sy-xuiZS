@@ -121,6 +121,7 @@ const emptyPlan: Omit<Plan, 'id'> = {
   dailyNodeLimit: 3,
   concurrencyLimit: 1,
   enabled: true,
+  homepageVisible: false,
   sortOrder: 10,
 };
 const emptyGrant = {
@@ -1014,14 +1015,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
             {tab === 'plans' && <AdminSection title="套餐管理" description="配置一次性服务、周期会员与对应的面板和节点使用额度。" action={<button className="admin-button primary" onClick={() => setEditingPlan({ ...emptyPlan })}><PackagePlus /> 新增套餐</button>}>
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索套餐名称或说明" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部状态'], ['enabled', '已上架'], ['disabled', '已下架']]} />
-              <AdminTable columns={['套餐', '价格与有效期', '面板额度', '节点额度', '每日/并发限制', '状态', '操作']} empty="没有符合条件的套餐">
+              <AdminTable columns={['套餐', '价格与有效期', '面板额度', '节点额度', '每日/并发限制', '官网首页', '状态', '操作']} empty="没有符合条件的套餐">
                 {filteredPlans.slice(pageStart, pageStart + PAGE_SIZE).map(plan => <tr key={plan.id}>
                   <td><strong className="admin-primary-text">{plan.name}</strong><small className="admin-cell-sub admin-truncate">{plan.description || '暂无说明'}</small></td>
                   <td><strong>{formatMoney(plan.priceCents)}</strong><small className="admin-cell-sub">{durationText(plan)}</small></td>
                   <td>{quotaText(plan.panelMode, plan.panelLimit)}</td><td>{quotaText(plan.nodeMode, plan.nodeLimit)}</td>
                   <td><span>每日 {plan.dailyPanelLimit || '不限'} / {plan.dailyNodeLimit || '不限'}</span><small className="admin-cell-sub">并发 {plan.concurrencyLimit}</small></td>
+                  <td>{plan.homepageVisible ? <span className="admin-link success">展示</span> : <span className="admin-muted">隐藏</span>}</td>
                   <td><StatusBadge status={plan.enabled ? 'enabled' : 'disabled'} /></td>
-                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="编辑套餐" onClick={() => setEditingPlan({ ...plan })}><Pencil /></button><button className="admin-icon-button small" title="复制套餐" onClick={() => setEditingPlan({ ...plan, id: undefined, name: `${plan.name} 副本`, enabled: false })}><ClipboardCopy /></button><button className={plan.enabled ? 'admin-link danger' : 'admin-link success'} onClick={() => void runAction(plan.enabled ? '套餐已下架' : '套餐已上架', `/api/admin/plans/${plan.id}`, { method: 'PUT', body: JSON.stringify({ ...plan, enabled: !plan.enabled }) })}>{plan.enabled ? '下架' : '上架'}</button></div></td>
+                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="编辑套餐" onClick={() => setEditingPlan({ ...plan })}><Pencil /></button><button className="admin-icon-button small" title="复制套餐" onClick={() => setEditingPlan({ ...plan, id: undefined, name: `${plan.name} 副本`, enabled: false, homepageVisible: false })}><ClipboardCopy /></button><button className={plan.homepageVisible ? 'admin-link warning' : 'admin-link success'} onClick={() => void runAction(plan.homepageVisible ? '已从官网首页隐藏' : '已在官网首页展示', `/api/admin/plans/${plan.id}`, { method: 'PUT', body: JSON.stringify({ ...plan, homepageVisible: !plan.homepageVisible }) })}>{plan.homepageVisible ? '首页隐藏' : '首页展示'}</button><button className={plan.enabled ? 'admin-link danger' : 'admin-link success'} onClick={() => void runAction(plan.enabled ? '套餐已下架' : '套餐已上架', `/api/admin/plans/${plan.id}`, { method: 'PUT', body: JSON.stringify({ ...plan, enabled: !plan.enabled }) })}>{plan.enabled ? '下架' : '上架'}</button></div></td>
                 </tr>)}
               </AdminTable>
               <Pagination total={filteredPlans.length} page={safePage} pageCount={pageCount} onPage={setPage} />
@@ -1533,6 +1535,7 @@ const PlanDialog: React.FC<{ plan: (Omit<Plan, 'id'> & { id?: string }) | null; 
   <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={plan.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...plan, dailyNodeLimit })} /><small>0 表示不限制</small></label>
   <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={plan.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...plan, concurrencyLimit })} /></label>
   <label className="admin-field"><span>显示排序</span><NumberInput value={plan.sortOrder} onValueChange={sortOrder => onChange({ ...plan, sortOrder })} /></label>
+  <label className="admin-checkbox span-2"><input type="checkbox" checked={plan.homepageVisible} onChange={event => onChange({ ...plan, homepageVisible: event.target.checked })} /><span><strong>在官网首页展示此套餐</strong><small>此开关只控制官网套餐区域；套餐仍需上架后才会显示并可购买。</small></span></label>
   <label className="admin-checkbox span-2"><input type="checkbox" checked={plan.enabled} onChange={event => onChange({ ...plan, enabled: event.target.checked })} /><span><strong>在用户端上架此套餐</strong><small>下架后不能新建订单，已有订单和权益不受影响。</small></span></label>
 </div>}</AdminDialog>;
 
