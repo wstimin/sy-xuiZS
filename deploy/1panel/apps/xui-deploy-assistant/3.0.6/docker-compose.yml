@@ -1,0 +1,34 @@
+services:
+  xui-deploy-assistant:
+    image: ghcr.io/wstimin/sy-xuizs:3.0.6
+    container_name: ${CONTAINER_NAME}
+    restart: always
+    init: true
+    networks:
+      - 1panel-network
+    environment:
+      NODE_ENV: production
+      PORT: 1888
+      APP_VERSION: 3.0.6
+      DATABASE_PATH: /var/lib/xui-assistant/app.db
+    volumes:
+      - ./data:/var/lib/xui-assistant
+    ports:
+      - ${PANEL_APP_PORT_HTTP}:1888
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const request=require('http').get('http://127.0.0.1:1888/api/health',response=>process.exit(response.statusCode===200?0:1));request.on('error',()=>process.exit(1));request.setTimeout(4000,()=>{request.destroy();process.exit(1)})"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      createdBy: Apps
+
+networks:
+  1panel-network:
+    external: true
+
