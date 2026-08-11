@@ -95,16 +95,18 @@ curl -s http://127.0.0.1:1888/api/health
 
 菜单 `[3]` 会显示管理员用户名、真实管理入口、注册/搭建开关、SMTP 和支付渠道状态。密码采用不可逆哈希保存，因此不会显示明文；忘记密码时使用菜单 `[6]` 安全重置，重置后旧管理端会话会全部失效。
 
-`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.6`。
+`VERSION` 与健康检查返回的 `version` 应一致。当前商业版版本为 `3.0.7`。
 
 ## 远端构建与发布
 
-推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.6`）时，会自动创建 GitHub Release，发布以下文件：
+推送到 `main` 后，GitHub Actions 会自动执行测试、类型检查、安装脚本语法检查、生产构建、纯生产依赖启动测试与构建包校验，并把构建包保存为工作流产物。推送与 `package.json` 版本一致的标签（例如 `v3.0.7`）时，会自动创建 GitHub Release，永久保留该版本的一键部署包和 1Panel 网站目录包：
 
 ```text
-xui-zhushou-linux-v3.0.6.tar.gz
+xui-zhushou-linux-v3.0.7.tar.gz
 xui-zhushou-linux.tar.gz
+xui-deploy-assistant-1panel-3.0.7.zip
 SHA256SUMS
+SHA256SUMS-1panel
 ```
 
 一键安装脚本固定下载 `releases/latest/download/xui-zhushou-linux.tar.gz`，因此新标签发布完成后，所有服务器通过菜单 `[1]` 更新时都会拉取同一份已经验证的生产构建包。

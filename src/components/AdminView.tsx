@@ -83,6 +83,15 @@ type AdminUser = { id: string; username: string; email: string | null; emailVeri
 type UsageLedgerEntry = { id: string; userId: string; username: string; entitlementId: string; planName: string; deploymentId?: string; capability: 'panel' | 'node'; action: 'grant' | 'reserve' | 'consume' | 'release' | 'adjust'; amount: number; note: string; createdAt: string };
 type AuditLog = { id: string; adminUserId: string; adminUsername: string; action: string; targetType: string; targetId: string; detail: string; createdAt: string };
 type UserDetail = { user: AdminUser; orders: Order[]; entitlements: Entitlement[]; deployments: DeploymentRecord[] };
+type UserProfileTab = 'overview' | 'entitlements' | 'orders' | 'deployments' | 'ledger';
+type GlobalSearchResult = {
+  id: string;
+  category: '客户' | '订单' | '交付任务' | '权益' | '套餐' | '卡密';
+  title: string;
+  subtitle: string;
+  icon: React.ElementType;
+  onSelect: () => void;
+};
 type Stats = {
   users: number;
   activeUsers: number;
@@ -188,32 +197,41 @@ const MGATE_CURRENCIES = ['CNY', 'USD', 'EUR', 'HKD', 'TWD', 'JPY', 'KRW', 'SGD'
 const emptyAdminExceptions: AdminExceptions = { summary: { total: 0, critical: 0, warning: 0 }, items: [] };
 const DATABASE_CONTENT_TYPE = 'application/vnd.sqlite3';
 
-const navigation: Array<{ id: AdminTab; label: string; icon: React.ElementType; tone: string; section?: string }> = [
-  { id: 'dashboard', label: '运营概览', icon: LayoutDashboard, tone: 'cyan', section: '总览' },
-  { id: 'orders', label: '订单管理', icon: CreditCard, tone: 'green', section: '交易与商品' },
-  { id: 'plans', label: '套餐管理', icon: Boxes, tone: 'violet' },
-  { id: 'redeem-codes', label: '卡密管理', icon: KeyRound, tone: 'amber' },
-  { id: 'users', label: '用户管理', icon: Users, tone: 'blue', section: '客户与权益' },
-  { id: 'entitlements', label: '权益管理', icon: BadgeCheck, tone: 'emerald' },
-  { id: 'ledger', label: '额度流水', icon: FileText, tone: 'sky' },
-  { id: 'deployments', label: '交付任务', icon: Activity, tone: 'amber', section: '交付与记录' },
-  { id: 'audit', label: '操作审计', icon: ClipboardCheck, tone: 'slate' },
-  { id: 'settings', label: '系统设置', icon: Settings, tone: 'indigo', section: '系统管理' },
-  { id: 'security', label: '账号安全', icon: KeyRound, tone: 'rose' },
+const navigationGroups: Array<{ label: string; items: Array<{ id: AdminTab; label: string; icon: React.ElementType; tone: string }> }> = [
+  { label: '工作台', items: [{ id: 'dashboard', label: '运营概览', icon: LayoutDashboard, tone: 'cyan' }] },
+  { label: '客户', items: [
+    { id: 'users', label: '客户列表', icon: Users, tone: 'blue' },
+    { id: 'entitlements', label: '权益管理', icon: BadgeCheck, tone: 'emerald' },
+  ] },
+  { label: '交易', items: [
+    { id: 'orders', label: '订单管理', icon: CreditCard, tone: 'green' },
+    { id: 'plans', label: '套餐管理', icon: Boxes, tone: 'violet' },
+    { id: 'redeem-codes', label: '卡密管理', icon: KeyRound, tone: 'amber' },
+  ] },
+  { label: '交付', items: [
+    { id: 'deployments', label: '搭建任务', icon: Activity, tone: 'amber' },
+    { id: 'ledger', label: '额度流水', icon: FileText, tone: 'sky' },
+  ] },
+  { label: '系统', items: [
+    { id: 'settings', label: '系统设置', icon: Settings, tone: 'indigo' },
+    { id: 'audit', label: '操作审计', icon: ClipboardCheck, tone: 'slate' },
+    { id: 'security', label: '账号安全', icon: KeyRound, tone: 'rose' },
+  ] },
 ];
+const navigation = navigationGroups.flatMap(group => group.items);
 
 const adminTabMeta: Record<AdminTab, { area: string; description: string }> = {
-  dashboard: { area: '运营总览', description: '业务指标、异常和待处理事项' },
-  orders: { area: '交易与商品', description: '订单状态、支付链路和权益发放' },
-  plans: { area: '交易与商品', description: '套餐价格、有效期和使用额度' },
-  'redeem-codes': { area: '交易与商品', description: '卡密生成、兑换和停用记录' },
-  users: { area: '客户与权益', description: '用户身份、状态和关联业务数据' },
-  entitlements: { area: '客户与权益', description: '用户权益、剩余额度和有效期' },
-  ledger: { area: '客户与权益', description: '额度发放、冻结、核销和返还流水' },
-  deployments: { area: '交付与记录', description: '面板安装和节点创建任务' },
-  audit: { area: '交付与记录', description: '管理员关键操作与变更记录' },
-  settings: { area: '系统管理', description: '业务、推荐、邮箱和支付配置' },
-  security: { area: '系统管理', description: '管理员身份、入口和数据安全' },
+  dashboard: { area: '工作台', description: '业务指标、异常和待处理事项' },
+  orders: { area: '交易', description: '订单状态、支付链路和权益发放' },
+  plans: { area: '交易', description: '套餐价格、有效期和使用额度' },
+  'redeem-codes': { area: '交易', description: '卡密生成、兑换和停用记录' },
+  users: { area: '客户', description: '客户身份、状态和关联业务数据' },
+  entitlements: { area: '客户', description: '客户权益、剩余额度和有效期' },
+  ledger: { area: '交付', description: '额度发放、冻结、核销和返还流水' },
+  deployments: { area: '交付', description: '面板安装和节点创建任务' },
+  audit: { area: '系统', description: '管理员关键操作与变更记录' },
+  settings: { area: '系统', description: '业务、推荐、邮箱和支付配置' },
+  security: { area: '系统', description: '管理员身份、入口和数据安全' },
 };
 
 interface AdminViewProps {
@@ -266,6 +284,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [deletingContactMethod, setDeletingContactMethod] = useState<{ index: number; method: ContactMethod } | null>(null);
   const [testEmailRecipient, setTestEmailRecipient] = useState('');
   const [query, setQuery] = useState('');
+  const [globalQuery, setGlobalQuery] = useState('');
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [navigationQuery, setNavigationQuery] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [editingPlan, setEditingPlan] = useState<(Omit<Plan, 'id'> & { id?: string }) | null>(null);
@@ -290,6 +311,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [repairOrder, setRepairOrder] = useState<Order | null>(null);
   const [viewDeployment, setViewDeployment] = useState<DeploymentRecord | null>(null);
   const [userDetail, setUserDetail] = useState<UserDetail | null>(null);
+  const [userProfileTab, setUserProfileTab] = useState<UserProfileTab>('overview');
   const [detailLoading, setDetailLoading] = useState(false);
   const [redeemCodeDraft, setRedeemCodeDraft] = useState({ planId: '', quantity: 10, note: '', expiresAt: '' });
   const [redeemCodeDialogOpen, setRedeemCodeDialogOpen] = useState(false);
@@ -348,7 +370,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   useEffect(() => { void load(); }, []);
   useEffect(() => { setAccountUsername(currentUser.username); }, [currentUser.username]);
-  useEffect(() => { setQuery(''); setStatusFilter('all'); setPage(1); setMobileNavOpen(false); }, [tab]);
+  useEffect(() => {
+    setQuery(navigationQuery || '');
+    setNavigationQuery(null);
+    setStatusFilter('all');
+    setPage(1);
+    setMobileNavOpen(false);
+  }, [tab]);
 
   const runAction = async (title: string, url: string, options: RequestInit, after?: () => void) => {
     setBusy(true);
@@ -401,6 +429,77 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     const matchesQuery = !normalizedQuery || `${item.adminUsername} ${item.action} ${item.targetType} ${item.detail}`.toLowerCase().includes(normalizedQuery);
     return matchesQuery && (statusFilter === 'all' || item.targetType === statusFilter);
   }), [auditLogs, normalizedQuery, statusFilter]);
+
+  const openUserDetail = async (user: AdminUser, profileTab: UserProfileTab = 'overview') => {
+    setUserProfileTab(profileTab);
+    setDetailLoading(true);
+    try {
+      setUserDetail(await api<UserDetail>(`/api/admin/users/${user.id}/detail`));
+    } catch (error) {
+      showToast('客户档案加载失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const openUserById = (userId?: string, profileTab: UserProfileTab = 'overview') => {
+    const user = users.find(item => item.id === userId);
+    if (user) {
+      setGlobalQuery('');
+      setGlobalSearchOpen(false);
+      void openUserDetail(user, profileTab);
+    }
+  };
+
+  const navigateWithQuery = (nextTab: AdminTab, nextQuery: string) => {
+    if (nextTab === tab) setQuery(nextQuery);
+    else {
+      setNavigationQuery(nextQuery);
+      setTab(nextTab);
+    }
+    setStatusFilter('all');
+    setPage(1);
+    setGlobalQuery('');
+    setGlobalSearchOpen(false);
+  };
+
+  const globalSearchResults = useMemo<GlobalSearchResult[]>(() => {
+    const search = globalQuery.trim().toLowerCase();
+    if (!search) return [];
+    const includes = (...values: Array<string | undefined | null>) => values.join(' ').toLowerCase().includes(search);
+    const results: GlobalSearchResult[] = [];
+    users.filter(user => includes(user.username, user.email)).slice(0, 5).forEach(user => results.push({
+      id: `user-${user.id}`, category: '客户', title: user.username, subtitle: user.email || '未绑定邮箱', icon: Users,
+      onSelect: () => { setGlobalQuery(''); setGlobalSearchOpen(false); void openUserDetail(user); },
+    }));
+    orders.filter(order => includes(order.orderNo, order.username, order.paymentTradeNo, planSnapshotName(order))).slice(0, 5).forEach(order => results.push({
+      id: `order-${order.id}`, category: '订单', title: order.orderNo, subtitle: `${order.username || '未知客户'} · ${formatMoney(order.amountCents)}`, icon: CreditCard,
+      onSelect: () => { setGlobalQuery(''); setGlobalSearchOpen(false); void openOrderDetail(order); },
+    }));
+    deployments.filter(item => includes(item.requestId, item.username, item.targetHostMasked, item.resultSummary)).slice(0, 5).forEach(item => results.push({
+      id: `deployment-${item.id}`, category: '交付任务', title: item.requestId, subtitle: `${item.username || '未知客户'} · ${item.targetHostMasked || '未记录目标'}`, icon: Activity,
+      onSelect: () => { setGlobalQuery(''); setGlobalSearchOpen(false); setViewDeployment(item); },
+    }));
+    entitlements.filter(item => includes(item.username, item.planName)).slice(0, 5).forEach(item => results.push({
+      id: `entitlement-${item.id}`, category: '权益', title: item.username || '未知客户', subtitle: `${item.planName} · 面板 ${quotaText(item.panelMode, item.panelRemaining)}`, icon: BadgeCheck,
+      onSelect: () => item.userId ? openUserById(item.userId, 'entitlements') : navigateWithQuery('entitlements', item.username || item.planName),
+    }));
+    plans.filter(plan => includes(plan.name, plan.description)).slice(0, 5).forEach(plan => results.push({
+      id: `plan-${plan.id}`, category: '套餐', title: plan.name, subtitle: `${formatMoney(plan.priceCents)} · ${durationText(plan)}`, icon: Boxes,
+      onSelect: () => navigateWithQuery('plans', plan.name),
+    }));
+    redeemCodes.filter(item => includes(item.codeMasked, item.planName, item.redeemedByUsername, item.note)).slice(0, 5).forEach(item => results.push({
+      id: `redeem-${item.id}`, category: '卡密', title: item.codeMasked, subtitle: `${item.planName} · ${item.redeemedByUsername || '未兑换'}`, icon: KeyRound,
+      onSelect: () => navigateWithQuery('redeem-codes', item.codeMasked),
+    }));
+    return results;
+  }, [deployments, entitlements, globalQuery, orders, plans, redeemCodes, tab, users]);
+
+  const globalResultGroups = useMemo(() => {
+    const categories: GlobalSearchResult['category'][] = ['客户', '订单', '交付任务', '权益', '套餐', '卡密'];
+    return categories.map(category => ({ category, items: globalSearchResults.filter(item => item.category === category) })).filter(group => group.items.length);
+  }, [globalSearchResults]);
+  const userProfileLedger = useMemo(() => userDetail ? ledgerEntries.filter(item => item.userId === userDetail.user.id) : [], [ledgerEntries, userDetail]);
 
   const activeList = tab === 'orders' ? filteredOrders : tab === 'plans' ? filteredPlans : tab === 'redeem-codes' ? filteredRedeemCodes : tab === 'users' ? filteredUsers : tab === 'entitlements' ? filteredEntitlements : tab === 'ledger' ? filteredLedger : tab === 'deployments' ? filteredDeployments : tab === 'audit' ? filteredAudit : [];
   const pageCount = Math.max(1, Math.ceil(activeList.length / PAGE_SIZE));
@@ -913,17 +1012,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     }
   };
 
-  const openUserDetail = async (user: AdminUser) => {
-    setDetailLoading(true);
-    try {
-      setUserDetail(await api<UserDetail>(`/api/admin/users/${user.id}/detail`));
-    } catch (error) {
-      showToast('用户详情加载失败', error instanceof Error ? error.message : '请稍后重试', 'error');
-    } finally {
-      setDetailLoading(false);
-    }
-  };
-
   const openOrderDetail = async (order: Order) => {
     setViewOrder(order);
     setOrderDetail(null);
@@ -970,13 +1058,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <div><strong>X-UI CONTROL</strong><small>运营管理系统</small></div>
         </div>
         <nav className="admin-navigation">
-          {navigation.map(item => {
-            const Icon = item.icon;
-            return <React.Fragment key={item.id}>
-              {item.section && <div className="admin-nav-section">{item.section}</div>}
-              <button type="button" className={tab === item.id ? 'active' : ''} onClick={() => { setTab(item.id); setMobileNavOpen(false); }}><span className={`admin-nav-icon ${item.tone}`}><Icon /></span><span>{item.label}</span>{item.id === 'orders' && Boolean(stats?.pendingOrders) && <b>{stats?.pendingOrders}</b>}{item.id === 'deployments' && Boolean(stats?.uncertain) && <b className="warning">{stats?.uncertain}</b>}</button>
-            </React.Fragment>;
-          })}
+          {navigationGroups.map(group => <section className="admin-nav-group" key={group.label}>
+            <div className="admin-nav-section">{group.label}</div>
+            {group.items.map(item => {
+              const Icon = item.icon;
+              return <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => { setTab(item.id); setMobileNavOpen(false); }}><span className={`admin-nav-icon ${item.tone}`}><Icon /></span><span>{item.label}</span>{item.id === 'orders' && Boolean(stats?.pendingOrders) && <b>{stats?.pendingOrders}</b>}{item.id === 'deployments' && Boolean(stats?.uncertain) && <b className="warning">{stats?.uncertain}</b>}</button>;
+            })}
+          </section>)}
         </nav>
         <div className="admin-sidebar-footer">
           <div className="admin-sidebar-account"><div className="admin-avatar">{currentUser.username.slice(0, 1).toUpperCase()}</div><div><strong>{currentUser.username}</strong><small>系统管理员</small></div><button type="button" className="admin-sidebar-logout" title="退出管理端" onClick={onLogout}><LogOut /><span>退出</span></button></div>
@@ -987,6 +1075,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       <div className="admin-main">
         <header className="admin-topbar">
           <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div className="admin-breadcrumb"><span>管理后台</span><ChevronRight /><strong>{currentMeta.area}</strong><ChevronRight /><b>{currentTitle}</b></div></div>
+          <div className={`admin-global-search ${globalSearchOpen ? 'open' : ''}`}>
+            <label><Search /><input value={globalQuery} onFocus={() => setGlobalSearchOpen(true)} onBlur={() => window.setTimeout(() => setGlobalSearchOpen(false), 120)} onChange={event => { setGlobalQuery(event.target.value); setGlobalSearchOpen(true); }} onKeyDown={event => { if (event.key === 'Escape') setGlobalSearchOpen(false); }} placeholder="搜索客户、订单、任务、权益、套餐或卡密" aria-label="全局搜索" />{globalQuery && <button type="button" title="清除搜索" onMouseDown={event => event.preventDefault()} onClick={() => setGlobalQuery('')}><X /></button>}</label>
+            {globalSearchOpen && globalQuery.trim() && <div className="admin-global-results">
+              <header><span>全局搜索</span><small>{globalSearchResults.length} 条匹配结果</small></header>
+              {globalResultGroups.map(group => <section key={group.category}><h3>{group.category}</h3>{group.items.map(item => { const Icon = item.icon; return <button type="button" key={item.id} onMouseDown={event => event.preventDefault()} onClick={item.onSelect}><span><Icon /></span><div><strong>{item.title}</strong><small>{item.subtitle}</small></div><ChevronRight /></button>; })}</section>)}
+              {!globalSearchResults.length && <div className="admin-global-empty"><Search /><strong>没有找到相关记录</strong><span>可尝试用户名、订单号、任务编号或套餐名称</span></div>}
+            </div>}
+          </div>
           <div className="admin-topbar-actions">
             <span className="admin-topbar-context"><i />{currentContext}</span>
             {activeList.length > 0 && <button type="button" className="admin-button secondary admin-export-button" onClick={exportCurrent}><Download /> 导出当前列表</button>}
@@ -1004,7 +1100,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               <AdminTable columns={['订单信息', '用户', '金额', '订单状态', '处理状态', '支付信息', '创建时间', '操作']} empty="没有符合条件的订单">
                 {filteredOrders.slice(pageStart, pageStart + PAGE_SIZE).map(order => <tr key={order.id}>
                   <td><strong className="admin-primary-text">{order.orderNo}</strong><small className="admin-cell-sub">{planSnapshotName(order)}</small></td>
-                  <td>{order.username || '-'}</td><td className="admin-money">{formatMoney(order.amountCents)}</td><td><StatusBadge status={order.status} /></td><td>{order.diagnosis ? <DiagnosisBadge diagnosis={order.diagnosis} /> : <span className="admin-muted">-</span>}</td>
+                  <td>{order.username ? <button type="button" className="admin-record-link" onClick={() => openUserById(order.userId, 'orders')}>{order.username}</button> : '-'}</td><td className="admin-money">{formatMoney(order.amountCents)}</td><td><StatusBadge status={order.status} /></td><td>{order.diagnosis ? <DiagnosisBadge diagnosis={order.diagnosis} /> : <span className="admin-muted">-</span>}</td>
                   <td>{order.paymentTradeNo ? <><span>{paymentProviderName(order.paymentProvider || 'manual')}</span><small className="admin-cell-sub">{order.paymentTradeNo}</small></> : <span className="admin-muted">未支付</span>}</td>
                   <td>{formatDate(order.createdAt)}</td>
                   <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" disabled={orderDetailLoading} onClick={() => void openOrderDetail(order)}><Eye /></button>{order.status === 'pending' && <><button className="admin-link success" onClick={() => { setPaymentOrder(order); setTradeNo(''); }}>确认收款</button><button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button></>}{order.status === 'paid' && order.paymentProvider !== 'redeem_code' && <button className="admin-link warning" onClick={() => { setRefundOrder(order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}</div></td>
@@ -1043,11 +1139,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               <Pagination total={filteredRedeemCodes.length} page={safePage} pageCount={pageCount} onPage={setPage} />
             </AdminSection>}
 
-            {tab === 'users' && <AdminSection title="用户管理" description="创建账号并管理真实账户状态、角色、密码与业务记录。" action={<button className="admin-button primary" onClick={() => setCreatingUser({ ...emptyUser })}><UserPlus /> 创建用户</button>}>
+            {tab === 'users' && <AdminSection title="客户列表" description="按客户查找账号，并集中进入其权益、订单、搭建任务和额度记录。" action={<button className="admin-button primary" onClick={() => setCreatingUser({ ...emptyUser })}><UserPlus /> 创建客户</button>}>
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索用户名或邮箱" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部用户'], ['active', '正常'], ['disabled', '已禁用'], ['user', '普通用户'], ['admin', '管理员']]} />
               <AdminTable columns={['用户', '角色', '状态', '注册时间', '最后登录', '操作']} empty="没有符合条件的用户">
                 {filteredUsers.slice(pageStart, pageStart + PAGE_SIZE).map(user => <tr key={user.id}>
-                  <td><div className="admin-user-cell"><span>{user.username.slice(0, 1).toUpperCase()}</span><div><strong>{user.username}</strong><small>{user.email || (user.id === currentUser.id ? '当前账号' : '未绑定邮箱')}</small></div></div></td>
+                  <td><button type="button" className="admin-user-cell admin-user-cell-button" disabled={detailLoading} onClick={() => void openUserDetail(user)}><span>{user.username.slice(0, 1).toUpperCase()}</span><div><strong>{user.username}</strong><small>{user.email || (user.id === currentUser.id ? '当前账号' : '未绑定邮箱')}</small></div></button></td>
                   <td><StatusBadge status={user.role} /></td><td><StatusBadge status={user.status} /></td><td>{formatDate(user.createdAt)}</td><td>{user.lastLoginAt ? formatDate(user.lastLoginAt) : <span className="admin-muted">从未登录</span>}</td>
                   <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看用户详情" disabled={detailLoading} onClick={() => void openUserDetail(user)}><Eye /></button><button className="admin-link" disabled={user.id === currentUser.id} onClick={() => setUserAction({ user, kind: 'role', nextValue: user.role === 'admin' ? 'user' : 'admin' })}>{user.role === 'admin' ? '移除管理员' : '设为管理员'}</button><button className={user.status === 'active' ? 'admin-link danger' : 'admin-link success'} disabled={user.id === currentUser.id} onClick={() => setUserAction({ user, kind: 'status', nextValue: user.status === 'active' ? 'disabled' : 'active' })}>{user.status === 'active' ? '禁用' : '启用'}</button><button className="admin-icon-button small" disabled={user.id === currentUser.id} title="重置密码" onClick={() => { setUserAction({ user, kind: 'password' }); setNextPassword(''); setConfirmPassword(''); }}><KeyRound /></button></div></td>
                 </tr>)}
@@ -1059,7 +1155,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索用户或权益名称" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部状态'], ['active', '有效'], ['expired', '已过期'], ['revoked', '已撤销']]} />
               <AdminTable columns={['用户与权益', '面板额度', '节点额度', '每日/并发限制', '有效期', '状态', '操作']} empty="没有符合条件的权益">
                 {filteredEntitlements.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}>
-                  <td><strong className="admin-primary-text">{item.username || '-'}</strong><small className="admin-cell-sub">{item.planName}</small></td>
+                  <td>{item.username ? <button type="button" className="admin-record-link stacked" onClick={() => openUserById(item.userId, 'entitlements')}><strong>{item.username}</strong><small>{item.planName}</small></button> : <><strong className="admin-primary-text">-</strong><small className="admin-cell-sub">{item.planName}</small></>}</td>
                   <td>{quotaText(item.panelMode, item.panelRemaining, item.panelTotal)}<small className="admin-cell-sub">已用 {item.panelUsed} / 冻结 {item.panelReserved}</small></td>
                   <td>{quotaText(item.nodeMode, item.nodeRemaining, item.nodeTotal)}<small className="admin-cell-sub">已用 {item.nodeUsed} / 冻结 {item.nodeReserved}</small></td>
                   <td><span>每日 {item.dailyPanelLimit || '不限'} / {item.dailyNodeLimit || '不限'}</span><small className="admin-cell-sub">并发 {item.concurrencyLimit}</small></td>
@@ -1073,16 +1169,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
             {tab === 'ledger' && <AdminSection title="额度流水" description="每一次发放、冻结、核销、返还和人工调额都会形成不可替代的业务记录。">
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索用户、权益名称或流水备注" filter={statusFilter} onFilter={setStatusFilter} options={[["all", "全部流水"], ["grant", "发放"], ["reserve", "冻结"], ["consume", "核销"], ["release", "返还"], ["adjust", "调额"], ["panel", "面板额度"], ["node", "节点额度"]]} />
               <AdminTable columns={['用户与权益', '额度类型', '流水动作', '变动数量', '说明', '关联任务', '记录时间']} empty="没有符合条件的额度流水">
-                {filteredLedger.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}><td><strong className="admin-primary-text">{item.username}</strong><small className="admin-cell-sub">{item.planName}</small></td><td>{item.capability === 'panel' ? '面板额度' : '节点额度'}</td><td><StatusBadge status={item.action} /></td><td className={item.amount > 0 ? 'admin-number-positive' : item.amount < 0 ? 'admin-number-negative' : ''}>{item.amount > 0 ? `+${item.amount}` : item.amount}</td><td>{item.note || '-'}</td><td className="admin-code">{item.deploymentId ? item.deploymentId.slice(0, 8) : '-'}</td><td>{formatDate(item.createdAt)}</td></tr>)}
+                {filteredLedger.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}><td><button type="button" className="admin-record-link stacked" onClick={() => openUserById(item.userId, 'ledger')}><strong>{item.username}</strong><small>{item.planName}</small></button></td><td>{item.capability === 'panel' ? '面板额度' : '节点额度'}</td><td><StatusBadge status={item.action} /></td><td className={item.amount > 0 ? 'admin-number-positive' : item.amount < 0 ? 'admin-number-negative' : ''}>{item.amount > 0 ? `+${item.amount}` : item.amount}</td><td>{item.note || '-'}</td><td className="admin-code">{item.deploymentId ? item.deploymentId.slice(0, 8) : '-'}</td><td>{formatDate(item.createdAt)}</td></tr>)}
               </AdminTable>
               <Pagination total={filteredLedger.length} page={safePage} pageCount={pageCount} onPage={setPage} />
             </AdminSection>}
 
-            {tab === 'deployments' && <AdminSection title="交付任务" description="追踪面板安装和节点创建的真实执行记录，人工核对结果不确定的任务。">
+            {tab === 'deployments' && <AdminSection title="搭建任务" description="追踪面板安装和节点创建的真实执行记录，人工核对结果不确定的任务。">
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索用户、请求编号或目标地址" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部任务'], ['uncertain', '待人工核对'], ['running', '执行中'], ['succeeded', '成功'], ['failed', '失败'], ['panel', '面板任务'], ['node', '节点任务']]} />
               <AdminTable columns={['任务信息', '用户', '类型', '目标', '状态', '结果', '时间', '操作']} empty="没有符合条件的交付任务">
                 {filteredDeployments.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}>
-                  <td><strong className="admin-primary-text admin-code">{item.requestId}</strong><small className="admin-cell-sub">{item.id.slice(0, 8)}</small></td><td>{item.username || '-'}</td><td>{item.capability === 'panel' ? '面板安装' : '节点创建'}</td><td className="admin-code">{item.targetHostMasked || '-'}</td><td><StatusBadge status={item.status} /></td><td><span className="admin-result-text">{item.resultSummary || item.errorMessage || '-'}</span></td><td>{formatDate(item.createdAt)}</td>
+                  <td><strong className="admin-primary-text admin-code">{item.requestId}</strong><small className="admin-cell-sub">{item.id.slice(0, 8)}</small></td><td>{item.username ? <button type="button" className="admin-record-link" onClick={() => openUserById(item.userId, 'deployments')}>{item.username}</button> : '-'}</td><td>{item.capability === 'panel' ? '面板安装' : '节点创建'}</td><td className="admin-code">{item.targetHostMasked || '-'}</td><td><StatusBadge status={item.status} /></td><td><span className="admin-result-text">{item.resultSummary || item.errorMessage || '-'}</span></td><td>{formatDate(item.createdAt)}</td>
                   <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看任务详情" onClick={() => setViewDeployment(item)}><Eye /></button>{item.status === 'uncertain' && <><button className="admin-link success" onClick={() => setDeploymentAction({ item, resolution: 'succeeded' })}>按成功核销</button><button className="admin-link danger" onClick={() => setDeploymentAction({ item, resolution: 'failed' })}>按失败返还</button></>}</div></td>
                 </tr>)}
               </AdminTable>
@@ -1428,13 +1524,34 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <DetailBlock title="执行结果"><div className={`admin-detail-message ${viewDeployment.errorMessage ? 'danger' : 'success'}`}>{viewDeployment.errorMessage || viewDeployment.resultSummary || '暂无执行结果'}</div></DetailBlock>
         </div>}
       </AdminDialog>
-      <AdminDialog open={Boolean(userDetail)} title={`用户详情 · ${userDetail?.user.username || ''}`} description="该账号关联的订单、权益与交付任务均来自当前业务数据库。" cancelLabel="关闭" onClose={() => setUserDetail(null)}>
-        {userDetail && <div className="admin-detail-layout">
-          <div className="admin-detail-summary"><DetailItem label="登录邮箱" value={userDetail.user.email || '未绑定邮箱'} /><DetailItem label="邮箱状态" value={userDetail.user.email ? (userDetail.user.emailVerified ? '已验证' : '未验证') : '-'} /><DetailItem label="账号角色" value={<StatusBadge status={userDetail.user.role} />} /><DetailItem label="账号状态" value={<StatusBadge status={userDetail.user.status} />} /><DetailItem label="注册时间" value={formatDate(userDetail.user.createdAt)} /><DetailItem label="最后登录" value={userDetail.user.lastLoginAt ? formatDate(userDetail.user.lastLoginAt) : '从未登录'} /></div>
-          <div className="admin-detail-counts"><div><strong>{userDetail.orders.length}</strong><span>订单</span></div><div><strong>{userDetail.entitlements.length}</strong><span>权益</span></div><div><strong>{userDetail.deployments.length}</strong><span>交付任务</span></div></div>
-          <DetailBlock title="最近订单"><div className="admin-detail-list">{userDetail.orders.slice(0, 4).map(order => <div key={order.id}><div><strong>{order.orderNo}</strong><small>{planSnapshotName(order)} · {formatDate(order.createdAt)}</small></div><div><b>{formatMoney(order.amountCents)}</b><StatusBadge status={order.status} /></div></div>)}{!userDetail.orders.length && <EmptyInline text="该用户暂无订单" />}</div></DetailBlock>
-          <DetailBlock title="当前权益"><div className="admin-detail-list">{userDetail.entitlements.slice(0, 4).map(item => <div key={item.id}><div><strong>{item.planName}</strong><small>有效期至 {formatDate(item.expiresAt)}</small></div><div><b>面板 {quotaText(item.panelMode, item.panelRemaining)}</b><b>节点 {quotaText(item.nodeMode, item.nodeRemaining)}</b><StatusBadge status={entitlementStatus(item)} /></div></div>)}{!userDetail.entitlements.length && <EmptyInline text="该用户暂无权益" />}</div></DetailBlock>
-          <DetailBlock title="最近交付"><div className="admin-detail-list">{userDetail.deployments.slice(0, 4).map(item => <div key={item.id}><div><strong>{item.capability === 'panel' ? '面板安装' : '节点创建'} · {item.requestId}</strong><small>{item.targetHostMasked || '-'} · {formatDate(item.createdAt)}</small></div><div><StatusBadge status={item.status} /></div></div>)}{!userDetail.deployments.length && <EmptyInline text="该用户暂无交付任务" />}</div></DetailBlock>
+      <AdminDialog open={Boolean(userDetail)} size="wide" title={`客户档案 · ${userDetail?.user.username || ''}`} description="围绕客户集中查看账号、权益、交易、搭建任务和额度变动。" cancelLabel="关闭" onClose={() => setUserDetail(null)}>
+        {userDetail && <div className="admin-customer-profile">
+          <div className="admin-customer-head">
+            <div className="admin-customer-identity"><span>{userDetail.user.username.slice(0, 1).toUpperCase()}</span><div><h3>{userDetail.user.username}</h3><p>{userDetail.user.email || '未绑定邮箱'} · 注册于 {formatDate(userDetail.user.createdAt)}</p><div><StatusBadge status={userDetail.user.status} /><StatusBadge status={userDetail.user.role} />{userDetail.user.email && <span className={`admin-verify-label ${userDetail.user.emailVerified ? 'verified' : ''}`}>{userDetail.user.emailVerified ? '邮箱已验证' : '邮箱未验证'}</span>}</div></div></div>
+            <div className="admin-customer-actions">
+              {userDetail.user.role === 'user' && <button type="button" className="admin-button primary" onClick={() => { setGrant(value => ({ ...value, userId: userDetail.user.id })); setUserDetail(null); setGrantOpen(true); }}><BadgeCheck /> 发放权益</button>}
+              <button type="button" className="admin-button secondary" disabled={userDetail.user.id === currentUser.id} onClick={() => { const user = userDetail.user; setUserDetail(null); setUserAction({ user, kind: 'password' }); setNextPassword(''); setConfirmPassword(''); }}><KeyRound /> 重置密码</button>
+              <button type="button" className={`admin-button ${userDetail.user.status === 'active' ? 'danger' : 'success'}`} disabled={userDetail.user.id === currentUser.id} onClick={() => { const user = userDetail.user; setUserDetail(null); setUserAction({ user, kind: 'status', nextValue: user.status === 'active' ? 'disabled' : 'active' }); }}>{userDetail.user.status === 'active' ? <PowerOff /> : <CheckCircle2 />}{userDetail.user.status === 'active' ? '禁用客户' : '启用客户'}</button>
+            </div>
+          </div>
+          <nav className="admin-profile-tabs" aria-label="客户档案分类">
+            {([['overview', '概览'], ['entitlements', `权益 ${userDetail.entitlements.length}`], ['orders', `订单 ${userDetail.orders.length}`], ['deployments', `搭建任务 ${userDetail.deployments.length}`], ['ledger', `额度流水 ${userProfileLedger.length}`]] as Array<[UserProfileTab, string]>).map(([id, label]) => <button type="button" key={id} className={userProfileTab === id ? 'active' : ''} onClick={() => setUserProfileTab(id)}>{label}</button>)}
+          </nav>
+
+          {userProfileTab === 'overview' && <div className="admin-profile-content">
+            <div className="admin-detail-counts four"><div><strong>{userDetail.entitlements.filter(item => entitlementStatus(item) === 'active').length}</strong><span>有效权益</span></div><div><strong>{userDetail.orders.length}</strong><span>全部订单</span></div><div><strong>{userDetail.deployments.length}</strong><span>搭建任务</span></div><div><strong>{userProfileLedger.length}</strong><span>额度流水</span></div></div>
+            <div className="admin-detail-summary"><DetailItem label="登录邮箱" value={userDetail.user.email || '未绑定邮箱'} /><DetailItem label="邮箱状态" value={userDetail.user.email ? (userDetail.user.emailVerified ? '已验证' : '未验证') : '-'} /><DetailItem label="注册时间" value={formatDate(userDetail.user.createdAt)} /><DetailItem label="最后登录" value={userDetail.user.lastLoginAt ? formatDate(userDetail.user.lastLoginAt) : '从未登录'} /></div>
+            <DetailBlock title="当前可用权益"><div className="admin-detail-list interactive">{userDetail.entitlements.filter(item => entitlementStatus(item) === 'active').slice(0, 4).map(item => <button type="button" key={item.id} onClick={() => setUserProfileTab('entitlements')}><div><strong>{item.planName}</strong><small>{item.lifetime ? '永久有效' : `有效期至 ${formatDate(item.expiresAt)}`}</small></div><div><b>面板 {quotaText(item.panelMode, item.panelRemaining)}</b><b>节点 {quotaText(item.nodeMode, item.nodeRemaining)}</b><ChevronRight /></div></button>)}{!userDetail.entitlements.some(item => entitlementStatus(item) === 'active') && <EmptyInline text="该客户当前没有可用权益" />}</div></DetailBlock>
+            <DetailBlock title="最近业务记录"><div className="admin-profile-timeline">{[...userDetail.orders.map(item => ({ id: `order-${item.id}`, title: `订单 ${item.orderNo}`, subtitle: `${planSnapshotName(item)} · ${formatMoney(item.amountCents)}`, createdAt: item.createdAt, status: item.status, action: () => { setUserDetail(null); void openOrderDetail(item); } })), ...userDetail.deployments.map(item => ({ id: `deployment-${item.id}`, title: `${item.capability === 'panel' ? '面板安装' : '节点创建'} ${item.requestId}`, subtitle: item.targetHostMasked || '未记录目标', createdAt: item.createdAt, status: item.status, action: () => { setUserDetail(null); setViewDeployment(item); } }))].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 6).map(item => <button type="button" key={item.id} onClick={item.action}><span><Activity /></span><div><strong>{item.title}</strong><small>{item.subtitle} · {formatDate(item.createdAt)}</small></div><StatusBadge status={item.status} /><ChevronRight /></button>)}{!userDetail.orders.length && !userDetail.deployments.length && <EmptyInline text="该客户暂无业务记录" />}</div></DetailBlock>
+          </div>}
+
+          {userProfileTab === 'entitlements' && <div className="admin-profile-content"><div className="admin-profile-section-head"><div><h3>客户权益</h3><p>查看有效期、剩余额度和使用限制。</p></div><button type="button" className="admin-button primary" onClick={() => { setGrant(value => ({ ...value, userId: userDetail.user.id })); setUserDetail(null); setGrantOpen(true); }}><BadgeCheck /> 发放权益</button></div><div className="admin-profile-records">{userDetail.entitlements.map(item => <article key={item.id}><div><strong>{item.planName}</strong><small>{item.lifetime ? '永久有效' : `有效期至 ${formatDate(item.expiresAt)}`} · 创建于 {formatDate(item.createdAt)}</small><p>面板 {quotaText(item.panelMode, item.panelRemaining, item.panelTotal)}，已用 {item.panelUsed}，冻结 {item.panelReserved} · 节点 {quotaText(item.nodeMode, item.nodeRemaining, item.nodeTotal)}，已用 {item.nodeUsed}，冻结 {item.nodeReserved}</p></div><div><StatusBadge status={entitlementStatus(item)} /><button type="button" className="admin-link" onClick={() => { setUserDetail(null); setEditingEntitlement({ ...item }); }}>调整额度</button></div></article>)}{!userDetail.entitlements.length && <EmptyInline text="该客户暂无权益" />}</div></div>}
+
+          {userProfileTab === 'orders' && <div className="admin-profile-content"><div className="admin-profile-section-head"><div><h3>客户订单</h3><p>订单、金额和处理状态集中展示。</p></div></div><div className="admin-profile-records">{userDetail.orders.map(order => <button type="button" key={order.id} onClick={() => { setUserDetail(null); void openOrderDetail(order); }}><div><strong>{order.orderNo}</strong><small>{planSnapshotName(order)} · {formatDate(order.createdAt)}</small><p>{order.paymentTradeNo ? `交易号 ${order.paymentTradeNo}` : '尚未记录支付交易号'}</p></div><div><b>{formatMoney(order.amountCents)}</b><StatusBadge status={order.status} /><ChevronRight /></div></button>)}{!userDetail.orders.length && <EmptyInline text="该客户暂无订单" />}</div></div>}
+
+          {userProfileTab === 'deployments' && <div className="admin-profile-content"><div className="admin-profile-section-head"><div><h3>搭建任务</h3><p>查看面板安装与节点创建的执行结果。</p></div></div><div className="admin-profile-records">{userDetail.deployments.map(item => <button type="button" key={item.id} onClick={() => { setUserDetail(null); setViewDeployment(item); }}><div><strong>{item.capability === 'panel' ? '面板安装' : '节点创建'} · {item.requestId}</strong><small>{item.targetHostMasked || '未记录目标'} · {formatDate(item.createdAt)}</small><p>{item.resultSummary || item.errorMessage || '暂无执行结果'}</p></div><div><StatusBadge status={item.status} /><ChevronRight /></div></button>)}{!userDetail.deployments.length && <EmptyInline text="该客户暂无搭建任务" />}</div></div>}
+
+          {userProfileTab === 'ledger' && <div className="admin-profile-content"><div className="admin-profile-section-head"><div><h3>额度流水</h3><p>发放、冻结、核销、返还和人工调整记录。</p></div></div><div className="admin-profile-records">{userProfileLedger.map(item => <article key={item.id}><div><strong>{item.planName}</strong><small>{item.capability === 'panel' ? '面板额度' : '节点额度'} · {formatDate(item.createdAt)}</small><p>{item.note || '无备注'}{item.deploymentId ? ` · 关联任务 ${item.deploymentId.slice(0, 8)}` : ''}</p></div><div><StatusBadge status={item.action} /><b className={item.amount > 0 ? 'admin-number-positive' : item.amount < 0 ? 'admin-number-negative' : ''}>{item.amount > 0 ? `+${item.amount}` : item.amount}</b></div></article>)}{!userProfileLedger.length && <EmptyInline text="该客户暂无额度流水" />}</div></div>}
         </div>}
       </AdminDialog>
     </div>
@@ -1454,7 +1571,7 @@ const Dashboard: React.FC<{
   const recentOrders = orders.slice(0, 5);
   const recentDeployments = deployments.slice(0, 5);
   return <div className="admin-dashboard">
-    <header className="admin-page-heading admin-dashboard-heading"><div><h2>运营概览</h2><p>集中查看核心业务指标、异常队列和最近发生的订单与交付活动。</p></div><span className="admin-live"><i /> 数据已同步</span></header>
+    <header className="admin-page-heading admin-dashboard-heading"><div><h2>运营概览与待处理</h2><p>优先查看需要处理的支付、权益和搭建异常，再浏览核心业务指标。</p></div><span className="admin-live"><i /> 数据已同步</span></header>
     <div className="admin-dashboard-strip"><div><strong>业务健康度</strong><p>支付、权益与交付链路的当前运行摘要</p></div><small>数据来自当前业务数据库</small></div>
     <div className="admin-stat-grid">
       <Stat icon={Users} label="用户总数" value={stats?.users || 0} detail={`${stats?.activeUsers || 0} 正常 / ${stats?.disabledUsers || 0} 禁用`} tone="cyan" />
@@ -1468,7 +1585,7 @@ const Dashboard: React.FC<{
       <button type="button" onClick={() => onNavigate('deployments')}><span className="cyan"><Activity /></span><div><strong>{stats?.running || 0}</strong><small>正在执行的任务</small></div><ChevronRight /></button>
     </div>
     <section className={`admin-exception-center ${exceptions.summary.total ? 'has-exceptions' : 'clear'}`}>
-      <header><div><span><AlertTriangle /></span><div><h3>业务异常中心</h3><p>自动汇总支付、权益发放和交付任务中需要人工处理的问题。</p></div></div><div className="admin-exception-summary"><b>{exceptions.summary.total}</b><span><strong>{exceptions.summary.critical}</strong> 紧急 · <strong>{exceptions.summary.warning}</strong> 提醒</span></div></header>
+      <header><div><span><AlertTriangle /></span><div><h3>待处理事项</h3><p>自动汇总支付、权益发放和搭建任务中需要人工处理的问题。</p></div></div><div className="admin-exception-summary"><b>{exceptions.summary.total}</b><span><strong>{exceptions.summary.critical}</strong> 紧急 · <strong>{exceptions.summary.warning}</strong> 提醒</span></div></header>
       <div className="admin-exception-list">
         {exceptions.items.slice(0, 8).map(item => <button type="button" key={item.id} className={item.severity} onClick={() => item.order ? onOpenOrder(item.order) : item.deployment ? onOpenDeployment(item.deployment) : onNavigate(item.targetType === 'order' ? 'orders' : 'deployments')}>
           <span>{item.severity === 'danger' ? <AlertTriangle /> : <Clock3 />}</span><div><strong>{item.title}</strong><p>{item.description}</p><small>{formatDate(item.createdAt)}</small></div><ChevronRight />
