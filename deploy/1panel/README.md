@@ -2,6 +2,16 @@
 
 此目录是 X-UI 搭建助手的独立 1Panel 应用包，不会替换或修改项目现有的 Shell、PM2 和 GitHub Release 部署方式。
 
+## 永久安装包
+
+每次 `main` 分支构建成功后，GitHub Actions 会更新独立的 `1panel-latest` Release。该 Release 不会覆盖项目原有的 `latest` 发布包，也不会像 Actions Artifact 一样在 30 天后过期。
+
+- 固定下载地址：`https://github.com/wstimin/sy-xuiZS/releases/download/1panel-latest/xui-deploy-assistant-1panel.zip`
+- 发布页面：`https://github.com/wstimin/sy-xuiZS/releases/tag/1panel-latest`
+- 校验文件：`https://github.com/wstimin/sy-xuiZS/releases/download/1panel-latest/SHA256SUMS`
+
+Release 同时保留带版本号的安装包，例如 `xui-deploy-assistant-1panel-3.0.6.zip`。
+
 ## 安装体验
 
 1. 在 1Panel 应用商店中导入或安装 `xui-deploy-assistant` 应用。
@@ -39,5 +49,4 @@ apps/xui-deploy-assistant/
     docker-compose.yml
 ```
 
-镜像由 `.github/workflows/1panel-image.yml` 独立构建并发布，不会改动现有 Release 工作流。
-
+镜像和永久安装包由 `.github/workflows/1panel-image.yml` 独立构建并发布，不会改动现有 Release 工作流。

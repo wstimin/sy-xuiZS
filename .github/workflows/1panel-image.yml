@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
@@ -92,9 +92,47 @@ jobs:
           provenance: true
           sbom: true
 
+      - name: Create permanent 1Panel packages
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          mkdir -p release/1panel
+          cd deploy/1panel/apps
+          zip -r "$GITHUB_WORKSPACE/release/1panel/xui-deploy-assistant-1panel-${version}.zip" \
+            xui-deploy-assistant
+          cd "$GITHUB_WORKSPACE/release/1panel"
+          cp "xui-deploy-assistant-1panel-${version}.zip" \
+            xui-deploy-assistant-1panel.zip
+          sha256sum xui-deploy-assistant-1panel*.zip > SHA256SUMS
+
       - name: Upload 1Panel application package
         uses: actions/upload-artifact@v4
         with:
           name: xui-deploy-assistant-1panel-${{ steps.version.outputs.version }}
-          path: deploy/1panel/apps/xui-deploy-assistant
+          path: |
+            release/1panel/xui-deploy-assistant-1panel*.zip
+            release/1panel/SHA256SUMS
           retention-days: 30
+
+      - name: Publish permanent 1Panel release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: 1panel-latest
+          name: Latest 1Panel deployment package
+          target_commitish: ${{ github.sha }}
+          body: |
+            Permanent 1Panel deployment package for X-UI Deploy Assistant.
+
+            Download `xui-deploy-assistant-1panel.zip`, import it through the
+            1Panel web interface, choose the web port, and complete the existing
+            administrator initialization page after the container starts.
+
+            Container image: `ghcr.io/wstimin/sy-xuizs:${{ steps.version.outputs.version }}`
+          generate_release_notes: false
+          make_latest: false
+          prerelease: false
+          overwrite_files: true
+          files: |
+            release/1panel/xui-deploy-assistant-1panel*.zip
+            release/1panel/SHA256SUMS
