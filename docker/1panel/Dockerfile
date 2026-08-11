@@ -13,7 +13,6 @@ COPY tsconfig.json vite.config.ts index.html metadata.json server.ts ./
 COPY server ./server
 COPY src ./src
 COPY public ./public
-COPY assets ./assets
 
 RUN npm run build \
     && npm prune --omit=dev \
@@ -44,4 +43,3 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
   CMD node -e "const request=require('http').get('http://127.0.0.1:1888/api/health',response=>process.exit(response.statusCode===200?0:1));request.on('error',()=>process.exit(1));request.setTimeout(4000,()=>{request.destroy();process.exit(1)})"
 
 CMD ["node", "dist/server.cjs"]
-
