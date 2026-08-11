@@ -13,6 +13,7 @@
     "start": "node dist/server.cjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "package:release": "node scripts/create-release-package.mjs",
+    "package:1panel": "node scripts/create-1panel-package.mjs",
     "lint": "tsc --noEmit",
     "test": "tsx --test server/commercial-api.test.ts server/commercial-store.test.ts server/payment-service.test.ts server/inbound-builder.test.ts server/ssh.test.ts server/validation.test.ts server/xray-template.test.ts server/xui-client.test.ts"
   },

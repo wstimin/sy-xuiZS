@@ -1,0 +1,144 @@
+name: Build 1Panel website package
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: 1panel-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run type checks
+        run: npm run lint
+
+      - name: Build production application
+        run: npm run build
+
+      - name: Create 1Panel website package
+        run: npm run package:1panel
+
+      - name: Read application version
+        id: version
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify package structure
+        shell: bash
+        run: |
+          package_dir="release/1panel/package"
+          test -s "$package_dir/VERSION"
+          test -s "$package_dir/package.json"
+          test -s "$package_dir/package-lock.json"
+          test -s "$package_dir/start.cjs"
+          test -s "$package_dir/dist/server.cjs"
+          test -s "$package_dir/dist/index.html"
+          test -s "$package_dir/.env.example"
+          test -s "$package_dir/.npmrc"
+          test -s "$package_dir/1PANEL部署说明.md"
+          test -d "$package_dir/data"
+          test ! -e "$package_dir/data.yml"
+          test ! -e "$package_dir/docker-compose.yml"
+          test ! -e "$package_dir/install.sh"
+          test "$(cat "$package_dir/VERSION")" = "${{ steps.version.outputs.version }}"
+
+      - name: Smoke test 1Panel package
+        shell: bash
+        run: |
+          cd release/1panel/package
+          npm ci
+          export PORT=1892
+          export DATABASE_PATH="$RUNNER_TEMP/xui-1panel.db"
+          node start.cjs > "$RUNNER_TEMP/xui-1panel.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/health" > "$RUNNER_TEMP/health.json"; then
+              break
+            fi
+            sleep 1
+          done
+          grep -Fq '"status":"ok"' "$RUNNER_TEMP/health.json"
+          grep -Fq '"version":"${{ steps.version.outputs.version }}"' "$RUNNER_TEMP/health.json"
+          curl -fsS "http://127.0.0.1:${PORT}/api/auth/bootstrap-status" \
+            | grep -Fq '"required":true'
+          kill "$server_pid"
+          wait "$server_pid" 2>/dev/null || true
+          trap - EXIT
+          rm -rf node_modules
+
+      - name: Create permanent 1Panel packages
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          cd release/1panel/package
+          zip -r "../xui-deploy-assistant-1panel-${version}.zip" .
+          cd ..
+          cp "xui-deploy-assistant-1panel-${version}.zip" \
+            xui-deploy-assistant-1panel.zip
+          sha256sum xui-deploy-assistant-1panel*.zip > SHA256SUMS
+
+      - name: Upload 1Panel website package
+        uses: actions/upload-artifact@v4
+        with:
+          name: xui-deploy-assistant-1panel-${{ steps.version.outputs.version }}
+          path: |
+            release/1panel/xui-deploy-assistant-1panel*.zip
+            release/1panel/SHA256SUMS
+          retention-days: 30
+
+      - name: Move permanent release tag to this build
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          git tag --force 1panel-latest "${GITHUB_SHA}"
+          git push --force origin refs/tags/1panel-latest
+
+      - name: Publish permanent 1Panel release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: 1panel-latest
+          name: Latest 1Panel website deployment package
+          target_commitish: ${{ github.sha }}
+          body: |
+            Permanent website-directory package for X-UI Deploy Assistant.
+
+            Create a website in 1Panel, extract the ZIP into its website
+            directory, start that directory with the 1Panel Node.js 20 runtime,
+            and reverse proxy the website to the runtime port. Opening the
+            domain then displays the administrator initialization wizard.
+          generate_release_notes: false
+          make_latest: false
+          prerelease: false
+          overwrite_files: true
+          files: |
+            release/1panel/xui-deploy-assistant-1panel*.zip
+            release/1panel/SHA256SUMS

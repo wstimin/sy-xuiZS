@@ -6,13 +6,13 @@
 
 ## 1Panel 网页安装（无需命令）
 
-使用 1Panel 的用户可以直接下载专属安装包，在 1Panel 网页中导入并完成安装，不需要登录服务器终端执行命令。
+使用 1Panel 的用户可以直接下载网站目录专属包，在 1Panel 网页中创建网站、上传解压并通过 Node.js 运行环境启动，不需要登录服务器终端执行命令。
 
 - [下载永久最新版 1Panel 安装包](https://github.com/wstimin/sy-xuiZS/releases/download/1panel-latest/xui-deploy-assistant-1panel.zip)
 - [查看 1Panel 专属部署说明](./1PANEL部署说明.md)
 - [查看 1Panel 永久发布页面](https://github.com/wstimin/sy-xuiZS/releases/tag/1panel-latest)
 
-基本流程：下载 ZIP，在 1Panel 的本地应用导入页面选择该文件，设置访问端口并安装；容器启动后打开访问地址，根据页面提示创建第一个管理员账号。应用数据会保存在 1Panel 管理的持久化目录中，更新镜像不会清空用户、套餐、订单和搭建记录。
+基本流程：先创建静态网站和域名，将 ZIP 解压到网站根目录；再用 1Panel 的 Node.js 20 运行环境启动该目录，并把网站反向代理到 `http://127.0.0.1:1888`。访问域名后会直接进入管理员初始化向导，业务数据保存在网站目录的 `data` 子目录中。
 
 ## 主要能力
 
