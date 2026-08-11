@@ -92,11 +92,6 @@ jobs:
           provenance: true
           sbom: true
 
-      - name: Make container package public
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh api --method PATCH /user/packages/container/sy-xuizs -f visibility=public
-
       - name: Upload 1Panel application package
         uses: actions/upload-artifact@v4
         with:
