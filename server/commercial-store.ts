@@ -1417,6 +1417,41 @@ export class CommercialStore {
     this.db.prepare("UPDATE users SET role = ?, updated_at = ? WHERE id = ?").run(role, nowIso(), id);
   }
 
+  deleteUser(id: string) {
+    const remove = this.db.transaction(() => {
+      const user = this.db.prepare("SELECT id, username FROM users WHERE id = ?").get(id) as any;
+      if (!user) throw new Error("用户不存在");
+
+      const counts = {
+        orders: Number((this.db.prepare("SELECT COUNT(*) AS count FROM orders WHERE user_id = ?").get(id) as any).count),
+        entitlements: Number((this.db.prepare("SELECT COUNT(*) AS count FROM entitlements WHERE user_id = ?").get(id) as any).count),
+        deployments: Number((this.db.prepare("SELECT COUNT(*) AS count FROM deployments WHERE user_id = ?").get(id) as any).count),
+        ledgerEntries: Number((this.db.prepare("SELECT COUNT(*) AS count FROM usage_ledger WHERE user_id = ?").get(id) as any).count),
+      };
+
+      this.db.prepare("DELETE FROM payment_notifications WHERE order_no IN (SELECT order_no FROM orders WHERE user_id = ?)").run(id);
+      this.db.prepare("DELETE FROM payment_attempts WHERE order_id IN (SELECT id FROM orders WHERE user_id = ?)").run(id);
+      this.db.prepare("DELETE FROM payment_events WHERE order_id IN (SELECT id FROM orders WHERE user_id = ?)").run(id);
+      this.db.prepare("DELETE FROM usage_ledger WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM deployments WHERE user_id = ?").run(id);
+      this.db.prepare(`
+        DELETE FROM redeem_codes
+        WHERE redeemed_by_user_id = ?
+          OR order_id IN (SELECT id FROM orders WHERE user_id = ?)
+          OR entitlement_id IN (SELECT id FROM entitlements WHERE user_id = ?)
+      `).run(id, id, id);
+      this.db.prepare("DELETE FROM entitlements WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM orders WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM admin_audit_logs WHERE admin_user_id = ? OR (target_type = 'user' AND target_id = ?)").run(id, id);
+      this.db.prepare("DELETE FROM users WHERE id = ?").run(id);
+
+      return { id: user.id as string, username: user.username as string, ...counts };
+    });
+
+    return remove.immediate();
+  }
+
   updateUsername(id: string, username: string) {
     const normalized = username.trim();
     if (!/^[A-Za-z0-9_.@-]{3,64}$/.test(normalized)) throw new Error("用户名必须为 3 到 64 位字母、数字或 ._@-");

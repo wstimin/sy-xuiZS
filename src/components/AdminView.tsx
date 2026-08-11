@@ -37,7 +37,6 @@ import {
   Send,
   Settings,
   ShieldCheck,
-  SlidersHorizontal,
   Terminal,
   Trash2,
   Upload,
@@ -84,14 +83,6 @@ type UsageLedgerEntry = { id: string; userId: string; username: string; entitlem
 type AuditLog = { id: string; adminUserId: string; adminUsername: string; action: string; targetType: string; targetId: string; detail: string; createdAt: string };
 type UserDetail = { user: AdminUser; orders: Order[]; entitlements: Entitlement[]; deployments: DeploymentRecord[] };
 type UserProfileTab = 'overview' | 'entitlements' | 'orders' | 'deployments' | 'ledger';
-type GlobalSearchResult = {
-  id: string;
-  category: '客户' | '订单' | '交付任务' | '权益' | '套餐' | '卡密';
-  title: string;
-  subtitle: string;
-  icon: React.ElementType;
-  onSelect: () => void;
-};
 type Stats = {
   users: number;
   activeUsers: number;
@@ -284,9 +275,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [deletingContactMethod, setDeletingContactMethod] = useState<{ index: number; method: ContactMethod } | null>(null);
   const [testEmailRecipient, setTestEmailRecipient] = useState('');
   const [query, setQuery] = useState('');
-  const [globalQuery, setGlobalQuery] = useState('');
-  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
-  const [navigationQuery, setNavigationQuery] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [editingPlan, setEditingPlan] = useState<(Omit<Plan, 'id'> & { id?: string }) | null>(null);
@@ -297,6 +285,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [refundTradeNo, setRefundTradeNo] = useState('');
   const [refundReason, setRefundReason] = useState('');
   const [userAction, setUserAction] = useState<{ user: AdminUser; kind: 'status' | 'role' | 'password'; nextValue?: string } | null>(null);
+  const [deletingUser, setDeletingUser] = useState<AdminUser | null>(null);
   const [nextPassword, setNextPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [grantOpen, setGrantOpen] = useState(false);
@@ -371,12 +360,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   useEffect(() => { void load(); }, []);
   useEffect(() => { setAccountUsername(currentUser.username); }, [currentUser.username]);
   useEffect(() => {
-    setQuery(navigationQuery || '');
-    setNavigationQuery(null);
+    setQuery('');
     setStatusFilter('all');
     setPage(1);
     setMobileNavOpen(false);
   }, [tab]);
+  useEffect(() => { setPage(1); }, [query, statusFilter]);
 
   const runAction = async (title: string, url: string, options: RequestInit, after?: () => void) => {
     setBusy(true);
@@ -444,61 +433,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   const openUserById = (userId?: string, profileTab: UserProfileTab = 'overview') => {
     const user = users.find(item => item.id === userId);
-    if (user) {
-      setGlobalQuery('');
-      setGlobalSearchOpen(false);
-      void openUserDetail(user, profileTab);
-    }
+    if (user) void openUserDetail(user, profileTab);
   };
-
-  const navigateWithQuery = (nextTab: AdminTab, nextQuery: string) => {
-    if (nextTab === tab) setQuery(nextQuery);
-    else {
-      setNavigationQuery(nextQuery);
-      setTab(nextTab);
-    }
-    setStatusFilter('all');
-    setPage(1);
-    setGlobalQuery('');
-    setGlobalSearchOpen(false);
-  };
-
-  const globalSearchResults = useMemo<GlobalSearchResult[]>(() => {
-    const search = globalQuery.trim().toLowerCase();
-    if (!search) return [];
-    const includes = (...values: Array<string | undefined | null>) => values.join(' ').toLowerCase().includes(search);
-    const results: GlobalSearchResult[] = [];
-    users.filter(user => includes(user.username, user.email)).slice(0, 5).forEach(user => results.push({
-      id: `user-${user.id}`, category: '客户', title: user.username, subtitle: user.email || '未绑定邮箱', icon: Users,
-      onSelect: () => { setGlobalQuery(''); setGlobalSearchOpen(false); void openUserDetail(user); },
-    }));
-    orders.filter(order => includes(order.orderNo, order.username, order.paymentTradeNo, planSnapshotName(order))).slice(0, 5).forEach(order => results.push({
-      id: `order-${order.id}`, category: '订单', title: order.orderNo, subtitle: `${order.username || '未知客户'} · ${formatMoney(order.amountCents)}`, icon: CreditCard,
-      onSelect: () => { setGlobalQuery(''); setGlobalSearchOpen(false); void openOrderDetail(order); },
-    }));
-    deployments.filter(item => includes(item.requestId, item.username, item.targetHostMasked, item.resultSummary)).slice(0, 5).forEach(item => results.push({
-      id: `deployment-${item.id}`, category: '交付任务', title: item.requestId, subtitle: `${item.username || '未知客户'} · ${item.targetHostMasked || '未记录目标'}`, icon: Activity,
-      onSelect: () => { setGlobalQuery(''); setGlobalSearchOpen(false); setViewDeployment(item); },
-    }));
-    entitlements.filter(item => includes(item.username, item.planName)).slice(0, 5).forEach(item => results.push({
-      id: `entitlement-${item.id}`, category: '权益', title: item.username || '未知客户', subtitle: `${item.planName} · 面板 ${quotaText(item.panelMode, item.panelRemaining)}`, icon: BadgeCheck,
-      onSelect: () => item.userId ? openUserById(item.userId, 'entitlements') : navigateWithQuery('entitlements', item.username || item.planName),
-    }));
-    plans.filter(plan => includes(plan.name, plan.description)).slice(0, 5).forEach(plan => results.push({
-      id: `plan-${plan.id}`, category: '套餐', title: plan.name, subtitle: `${formatMoney(plan.priceCents)} · ${durationText(plan)}`, icon: Boxes,
-      onSelect: () => navigateWithQuery('plans', plan.name),
-    }));
-    redeemCodes.filter(item => includes(item.codeMasked, item.planName, item.redeemedByUsername, item.note)).slice(0, 5).forEach(item => results.push({
-      id: `redeem-${item.id}`, category: '卡密', title: item.codeMasked, subtitle: `${item.planName} · ${item.redeemedByUsername || '未兑换'}`, icon: KeyRound,
-      onSelect: () => navigateWithQuery('redeem-codes', item.codeMasked),
-    }));
-    return results;
-  }, [deployments, entitlements, globalQuery, orders, plans, redeemCodes, tab, users]);
-
-  const globalResultGroups = useMemo(() => {
-    const categories: GlobalSearchResult['category'][] = ['客户', '订单', '交付任务', '权益', '套餐', '卡密'];
-    return categories.map(category => ({ category, items: globalSearchResults.filter(item => item.category === category) })).filter(group => group.items.length);
-  }, [globalSearchResults]);
   const userProfileLedger = useMemo(() => userDetail ? ledgerEntries.filter(item => item.userId === userDetail.user.id) : [], [ledgerEntries, userDetail]);
 
   const activeList = tab === 'orders' ? filteredOrders : tab === 'plans' ? filteredPlans : tab === 'redeem-codes' ? filteredRedeemCodes : tab === 'users' ? filteredUsers : tab === 'entitlements' ? filteredEntitlements : tab === 'ledger' ? filteredLedger : tab === 'deployments' ? filteredDeployments : tab === 'audit' ? filteredAudit : [];
@@ -755,6 +691,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       method: 'PATCH',
       body: JSON.stringify({ [userAction.kind]: userAction.nextValue }),
     }, () => setUserAction(null));
+  };
+
+  const deleteUser = async () => {
+    if (!deletingUser) return;
+    await runAction('客户及关联数据已永久删除', `/api/admin/users/${deletingUser.id}`, {
+      method: 'DELETE',
+    }, () => {
+      setDeletingUser(null);
+      setUserDetail(null);
+    });
   };
 
   const grantEntitlement = async () => {
@@ -1075,14 +1021,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       <div className="admin-main">
         <header className="admin-topbar">
           <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div className="admin-breadcrumb"><span>管理后台</span><ChevronRight /><strong>{currentMeta.area}</strong><ChevronRight /><b>{currentTitle}</b></div></div>
-          <div className={`admin-global-search ${globalSearchOpen ? 'open' : ''}`}>
-            <label><Search /><input value={globalQuery} onFocus={() => setGlobalSearchOpen(true)} onBlur={() => window.setTimeout(() => setGlobalSearchOpen(false), 120)} onChange={event => { setGlobalQuery(event.target.value); setGlobalSearchOpen(true); }} onKeyDown={event => { if (event.key === 'Escape') setGlobalSearchOpen(false); }} placeholder="搜索客户、订单、任务、权益、套餐或卡密" aria-label="全局搜索" />{globalQuery && <button type="button" title="清除搜索" onMouseDown={event => event.preventDefault()} onClick={() => setGlobalQuery('')}><X /></button>}</label>
-            {globalSearchOpen && globalQuery.trim() && <div className="admin-global-results">
-              <header><span>全局搜索</span><small>{globalSearchResults.length} 条匹配结果</small></header>
-              {globalResultGroups.map(group => <section key={group.category}><h3>{group.category}</h3>{group.items.map(item => { const Icon = item.icon; return <button type="button" key={item.id} onMouseDown={event => event.preventDefault()} onClick={item.onSelect}><span><Icon /></span><div><strong>{item.title}</strong><small>{item.subtitle}</small></div><ChevronRight /></button>; })}</section>)}
-              {!globalSearchResults.length && <div className="admin-global-empty"><Search /><strong>没有找到相关记录</strong><span>可尝试用户名、订单号、任务编号或套餐名称</span></div>}
-            </div>}
-          </div>
           <div className="admin-topbar-actions">
             <span className="admin-topbar-context"><i />{currentContext}</span>
             {activeList.length > 0 && <button type="button" className="admin-button secondary admin-export-button" onClick={exportCurrent}><Download /> 导出当前列表</button>}
@@ -1145,7 +1083,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                 {filteredUsers.slice(pageStart, pageStart + PAGE_SIZE).map(user => <tr key={user.id}>
                   <td><button type="button" className="admin-user-cell admin-user-cell-button" disabled={detailLoading} onClick={() => void openUserDetail(user)}><span>{user.username.slice(0, 1).toUpperCase()}</span><div><strong>{user.username}</strong><small>{user.email || (user.id === currentUser.id ? '当前账号' : '未绑定邮箱')}</small></div></button></td>
                   <td><StatusBadge status={user.role} /></td><td><StatusBadge status={user.status} /></td><td>{formatDate(user.createdAt)}</td><td>{user.lastLoginAt ? formatDate(user.lastLoginAt) : <span className="admin-muted">从未登录</span>}</td>
-                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看用户详情" disabled={detailLoading} onClick={() => void openUserDetail(user)}><Eye /></button><button className="admin-link" disabled={user.id === currentUser.id} onClick={() => setUserAction({ user, kind: 'role', nextValue: user.role === 'admin' ? 'user' : 'admin' })}>{user.role === 'admin' ? '移除管理员' : '设为管理员'}</button><button className={user.status === 'active' ? 'admin-link danger' : 'admin-link success'} disabled={user.id === currentUser.id} onClick={() => setUserAction({ user, kind: 'status', nextValue: user.status === 'active' ? 'disabled' : 'active' })}>{user.status === 'active' ? '禁用' : '启用'}</button><button className="admin-icon-button small" disabled={user.id === currentUser.id} title="重置密码" onClick={() => { setUserAction({ user, kind: 'password' }); setNextPassword(''); setConfirmPassword(''); }}><KeyRound /></button></div></td>
+                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看用户详情" disabled={detailLoading} onClick={() => void openUserDetail(user)}><Eye /></button><button className="admin-link" disabled={user.id === currentUser.id} onClick={() => setUserAction({ user, kind: 'role', nextValue: user.role === 'admin' ? 'user' : 'admin' })}>{user.role === 'admin' ? '移除管理员' : '设为管理员'}</button><button className={user.status === 'active' ? 'admin-link danger' : 'admin-link success'} disabled={user.id === currentUser.id} onClick={() => setUserAction({ user, kind: 'status', nextValue: user.status === 'active' ? 'disabled' : 'active' })}>{user.status === 'active' ? '禁用' : '启用'}</button><button className="admin-icon-button small" disabled={user.id === currentUser.id} title="重置密码" onClick={() => { setUserAction({ user, kind: 'password' }); setNextPassword(''); setConfirmPassword(''); }}><KeyRound /></button><button className="admin-icon-button small danger" disabled={user.id === currentUser.id} title="永久删除客户" onClick={() => setDeletingUser(user)}><Trash2 /></button></div></td>
                 </tr>)}
               </AdminTable>
               <Pagination total={filteredUsers.length} page={safePage} pageCount={pageCount} onPage={setPage} />
@@ -1461,6 +1399,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       <AdminDialog open={Boolean(userAction)} title={userActionTitle(userAction)} description={userActionDescription(userAction)} confirmLabel={userAction?.kind === 'password' ? '确认重置密码' : '确认修改'} tone={userAction?.kind === 'status' && userAction.nextValue === 'disabled' ? 'danger' : 'warning'} busy={busy} confirmDisabled={userAction?.kind === 'password' && (nextPassword.length < 8 || nextPassword !== confirmPassword)} onClose={() => { setUserAction(null); setNextPassword(''); setConfirmPassword(''); }} onConfirm={() => void confirmUserAction()}>
         {userAction?.kind === 'password' && <div className="admin-form-grid one"><label className="admin-field"><span>新密码</span><input type="password" value={nextPassword} onChange={event => setNextPassword(event.target.value)} minLength={8} maxLength={128} autoComplete="new-password" /></label><label className="admin-field"><span>确认新密码</span><input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} minLength={8} maxLength={128} autoComplete="new-password" /><small className={confirmPassword && nextPassword !== confirmPassword ? 'error' : ''}>{confirmPassword && nextPassword !== confirmPassword ? '两次输入不一致' : '密码长度为 8 到 128 位'}</small></label></div>}
       </AdminDialog>
+      <AdminDialog open={Boolean(deletingUser)} title={`永久删除客户 ${deletingUser?.username || ''}`} description="删除后无法恢复，客户账号及其订单、支付记录、权益、搭建任务、额度流水和卡密兑换关联都会一并清除。" confirmLabel="确认永久删除" tone="danger" busy={busy} onClose={() => setDeletingUser(null)} onConfirm={() => void deleteUser()}>
+        {deletingUser && <div className="admin-dialog-summary"><div><span>客户账号</span><strong>{deletingUser.username}</strong></div><div><span>账号状态</span><strong>{deletingUser.status === 'active' ? '正常' : '已禁用'}</strong></div><div><span>影响范围</span><strong>账号与全部关联业务数据</strong></div></div>}
+      </AdminDialog>
       <GrantDialog open={grantOpen} busy={busy} users={users.filter(user => user.role === 'user')} value={grant} onChange={setGrant} onClose={() => setGrantOpen(false)} onSave={() => void grantEntitlement()} />
       <QuotaDialog value={editingEntitlement} busy={busy} onChange={setEditingEntitlement} onClose={() => setEditingEntitlement(null)} onSave={() => void updateEntitlementQuota()} />
       <AdminDialog open={Boolean(entitlementAction)} title={entitlementAction?.status === 'active' ? '撤销用户权益' : '重新启用权益'} description={entitlementAction?.status === 'active' ? '撤销后用户将不能再使用此权益执行新任务，正在执行或待核对的任务不会被自动修改。' : '重新启用后，未过期且仍有额度的权益可以继续用于执行任务。'} confirmLabel={entitlementAction?.status === 'active' ? '确认撤销' : '确认启用'} tone={entitlementAction?.status === 'active' ? 'danger' : 'success'} busy={busy} onClose={() => setEntitlementAction(null)} onConfirm={() => entitlementAction && void runAction('权益状态已更新', `/api/admin/entitlements/${entitlementAction.id}`, { method: 'PATCH', body: JSON.stringify({ status: entitlementAction.status === 'active' ? 'revoked' : 'active' }) }, () => setEntitlementAction(null))} />
@@ -1532,6 +1473,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               {userDetail.user.role === 'user' && <button type="button" className="admin-button primary" onClick={() => { setGrant(value => ({ ...value, userId: userDetail.user.id })); setUserDetail(null); setGrantOpen(true); }}><BadgeCheck /> 发放权益</button>}
               <button type="button" className="admin-button secondary" disabled={userDetail.user.id === currentUser.id} onClick={() => { const user = userDetail.user; setUserDetail(null); setUserAction({ user, kind: 'password' }); setNextPassword(''); setConfirmPassword(''); }}><KeyRound /> 重置密码</button>
               <button type="button" className={`admin-button ${userDetail.user.status === 'active' ? 'danger' : 'success'}`} disabled={userDetail.user.id === currentUser.id} onClick={() => { const user = userDetail.user; setUserDetail(null); setUserAction({ user, kind: 'status', nextValue: user.status === 'active' ? 'disabled' : 'active' }); }}>{userDetail.user.status === 'active' ? <PowerOff /> : <CheckCircle2 />}{userDetail.user.status === 'active' ? '禁用客户' : '启用客户'}</button>
+              <button type="button" className="admin-button danger" disabled={userDetail.user.id === currentUser.id} onClick={() => { const user = userDetail.user; setUserDetail(null); setDeletingUser(user); }}><Trash2 /> 永久删除</button>
             </div>
           </div>
           <nav className="admin-profile-tabs" aria-label="客户档案分类">
@@ -1602,7 +1544,7 @@ const Dashboard: React.FC<{
 
 const DiagnosisBadge: React.FC<{ diagnosis: OrderDetail['diagnosis'] }> = ({ diagnosis }) => <span className={`admin-diagnosis-badge ${diagnosis.severity}`} title={diagnosis.recommendedAction}><i />{diagnosis.processingLabel}</span>;
 
-type AdminToolbarProps = { query: string; onQuery: (value: string) => void; placeholder: string; filter: string; onFilter: (value: string) => void; options: Array<[string, string]>; title?: string; description?: string; action?: React.ReactNode };
+type AdminToolbarProps = { query: string; onQuery: (value: string) => void; placeholder: string; filter: string; onFilter: (value: string) => void; options: Array<[string, string]>; action?: React.ReactNode };
 
 const AdminSection: React.FC<{ title: string; description: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => {
   return <div className="admin-section">
@@ -1610,7 +1552,7 @@ const AdminSection: React.FC<{ title: string; description: string; action?: Reac
     <div className="admin-section-body">{children}</div>
   </div>;
 };
-const AdminToolbar: React.FC<AdminToolbarProps> = ({ query, onQuery, placeholder, filter, onFilter, options, title, description, action }) => <div className="admin-toolbar"><div className="admin-toolbar-heading"><span><SlidersHorizontal /></span><div><strong>{title || '筛选与查询'}</strong><small>{description || '搜索词和状态条件会同时生效'}</small></div></div><div className="admin-toolbar-controls"><label className="admin-search"><Search /><input value={query} onChange={event => onQuery(event.target.value)} placeholder={placeholder} />{query && <button type="button" title="清除搜索" onClick={() => onQuery('')}><X /></button>}</label><label className="admin-filter"><select aria-label="状态筛选" value={filter} onChange={event => onFilter(event.target.value)}>{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><ChevronRight /></label>{action && <div className="admin-toolbar-actions">{action}</div>}</div></div>;
+const AdminToolbar: React.FC<AdminToolbarProps> = ({ query, onQuery, placeholder, filter, onFilter, options, action }) => <div className="admin-toolbar"><label className="admin-search"><Search /><input value={query} onChange={event => onQuery(event.target.value)} placeholder={placeholder} />{query && <button type="button" title="清除搜索" onClick={() => onQuery('')}><X /></button>}</label><div className="admin-toolbar-right"><div className="admin-filter-buttons" aria-label="状态筛选">{options.map(([value, label]) => <button type="button" key={value} className={`admin-filter-button ${filter === value ? 'active' : ''}`} aria-pressed={filter === value} onClick={() => onFilter(value)}>{label}</button>)}</div>{(query || filter !== 'all') && <button type="button" className="admin-toolbar-clear" onClick={() => { onQuery(''); onFilter('all'); }}><X /> 清理</button>}{action && <div className="admin-toolbar-actions">{action}</div>}</div></div>;
 const AdminTable: React.FC<{ columns: string[]; empty: string; children: React.ReactNode }> = ({ columns, empty, children }) => <div className="admin-table-wrap"><table className="admin-table"><thead><tr>{columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{children}</tbody></table>{React.Children.count(children) === 0 && <div className="admin-table-empty"><Search /><strong>{empty}</strong><span>调整搜索词或筛选条件后再试。</span></div>}</div>;
 const Pagination: React.FC<{ total: number; page: number; pageCount: number; onPage: (page: number) => void }> = ({ total, page, pageCount, onPage }) => {
   const pages = Array.from({ length: pageCount }, (_, index) => index + 1).filter(item => item === 1 || item === pageCount || Math.abs(item - page) <= 1);

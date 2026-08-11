@@ -1181,6 +1181,19 @@ export function createCommercialRouter(store: CommercialStore) {
     store.recordAdminAction(adminUser(res).id, "重置用户密码", "user", req.params.id);
     res.json({ success: true });
   }));
+  router.delete("/admin/users/:id", requireAdmin, route((req, res) => {
+    const acting = adminUser(res);
+    if (acting.id === req.params.id) throw new Error("不能删除当前登录的管理员账号");
+    const deleted = store.deleteUser(req.params.id);
+    store.recordAdminAction(acting.id, "永久删除客户", "user", deleted.id, JSON.stringify({
+      username: deleted.username,
+      orders: deleted.orders,
+      entitlements: deleted.entitlements,
+      deployments: deleted.deployments,
+      ledgerEntries: deleted.ledgerEntries,
+    }));
+    res.json({ success: true, deleted });
+  }));
   router.post("/admin/orders/:id/mark-paid", requireAdmin, route((req, res) => {
     const tradeNo = String(req.body?.tradeNo || `manual-${Date.now()}`);
     const pendingOrder = store.getOrder(req.params.id);

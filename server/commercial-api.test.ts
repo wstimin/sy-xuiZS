@@ -172,6 +172,41 @@ test("admin management endpoints create users and expose protected operational r
     const userCookie = sessionCookie(userLogin);
     const forbidden = await fetch(`${base}/admin/audit-logs`, { headers: { cookie: userCookie } });
     assert.equal(forbidden.status, 401);
+
+    const deletableUser = store.createUser("deletable-user", "deletable-password");
+    const deletableOrder = store.createOrder(deletableUser.id, store.listPlans()[0].id, "manual");
+    store.createPaymentAttempt(deletableOrder.id, "manual", "", { source: "delete-test" });
+    store.recordPaymentNotification("manual", "manual", deletableOrder.orderNo, "accepted", { source: "delete-test" });
+    store.markOrderPaid(deletableOrder.id, "manual", "DELETE-TEST-TRADE");
+
+    const deleteResponse = await fetch(`${base}/admin/users/${deletableUser.id}`, {
+      method: "DELETE",
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(deleteResponse.status, 200);
+    const deleted = (await deleteResponse.json() as any).deleted;
+    assert.equal(deleted.username, "deletable-user");
+    assert.equal(deleted.orders, 1);
+    assert.equal(deleted.entitlements, 1);
+    assert.equal(store.getUserById(deletableUser.id), null);
+    assert.equal(store.getOrder(deletableOrder.id), undefined);
+    assert.deepEqual(store.listEntitlements(deletableUser.id), []);
+    assert.deepEqual(store.listPaymentAttempts(deletableOrder.id), []);
+    assert.equal((store.db.prepare("SELECT COUNT(*) AS count FROM payment_notifications WHERE order_no = ?").get(deletableOrder.orderNo) as any).count, 0);
+
+    const deletedDetailResponse = await fetch(`${base}/admin/users/${deletableUser.id}/detail`, { headers: { cookie: adminCookie } });
+    assert.equal(deletedDetailResponse.status, 404);
+    const deleteAudit = store.listAdminAuditLogs()[0] as any;
+    assert.equal(deleteAudit.action, "永久删除客户");
+    assert.equal(deleteAudit.targetId, deletableUser.id);
+
+    const currentAdmin = store.listAdministrators()[0];
+    const deleteSelfResponse = await fetch(`${base}/admin/users/${currentAdmin.id}`, {
+      method: "DELETE",
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(deleteSelfResponse.status, 400);
+    assert.match((await deleteSelfResponse.json() as any).error, /不能删除当前登录/);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     store.close();
