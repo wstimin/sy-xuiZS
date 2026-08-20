@@ -95,7 +95,7 @@ function makeStreamSettings(input: InboundInput, reality?: { privateKey: string;
       target,
       serverNames: [sni],
       privateKey: reality.privateKey,
-      minClientVer: "",
+      minClientVer: input.panelFlavor === "official" ? "1.0.0" : "",
       maxClientVer: "",
       maxTimediff: 0,
       shortIds: [shortId],

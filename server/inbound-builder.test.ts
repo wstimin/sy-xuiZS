@@ -36,6 +36,25 @@ test("Reality blank SNI follows the automatic target list used by the 3x-ui pane
   assert.match(built.shareLink("node.example.com", "public-key"), new RegExp(`sni=${settings.serverNames[0].replaceAll(".", "\\.")}`));
 });
 
+test("official Reality inbound requires client version 1.0.0 while other panels remain unchanged", () => {
+  const reality = { privateKey: "private-key", publicKey: "public-key" };
+  const official = buildInbound({
+    protocol: "VLESS",
+    transport: "TCP",
+    security: "Reality",
+    panelFlavor: "official",
+  }, reality);
+  const recommended = buildInbound({
+    protocol: "VLESS",
+    transport: "TCP",
+    security: "Reality",
+    panelFlavor: "mogai",
+  }, reality);
+
+  assert.equal(official.payload.streamSettings.realitySettings.minClientVer, "1.0.0");
+  assert.equal(recommended.payload.streamSettings.realitySettings.minClientVer, "");
+});
+
 test("TLS inbound uses certificate paths obtained from the panel", () => {
   const built = buildInbound({
     protocol: "VMess",
