@@ -519,3 +519,47 @@
   .admin-profile-timeline > button { grid-template-columns: 32px minmax(0, 1fr) auto; }
   .admin-profile-timeline > button > svg { display: none; }
 }
+
+/* Keep the mobile shell overrides last so later desktop layout passes cannot
+   restore the fixed sidebar offset on narrow screens. */
+@media (max-width: 760px) {
+  .admin-main {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .admin-sidebar {
+    width: min(300px, calc(100vw - 48px));
+    transform: translateX(-105%);
+  }
+
+  .admin-sidebar.open {
+    transform: translateX(0);
+  }
+
+  .admin-mobile-menu {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    border: 1px solid var(--admin-line);
+    border-radius: 9px;
+    color: var(--admin-text);
+    background: rgba(255, 255, 255, .04);
+    cursor: pointer;
+  }
+
+  .admin-mobile-menu:hover,
+  .admin-mobile-menu:focus-visible {
+    border-color: var(--admin-line-strong);
+    background: rgba(255, 255, 255, .08);
+    outline: none;
+  }
+
+  .admin-mobile-menu svg {
+    width: 18px;
+    height: 18px;
+  }
+}

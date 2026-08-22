@@ -998,7 +998,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
   return (
     <div className="admin-workspace">
-      <aside className={`admin-sidebar ${mobileNavOpen ? 'open' : ''}`}>
+      <aside id="admin-navigation" className={`admin-sidebar ${mobileNavOpen ? 'open' : ''}`}>
         <div className="admin-sidebar-brand">
           <span className="admin-brand-mark"><Terminal /></span>
           <div><strong>X-UI CONTROL</strong><small>运营管理系统</small></div>
@@ -1020,7 +1020,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
       <div className="admin-main">
         <header className="admin-topbar">
-          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title="打开导航">{mobileNavOpen ? <X /> : <Menu />}</button><div className="admin-breadcrumb"><span>管理后台</span><ChevronRight /><strong>{currentMeta.area}</strong><ChevronRight /><b>{currentTitle}</b></div></div>
+          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title={mobileNavOpen ? '关闭导航' : '打开导航'} aria-label={mobileNavOpen ? '关闭导航' : '打开导航'} aria-controls="admin-navigation" aria-expanded={mobileNavOpen}>{mobileNavOpen ? <X /> : <Menu />}</button><div className="admin-breadcrumb"><span>管理后台</span><ChevronRight /><strong>{currentMeta.area}</strong><ChevronRight /><b>{currentTitle}</b></div></div>
           <div className="admin-topbar-actions">
             <span className="admin-topbar-context"><i />{currentContext}</span>
             {activeList.length > 0 && <button type="button" className="admin-button secondary admin-export-button" onClick={exportCurrent}><Download /> 导出当前列表</button>}
