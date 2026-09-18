@@ -59,7 +59,7 @@ test("parseWebCertFiles accepts current and legacy TLS field names", () => {
   assert.throws(() => parseWebCertFiles({ defaultCert: "" }), /尚未配置可复用的 Web TLS 证书/);
 });
 
-test("serializeInboundPayload encodes the JSON string fields expected by 3x-ui", () => {
+test("serializeInboundPayload encodes the JSON string fields expected by the panel", () => {
   const payload = serializeInboundPayload({
     port: 443,
     settings: { clients: [{ id: "uuid" }] },
@@ -72,7 +72,7 @@ test("serializeInboundPayload encodes the JSON string fields expected by 3x-ui",
   assert.equal(payload.sniffing, '{"enabled":true}');
 });
 
-test("serializeInboundForm matches the native 3x-ui inbound form model", () => {
+test("serializeInboundForm matches the native panel inbound form model", () => {
   const form = serializeInboundForm({
     port: 443,
     enable: true,
@@ -97,7 +97,7 @@ test("parseApiTokenFromOutput extracts installer tokens and strips ANSI colors",
   assert.equal(parseApiTokenFromOutput("installation complete\n"), "");
 });
 
-test("parseXrayTemplateResponse parses the JSON string returned by 3x-ui", () => {
+test("parseXrayTemplateResponse parses the JSON string returned by the panel", () => {
   const result = parseXrayTemplateResponse(JSON.stringify({
     xraySetting: {
       outbounds: [{ tag: "direct", protocol: "freedom" }],
@@ -265,7 +265,7 @@ test("XuiClient reads TLS settings directly from legacy panels with saved creden
   assert.equal(calls[4].headers.get("Cookie"), "3x-ui=legacy-session");
 });
 
-test("XuiClient reads official 3x-ui 3.6 TLS settings through the Bearer API", async () => {
+test("XuiClient reads official TLS settings through the Bearer API", async () => {
   const calls: Array<{ url: URL; method: string; headers: Headers }> = [];
   const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
     const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
@@ -343,7 +343,7 @@ test("XuiClient keeps recommended panel TLS requests on the existing Session rou
   ]);
 });
 
-test("XuiClient explains the generic 3x-ui login error without requiring 2FA", async () => {
+test("XuiClient explains the generic panel login error without requiring 2FA", async () => {
   const mockFetch = (async (input: URL | RequestInfo) => {
     const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);
     if (url.pathname === "/csrf-token") {
@@ -455,7 +455,7 @@ test("XuiClient reports the inbound creation stage when add times out", async ()
   const client = new XuiClient({ panelAddress: "panel.example", panelToken: "bearer-token" }, mockFetch);
   await assert.rejects(
     client.addInbound({ port: 8388 }, "Shadowsocks", 10),
-    /3x-ui 创建 Shadowsocks 入站超时，面板的 Xray 热加载未及时返回/,
+    /创建 Shadowsocks 入站超时，面板的 Xray 热加载未及时返回/,
   );
 });
 
@@ -474,11 +474,11 @@ test("XuiClient timeout covers a response body that never completes", async () =
   const client = new XuiClient({ panelAddress: "panel.example", panelToken: "bearer-token" }, mockFetch);
   await assert.rejects(
     client.addInbound({ port: 8388 }, "Shadowsocks", 10),
-    /3x-ui 创建 Shadowsocks 入站超时/,
+    /创建 Shadowsocks 入站超时/,
   );
 });
 
-test("XuiClient uses the Bearer API for 3x-ui 3.6.0 Xray settings", async () => {
+test("XuiClient uses the Bearer API for official Xray settings", async () => {
   const calls: Array<{ url: URL; method: string; headers: Headers; body: string }> = [];
   const mockFetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
     const url = input instanceof URL ? input : new URL(typeof input === "string" ? input : input.url);

@@ -23,7 +23,7 @@ test("buildInbound creates a valid VLESS TCP Reality payload and share link", ()
   assert.match(link, /sni=www.microsoft.com/);
 });
 
-test("Reality blank SNI follows the automatic target list used by the 3x-ui panel", () => {
+test("Reality blank SNI follows the automatic target list used by the panel", () => {
   assert.deepEqual(selectRealityTarget(() => 0), REALITY_TARGETS[0]);
   assert.deepEqual(selectRealityTarget(() => 0.999), REALITY_TARGETS.at(-1));
 

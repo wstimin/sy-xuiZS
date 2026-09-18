@@ -118,7 +118,7 @@ export function generateSocksXrayConfig(
         type: 'field',
         inboundTag: [nodeTag],
         balancerTag: 'socks-balancer',
-        comment: '3-xui: 自动注入 - 将该节点流量负载均衡分发至 SOCKS 代理池'
+        comment: '自动注入 - 将该节点流量负载均衡分发至 SOCKS 代理池'
       }
     ];
 
@@ -131,7 +131,7 @@ export function generateSocksXrayConfig(
         type: 'field',
         inboundTag: [nodeTag],
         outboundTag: primaryTag,
-        comment: `3-xui: 自动注入 - 将节点流量强制经由 SOCKS 出站(${primaryTag})转发`
+        comment: `自动注入 - 将节点流量强制经由 SOCKS 出站(${primaryTag})转发`
       }
     ];
 

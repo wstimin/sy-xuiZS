@@ -11,7 +11,7 @@ import { attachCommercialUser, commercialUser, createCommercialRouter, requireCo
 import { CommercialStore, maskHost } from "./server/commercial-store.js";
 import { buildInbound, InboundInput } from "./server/inbound-builder.js";
 import { buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, inspectServer, SshInput } from "./server/ssh.js";
-import { assertHttpsUrl, cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
+import { cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
 import { findInboundRecord, isRetryablePanelConnectionError, parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
 
@@ -74,8 +74,8 @@ function takeSshInspection(id: unknown, input: SshInput): ServerInspection | und
   return sameTarget ? cached.details : undefined;
 }
 
-const RECOMMENDED_INSTALLER = "https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh";
-const OFFICIAL_INSTALLER = "https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh";
+const OFFICIAL_INSTALLER = "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh";
+const OFFICIAL_INSTALLER_VERSION = "v3.6.0";
 
 function noStore(_req: Request, res: Response, next: NextFunction) {
   res.setHeader("Cache-Control", "no-store");
@@ -260,14 +260,10 @@ async function startServer() {
       const panelPort = body.panelPort ? validPort(body.panelPort) : 20_000 + Math.floor(Math.random() * 30_000);
       const panelPath = normalizeWebPath(body.panelPath || `/xui_${randomToken(3)}`);
       const domain = cleanHostInput(body.domain);
-      const scriptType = ["recommended", "official", "custom"].includes(body.scriptType)
-        ? body.scriptType
-        : "recommended";
-      const sslMode: "none" | "domain" | "ip" = scriptType === "recommended" || body.autoSSL
+      const sslMode: "none" | "domain" | "ip" = body.autoSSL
         ? (domain ? "domain" : "ip")
         : "none";
-      let scriptUrl = scriptType === "official" ? OFFICIAL_INSTALLER : RECOMMENDED_INSTALLER;
-      if (scriptType === "custom") scriptUrl = assertHttpsUrl(optionalString(body.customScriptUrl), "自定义脚本地址");
+      const scriptUrl = OFFICIAL_INSTALLER;
       const username = panelUsername(body.panelUsername, `admin_${randomToken(3)}`);
       const password = panelPassword(body.panelPassword, `Xui_${randomBytes(12).toString("base64url")}`);
 
@@ -283,14 +279,14 @@ async function startServer() {
         systemInfo = await inspectServer(session);
         write({ type: "log", step: 2, message: `[OS] ${systemInfo.osName} / ${systemInfo.arch}` });
       }
-      if (!systemInfo.systemdAvailable) throw new Error("服务器没有可用的 systemd，无法安装 3x-ui 服务");
-      if (!systemInfo.canInstall) throw new Error("当前 SSH 用户不是 root，且没有可用的免密 sudo 权限，无法安装 3x-ui");
+      if (!systemInfo.systemdAvailable) throw new Error("服务器没有可用的 systemd，无法安装面板服务");
+      if (!systemInfo.canInstall) throw new Error("当前 SSH 用户不是 root，且没有可用的免密 sudo 权限，无法安装面板");
       if (!systemInfo.isRoot) {
         const sudo = await execSsh(session.client, "sudo -n env sh -c 'test \"$(id -u)\" = \"0\"'", { timeoutMs: 10_000 });
         if (sudo.code !== 0) throw new Error("当前 SSH 用户的免密 sudo 权限不可用，请重新检测服务器权限");
       }
 
-      const scriptLabel = scriptType === "recommended" ? "推荐兼容脚本" : scriptType === "official" ? "官方脚本" : "自定义脚本";
+      const scriptLabel = "官方脚本";
       write({ type: "log", step: 3, message: `[ENV] 环境检查完成，准备执行${scriptLabel}` });
       const command = buildInstallCommand({
         scriptUrl,
@@ -302,11 +298,7 @@ async function startServer() {
         sslMode,
         domain: domain || undefined,
         useSudo: !systemInfo.isRoot,
-        interactiveAnswers: scriptType === "recommended"
-          ? sslMode === "domain"
-            ? ["y", String(panelPort), "1", domain, "", "n", "y"]
-            : ["y", String(panelPort), "2", "", ""]
-          : undefined,
+        scriptArgs: [OFFICIAL_INSTALLER_VERSION],
         configurePanelAfterInstall: true,
       });
       write({ type: "log", step: 4, message: `[INSTALL] 正在执行${scriptLabel}，安装输出已在后端安全收集` });
@@ -328,7 +320,7 @@ async function startServer() {
           .map(line => line.trim())
           .filter(line => line && !/curl|bash\s|https?:\/\/|token|password|username/i.test(line))
           .at(-1);
-        throw new Error(lastError ? `3x-ui 安装失败：${lastError.slice(0, 240)}` : `3x-ui 安装脚本退出码 ${install.code}`);
+        throw new Error(lastError ? `面板安装失败：${lastError.slice(0, 240)}` : `安装脚本退出码 ${install.code}`);
       }
 
       write({ type: "log", step: 7, message: "[VERIFY] 正在验证服务和读取安装结果" });
@@ -339,10 +331,7 @@ async function startServer() {
       const installed = parseInstallerResult(verify.stdout);
       const installedPort = String(panelPort);
       const installedPath = panelPath;
-      const recommendedTlsReady = Boolean(installed.WEB_CERT_FILE && installed.WEB_KEY_FILE);
-      const fallbackProtocol = scriptType === "recommended"
-        ? recommendedTlsReady ? "https" : "http"
-        : sslMode === "none" ? "http" : "https";
+      const fallbackProtocol = sslMode === "none" ? "http" : "https";
       const accessUrl = `${fallbackProtocol}://${domain || host}:${installedPort}${installedPath}`;
 
       write({ type: "log", step: 8, message: "[AUTH] 正在验证面板登录凭证" });
@@ -399,15 +388,11 @@ async function startServer() {
         webCertFile: installed.WEB_CERT_FILE || undefined,
         webKeyFile: installed.WEB_KEY_FILE || undefined,
         sslEnabled: accessUrl.startsWith("https://"),
-        scriptType,
-        panelFlavor: scriptType === "recommended"
-          ? "mogai"
-          : scriptType === "official"
-            ? "official"
-            : "compatible",
+        scriptType: "official",
+        panelFlavor: "official" as const,
         systemInfo,
       };
-      write({ type: "log", step: 9, message: "[SUCCESS] 3x-ui 服务已启动，安装结果验证通过" });
+      write({ type: "log", step: 9, message: "[SUCCESS] 面板服务已启动，安装结果验证通过" });
       remoteSucceeded = true;
       commercialStore.succeedDeployment(reservation.deploymentId, `面板 ${maskHost(domain || host)}:${installedPort}`);
       write({ type: "result", result });
@@ -497,16 +482,14 @@ async function startServer() {
     let remoteSucceeded = false;
     try {
       const panelToken = optionalString(body.panelToken);
-      if (!panelToken) throw new Error("缺少 3x-ui API Token，请从面板搭建结果进入节点页面或手动填写 Token");
+      if (!panelToken) throw new Error("缺少 API Token，请从面板搭建结果进入节点页面或手动填写 Token");
 
-      const panelFlavor = ["mogai", "official", "compatible"].includes(body.panelFlavor)
-        ? body.panelFlavor
-        : "compatible";
+      const panelFlavor = "official" as const;
 
       client = createPanelClient(cancellation.signal);
       let reality: { privateKey: string; publicKey: string } | undefined;
       if (body.security === "Reality") {
-        progress(1, "正在向 3x-ui 获取 Reality 密钥");
+        progress(1, "正在向面板获取 Reality 密钥");
         const realityStartedAt = Date.now();
         try {
           reality = await client.getRealityKeyPair();
@@ -539,7 +522,7 @@ async function startServer() {
       if (cancellation.signal.aborted) throw new Error("节点创建已终止");
 
       progress(1, "节点参数已生成");
-      progress(2, `正在调用 3x-ui 创建 ${body.protocol || "VLESS"} 入站`);
+      progress(2, `正在调用面板创建 ${body.protocol || "VLESS"} 入站`);
       const inboundStartedAt = Date.now();
       let created: any;
       try {
@@ -570,12 +553,12 @@ async function startServer() {
         }
         if (!created) {
           const suffix = confirmationError ? `：${errorMessage(confirmationError)}` : "";
-          throw new Error(`3x-ui 创建请求已超时，目前无法确认节点是否创建成功${suffix}。助手未重试创建、也未删除节点，请稍后在面板入站列表中确认`);
+          throw new Error(`面板创建请求已超时，目前无法确认节点是否创建成功${suffix}。助手未重试创建、也未删除节点，请稍后在面板入站列表中确认`);
         }
         creationOutcomeUncertain = false;
         progress(2, "已从面板入站列表确认节点创建成功");
       }
-      progress(2, `3x-ui 入站已创建（${formatElapsed(Date.now() - inboundStartedAt)}）`);
+      progress(2, `面板入站已创建（${formatElapsed(Date.now() - inboundStartedAt)}）`);
       inboundId = Number(created?.id || 0);
       inboundTag = optionalString(created?.tag) || built.tag;
       if (!inboundId) {
@@ -588,7 +571,7 @@ async function startServer() {
         inboundId = Number(matched?.id || 0);
         inboundTag = optionalString(matched?.tag) || inboundTag;
       }
-      if (!inboundId) throw new Error("3x-ui 已返回创建成功，但无法确认新入站 ID");
+      if (!inboundId) throw new Error("面板已返回创建成功，但无法确认新入站 ID");
       if (cancellation.signal.aborted) throw new Error("节点创建已终止");
 
       const parsedSocks = parseSocksInput(body.socksRawInput);
@@ -744,10 +727,10 @@ async function startServer() {
     const server = https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, app);
     server.keepAliveTimeout = 120_000;
     server.headersTimeout = 125_000;
-    server.listen(port, "0.0.0.0", () => console.log(`[HTTPS] 3x-ui 部署助手: https://0.0.0.0:${port}`));
+    server.listen(port, "0.0.0.0", () => console.log(`[HTTPS] 面板部署助手: https://0.0.0.0:${port}`));
     server.on("close", () => commercialStore.close());
   } else {
-    const server = app.listen(port, "0.0.0.0", () => console.log(`[HTTP] 3x-ui 部署助手: http://0.0.0.0:${port}`));
+    const server = app.listen(port, "0.0.0.0", () => console.log(`[HTTP] 面板部署助手: http://0.0.0.0:${port}`));
     server.keepAliveTimeout = 120_000;
     server.headersTimeout = 125_000;
     server.on("close", () => commercialStore.close());

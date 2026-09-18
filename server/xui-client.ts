@@ -65,10 +65,10 @@ export function parseApiTokenResponse(raw: unknown): string {
   if (typeof raw === "string") {
     const token = cleanApiToken(raw);
     if (token && !/[\r\n]/.test(token)) return token;
-    throw new Error("3x-ui 没有返回有效的 API Token");
+    throw new Error("面板没有返回有效的 API Token");
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("3x-ui 没有返回有效的 API Token");
+    throw new Error("面板没有返回有效的 API Token");
   }
 
   const result = raw as Record<string, unknown>;
@@ -85,7 +85,7 @@ export function parseApiTokenResponse(raw: unknown): string {
       // Try the remaining known wrapper fields.
     }
   }
-  throw new Error("3x-ui 没有返回有效的 API Token");
+  throw new Error("面板没有返回有效的 API Token");
 }
 
 export function parseApiTokenFromOutput(output: string): string {
@@ -106,23 +106,23 @@ export function parseApiTokenFromOutput(output: string): string {
 
 export function parseXrayTemplateResponse(raw: unknown): XrayTemplateResponse {
   if (typeof raw !== "string") {
-    throw new Error("3x-ui 返回的 Xray 模板格式无效：预期为 JSON 字符串");
+    throw new Error("面板返回的 Xray 模板格式无效：预期为 JSON 字符串");
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error("3x-ui 返回的 Xray 模板不是有效 JSON");
+    throw new Error("面板返回的 Xray 模板不是有效 JSON");
   }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("3x-ui 返回的 Xray 模板结构无效");
+    throw new Error("面板返回的 Xray 模板结构无效");
   }
   const result = parsed as Record<string, unknown>;
   const xraySetting = result.xraySetting;
   if (!xraySetting || typeof xraySetting !== "object" || Array.isArray(xraySetting)) {
-    throw new Error("3x-ui 返回的 Xray 模板缺少 xraySetting 配置");
+    throw new Error("面板返回的 Xray 模板缺少 xraySetting 配置");
   }
 
   return {
@@ -156,7 +156,7 @@ export function parseWebCertFiles(raw: unknown): { webCertFile: string; webKeyFi
   const webCertFile = optionalString(files.defaultCert) || optionalString(files.webCertFile);
   const webKeyFile = optionalString(files.defaultKey) || optionalString(files.webKeyFile);
   if (!webCertFile || !webKeyFile) {
-    throw new Error("目标 3x-ui 面板尚未配置可复用的 Web TLS 证书，请先在面板中申请或安装证书");
+    throw new Error("目标面板尚未配置可复用的 Web TLS 证书，请先在面板中申请或安装证书");
   }
   return { webCertFile, webKeyFile };
 }
@@ -172,7 +172,7 @@ export function serializeInboundPayload(payload: Record<string, unknown>): Recor
 
 export function isRetryablePanelConnectionError(error: unknown): boolean {
   return error instanceof PanelRequestTimeoutError
-    || (error instanceof Error && /^无法连接 3x-ui 面板:/.test(error.message));
+    || (error instanceof Error && /^无法连接面板:/.test(error.message));
 }
 
 export function serializeInboundForm(payload: Record<string, unknown>): URLSearchParams {
@@ -287,7 +287,7 @@ export class XuiClient {
     if (!data.success) {
       const message = data.msg || "面板用户名或密码错误";
       if (/invalid username or password or two-factor code/i.test(message)) {
-        throw new Error("面板拒绝了当前用户名或密码。该英文提示是 3x-ui 的统一登录错误，不代表必须填写 2FA；连续失败 5 次还可能触发 15 分钟登录锁定");
+        throw new Error("面板拒绝了当前用户名或密码。该英文提示是面板的统一登录错误，不代表必须填写 2FA；连续失败 5 次还可能触发 15 分钟登录锁定");
       }
       throw new Error(message);
     }
@@ -310,7 +310,7 @@ export class XuiClient {
       response = await this.rawRequest(apiPath, init, true, false, timeoutMs, timeoutMessage);
     }
     const data = await this.parseResponse<T>(response, apiPath);
-    if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${apiPath}`);
+    if (!data.success) throw new Error(data.msg || `API 调用失败: ${apiPath}`);
     return data.obj as T;
   }
 
@@ -325,7 +325,7 @@ export class XuiClient {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
       body: serializeInboundForm(payload),
-    }, timeoutMs, `3x-ui 创建 ${protocol} 入站超时，面板的 Xray 热加载未及时返回`);
+    }, timeoutMs, `创建 ${protocol} 入站超时，面板的 Xray 热加载未及时返回`);
   }
 
   async listInbounds(timeoutMs = 5_000): Promise<any[]> {
@@ -333,7 +333,7 @@ export class XuiClient {
       "panel/api/inbounds/list",
       {},
       timeoutMs,
-      "读取 3x-ui 入站列表超时",
+      "读取面板入站列表超时",
     );
   }
 
@@ -343,7 +343,7 @@ export class XuiClient {
 
   async getRealityKeyPair(): Promise<{ privateKey: string; publicKey: string }> {
     const pair = await this.request<{ privateKey: string; publicKey: string }>("panel/api/server/getNewX25519Cert");
-    if (!pair?.privateKey || !pair?.publicKey) throw new Error("3x-ui 未返回完整 Reality 密钥对");
+    if (!pair?.privateKey || !pair?.publicKey) throw new Error("面板未返回完整 Reality 密钥对");
     return pair;
   }
 
@@ -354,7 +354,7 @@ export class XuiClient {
         "panel/setting/defaultSettings",
         { method: "POST" },
         8_000,
-        "读取官方 3x-ui 面板 TLS 证书路径超时",
+        "读取官方面板 TLS 证书路径超时",
       );
       return parseWebCertFiles(files);
     }
@@ -437,7 +437,7 @@ export class XuiClient {
       response = await this.rawRequest(apiPath, init, true, true, timeoutMs, timeoutMessage);
     }
     const data = await this.parseResponse<T>(response, apiPath);
-    if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${apiPath}`);
+    if (!data.success) throw new Error(data.msg || `API 调用失败: ${apiPath}`);
     return data.obj as T;
   }
 
@@ -468,7 +468,7 @@ export class XuiClient {
       return this.sessionRequest<T>(legacyPath, init, timeoutMs, timeoutMessage);
     }
     const data = await this.parseResponse<T>(response, modernPath);
-    if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${modernPath}`);
+    if (!data.success) throw new Error(data.msg || `API 调用失败: ${modernPath}`);
     return data.obj as T;
   }
 
@@ -480,7 +480,7 @@ export class XuiClient {
     if (this.xrayApiStyle === "modern") return this.request<T>(modernPath, init);
     if (this.xrayApiStyle === "legacy") return this.sessionRequest<T>(legacyPath, init);
 
-    // 3x-ui 3.6.0 moved Xray settings under the Bearer-authenticated API.
+    // 官方面板已将 Xray 设置迁移到 Bearer 鉴权 API 下。
     // Panels without an API token can only use the legacy session routes.
     if (!this.apiToken) {
       this.xrayApiStyle = "legacy";
@@ -494,7 +494,7 @@ export class XuiClient {
     }
 
     const data = await this.parseResponse<T>(response, modernPath);
-    if (!data.success) throw new Error(data.msg || `3x-ui API 调用失败: ${modernPath}`);
+    if (!data.success) throw new Error(data.msg || `API 调用失败: ${modernPath}`);
     this.xrayApiStyle = "modern";
     return data.obj as T;
   }
@@ -542,12 +542,12 @@ export class XuiClient {
     } catch (error: any) {
       if (error?.name === "AbortError") {
         if (this.options.signal?.aborted) throw new Error("节点创建已终止");
-        throw new PanelRequestTimeoutError(timeoutMessage || "连接 3x-ui 面板超时");
+        throw new PanelRequestTimeoutError(timeoutMessage || "连接面板超时");
       }
       const hint = this.baseUrl.startsWith("https://")
         ? "；如面板使用自签名证书，请显式开启“允许自签名证书”"
         : "";
-      throw new Error(`无法连接 3x-ui 面板: ${error?.message || String(error)}${hint}`);
+      throw new Error(`无法连接面板: ${error?.message || String(error)}${hint}`);
     } finally {
       clearTimeout(timer);
       this.options.signal?.removeEventListener("abort", abortFromParent);
@@ -571,7 +571,7 @@ export class XuiClient {
     const response = await this.rawRequest(endpoint, { method: "GET" }, authenticated, authenticated, timeoutMs);
     const data = await this.parseResponse<string>(response, "获取面板 CSRF Token");
     if (!data.success || typeof data.obj !== "string" || !data.obj) {
-      throw new Error(data.msg || "3x-ui 没有返回有效的 CSRF Token");
+      throw new Error(data.msg || "面板没有返回有效的 CSRF Token");
     }
     this.csrfToken = data.obj;
   }

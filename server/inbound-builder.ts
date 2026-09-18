@@ -14,7 +14,7 @@ interface PanelProfile {
 const PANEL_PROFILES: Record<PanelFlavor, PanelProfile> = {
   // wstimin/mogai-3xui 2.9.4+ defaults.
   mogai: { shadowsocksMethod: "2022-blake3-aes-256-gcm", shadowsocksKeyBytes: 32 },
-  // Current official 3x-ui uses the same SS 2022 wire format, but remains
+  // Current official panel uses the same SS 2022 wire format, but remains
   // an independent profile so future upstream changes do not alter mogai.
   official: { shadowsocksMethod: "2022-blake3-aes-256-gcm", shadowsocksKeyBytes: 32 },
   // Manual panels receive the broadly supported common payload.

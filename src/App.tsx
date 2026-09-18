@@ -267,13 +267,7 @@ export default function App() {
       username: result.username,
       password: result.password || '',
       apiToken: result.apiToken || '',
-      panelFlavor: result.panelFlavor || (
-        result.scriptType === 'recommended'
-          ? 'mogai'
-          : result.scriptType === 'official'
-            ? 'official'
-            : 'compatible'
-      ),
+      panelFlavor: result.panelFlavor || 'official',
       webCertFile: result.webCertFile,
       webKeyFile: result.webKeyFile
     });
@@ -449,13 +443,7 @@ export default function App() {
             username: data.username,
             password: data.password || '',
             apiToken: data.apiToken || '',
-            panelFlavor: data.panelFlavor || (
-              data.scriptType === 'recommended'
-                ? 'mogai'
-                : data.scriptType === 'official'
-                  ? 'official'
-                  : 'compatible'
-            ),
+            panelFlavor: data.panelFlavor || 'official',
             webCertFile: data.webCertFile,
             webKeyFile: data.webKeyFile
           });

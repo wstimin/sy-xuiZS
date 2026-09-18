@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { PanelDeployForm, PanelResult, ScriptType } from '../types';
+import { PanelDeployForm, PanelResult } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { ensureAssistantConnection } from '../utils/apiConnection';
 import { activeCapability, Entitlement, quotaText } from '../commercial';
@@ -47,7 +47,7 @@ const DEPLOY_STEPS_INFO = [
   { step: 1, title: 'SSH 正式连接', desc: '为本次安装建立独立的 SSH 部署连接' },
   { step: 2, title: '服务器环境确认', desc: '复用快速检测结果，必要时重新读取系统环境' },
   { step: 3, title: '生成安装参数', desc: '生成端口、Web 路径、管理员凭据与 SSL 模式' },
-  { step: 4, title: '执行安装脚本', desc: '通过 SSH 执行所选安装脚本并安全收集输出' },
+  { step: 4, title: '执行安装脚本', desc: '通过 SSH 执行官方脚本并安全收集输出' },
   { step: 5, title: '安装程序处理中', desc: '由官方安装器安装程序并写入面板配置' },
   { step: 6, title: '面板配置初始化', desc: '初始化管理员、数据库及 API 访问设置' },
   { step: 7, title: '服务状态验证', desc: '检查 x-ui systemd 服务并读取安装结果' },
@@ -77,8 +77,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     panelPassword: '',
     domain: '',
     autoSSL: true,
-    scriptType: 'recommended',
-    customScriptUrl: ''
+    scriptType: 'official'
   });
 
   const [isDeploying, setIsDeploying] = useState(false);
@@ -273,16 +272,6 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       return;
     }
 
-    if (form.scriptType === 'custom') {
-      try {
-        const customUrl = new URL(form.customScriptUrl || '');
-        if (customUrl.protocol !== 'https:') throw new Error();
-      } catch {
-        showToast('自定义脚本地址无效', '自定义安装脚本必须是完整的 HTTPS URL', 'warning');
-        return;
-      }
-    }
-
     const customPanelUsername = form.panelUsername?.trim() || '';
     const customPanelPassword = form.panelPassword?.trim() || '';
     if (customPanelUsername && !/^[A-Za-z0-9_.@-]{3,64}$/.test(customPanelUsername)) {
@@ -394,7 +383,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       setDeployStep(9);
       onPanelCreated(backendResult);
       setResultModal(backendResult);
-      showToast('搭建成功！', '3x-ui 已安装并通过服务状态验证', 'success');
+      showToast('搭建成功！', '面板已安装并通过服务状态验证', 'success');
     } catch (err: any) {
       if (err?.code === 'PAYMENT_REQUIRED' || err?.status === 402) {
         setDeployLogs([]);
@@ -794,7 +783,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             </div>
 
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              安装完成后，助手会调用 3x-ui 官方 <code className="text-indigo-300">x-ui setting</code> 命令写入该账号密码并重启服务；推荐脚本和官方脚本都会真实生效。
+              安装完成后，助手会调用官方 <code className="text-indigo-300">x-ui setting</code> 命令写入该账号密码并重启服务。
             </p>
           </div>
 
@@ -835,8 +824,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 type="checkbox"
                 checked={form.autoSSL}
                 onChange={e => setForm({ ...form, autoSSL: e.target.checked })}
-                disabled={form.scriptType === 'recommended'}
-                className="w-4 h-4 accent-indigo-500 rounded cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-4 h-4 accent-indigo-500 rounded cursor-pointer"
               />
               <span className="font-medium text-zinc-200">
                 自动开启 SSL 证书 (acme.sh / IP 证书 / 自签名)
@@ -851,62 +839,20 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             ) : (
               <span className="text-[11px] text-zinc-400">未开启 SSL (使用 HTTP 协议)</span>
             )}
-            {form.scriptType === 'recommended' && (
-              <span className="text-[11px] text-zinc-500">推荐脚本要求配置 TLS，因此该选项保持开启。</span>
-            )}
           </div>
         </div>
 
-        {/* Section 3: Script Selection */}
+        {/* Section 3: Script Info */}
         <div className="p-5 sm:p-6 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl space-y-4">
           <div className="flex items-center justify-between border-b border-white/10 pb-3">
             <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
               <Code2 className="w-4 h-4 text-indigo-400" />
-              安装脚本选择
+              安装脚本
             </h2>
             <span className="text-[11px] text-emerald-400 font-medium bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3" />
-              {form.scriptType === 'official' ? '已选择官方脚本' : form.scriptType === 'custom' ? '已选择自定义脚本' : '已设为推荐脚本'}
+              已选择官方脚本
             </span>
-          </div>
-
-          <div className="space-y-3">
-            <select
-              value={form.scriptType || 'recommended'}
-              onChange={e => {
-                const scriptType = e.target.value as ScriptType;
-                setForm({ ...form, scriptType, autoSSL: scriptType === 'recommended' ? true : form.autoSSL });
-              }}
-              className="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all cursor-pointer"
-            >
-              <option value="recommended" className="bg-zinc-900 text-white">
-                推荐脚本（默认，兼容客户端更多）
-              </option>
-              <option value="official" className="bg-zinc-900 text-white">
-                官方脚本
-              </option>
-              <option value="custom" className="bg-zinc-900 text-white">
-                自定义脚本
-              </option>
-            </select>
-
-            {form.scriptType === 'recommended' && (
-              <p className="text-[11px] text-zinc-400 leading-relaxed">
-                推荐脚本优先适配更多客户端。该脚本安装时要求配置 TLS：有域名使用域名证书，无域名使用 IP 证书。
-              </p>
-            )}
-
-            {form.scriptType === 'custom' && (
-              <div className="pt-1 animate-in fade-in duration-200">
-                <input
-                  type="url"
-                  placeholder="请输入自定义脚本 URL (例: https://example.com/install.sh)"
-                  value={form.customScriptUrl || ''}
-                  onChange={e => setForm({ ...form, customScriptUrl: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/40 border border-white/10 focus:border-indigo-500 text-white text-xs placeholder-zinc-500 outline-none transition-all font-mono"
-                />
-              </div>
-            )}
           </div>
         </div>
 
@@ -948,7 +894,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               <div className="flex items-center gap-2">
                 <Activity className={`w-5 h-5 ${deployError ? 'text-rose-400' : 'text-indigo-400 animate-spin'}`} />
                 <h3 className="text-base font-bold text-white">
-                  {deployError ? '3x-ui 自动化安装失败' : isDeploying ? '3x-ui 自动化安装进行中' : '3x-ui 自动化安装状态'}
+                  {deployError ? '自动化安装失败' : isDeploying ? '自动化安装进行中' : '自动化安装状态'}
                 </h3>
               </div>
               <div className="flex items-center gap-3 font-mono text-xs">

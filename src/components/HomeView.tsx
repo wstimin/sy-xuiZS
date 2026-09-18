@@ -187,7 +187,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectView, onOpenGuide, o
             </div>
             <h3 className="text-base font-bold text-white">2. 点击【搭建面板】一键安装</h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              填入服务器 IP、SSH 账号密码与访问端口路径。点击提交后后台全自动安装 3x-ui 面板，并生成初始网页入口与随机高强度密码。
+              填入服务器 IP、SSH 账号密码与访问端口路径。点击提交后后台全自动安装面板，并生成初始网页入口与随机高强度密码。
             </p>
           </div>
 

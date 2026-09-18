@@ -77,7 +77,7 @@ export function buildInstallCommand(params: {
   sslMode: "none" | "domain" | "ip";
   domain?: string;
   useSudo: boolean;
-  interactiveAnswers?: string[];
+  scriptArgs?: string[];
   configurePanelAfterInstall?: boolean;
 }): string {
   const env: Record<string, string> = {
@@ -96,13 +96,9 @@ export function buildInstallCommand(params: {
   const assignments = Object.entries(env)
     .map(([key, value]) => `${key}=${shellQuote(value)}`)
     .join(" ");
-  const installer = params.interactiveAnswers
-    ? [
-        "installer=$(mktemp)",
-        "trap 'rm -f \"$installer\"' EXIT",
-        `curl -fLsS ${shellQuote(params.scriptUrl)} -o "$installer"`,
-        `printf '%s\\n' ${params.interactiveAnswers.map(shellQuote).join(" ")} | bash "$installer"`,
-      ].join(" && ")
+  const scriptArgs = (params.scriptArgs ?? []).map(shellQuote).join(" ");
+  const installer = scriptArgs
+    ? `curl -fLsS ${shellQuote(params.scriptUrl)} | bash -s -- ${scriptArgs}`
     : `curl -fLsS ${shellQuote(params.scriptUrl)} | bash`;
   const panelPath = params.webBasePath.replace(/^\/+|\/+$/g, "");
   const configurePanel = params.configurePanelAfterInstall

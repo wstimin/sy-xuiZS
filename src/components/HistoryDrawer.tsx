@@ -110,7 +110,7 @@ const PanelHistoryDetail: React.FC<{
       <DetailField label="登录账号" value={data.username} copyTitle="登录账号" onCopyText={onCopyText} />
       <DetailField label="登录密码" value={data.password} copyTitle="登录密码" onCopyText={onCopyText} />
       <DetailField label="API Token" value={data.apiToken} copyTitle="API Token" onCopyText={onCopyText} wide />
-      <DetailField label="面板类型" value={data.panelFlavor || data.scriptType} onCopyText={onCopyText} />
+      <DetailField label="面板类型" value="官方脚本" onCopyText={onCopyText} />
       <DetailField label="证书文件" value={data.webCertFile} copyTitle="证书文件路径" onCopyText={onCopyText} />
       <DetailField label="私钥文件" value={data.webKeyFile} copyTitle="私钥文件路径" onCopyText={onCopyText} wide />
     </div>

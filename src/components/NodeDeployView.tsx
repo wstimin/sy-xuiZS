@@ -19,6 +19,7 @@ import {
   QrCode,
   Sliders,
   Sparkles,
+  ClipboardPaste,
   Info,
   X,
   Code2,
@@ -79,7 +80,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     panelUser: initialPanelData?.username || '',
     panelPass: initialPanelData?.password || '',
     panelToken: initialPanelData?.apiToken || '',
-    panelFlavor: initialPanelData?.panelFlavor || 'compatible',
+    panelFlavor: 'official',
     tlsCertFile: initialPanelData?.webCertFile || '',
     tlsKeyFile: initialPanelData?.webKeyFile || '',
 
@@ -104,6 +105,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   const [isCheckingQuota, setIsCheckingQuota] = useState(false);
   const [isFetchingTls, setIsFetchingTls] = useState(false);
   const [tlsStatus, setTlsStatus] = useState<string | null>(null);
+  const [quickPaste, setQuickPaste] = useState('');
+  const [showQuickPaste, setShowQuickPaste] = useState(false);
   const [resultModal, setResultModal] = useState<NodeResult | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [deployStep, setDeployStep] = useState(0);
@@ -126,19 +129,98 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     return val.trim().replace(/^(https?:\/\/)+/i, '').replace(/\/.*$/, '').replace(/:[0-9]+$/, '').trim();
   };
 
-  const panelFlavorLabel: Record<PanelFlavor, string> = {
-    compatible: '自动兼容',
-    mogai: '推荐版',
-    official: '官方 3x-ui'
+  const handleQuickPaste = () => {
+    const text = quickPaste.trim();
+    if (!text) {
+      showToast('粘贴内容为空', '请先把面板信息粘贴到输入框', 'warning');
+      return;
+    }
+
+    const pick = (re: RegExp) => {
+      const m = text.match(re);
+      return m?.[1]?.trim() || '';
+    };
+    // 取整行剩余内容（密码可能含空格），去掉首尾引号
+    const pickLine = (re: RegExp) => {
+      const m = text.match(re);
+      return m?.[1]?.trim().replace(/^["'「」‘’“”]+|["'「」‘’“”]+$/g, '') || '';
+    };
+
+    // 1) 面板访问地址：优先找 http(s)://...，找不到就找 裸 IP/域名
+    let accessUrl = pick(/(https?:\/\/[^\s"'<>，,;]+)/i);
+    if (!accessUrl) {
+      const bare = pick(/((?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+)(?::\d{1,5})?(?:\/[^\s"'<>，,;]*)?/);
+      if (bare) accessUrl = bare.startsWith('http') ? bare : `http://${bare}`;
+    }
+
+    let panelProtocol: 'http' | 'https' = form.panelProtocol;
+    let panelAddress = form.panelAddress;
+    let panelPort = form.panelPort;
+    let panelPath = form.panelPath;
+    if (accessUrl) {
+      const withScheme = /^https?:\/\//i.test(accessUrl) ? accessUrl : `http://${accessUrl}`;
+      try {
+        const parsed = new URL(withScheme);
+        panelProtocol = parsed.protocol === 'https:' ? 'https' : 'http';
+        panelAddress = parsed.hostname;
+        panelPort = parsed.port || panelPort;
+        panelPath = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : panelPath;
+      } catch {
+        // 地址解析失败则保留原值，只解析账号密码 Token
+      }
+    }
+
+    // 2) 账号 / 密码 / Token：支持 "账号 xxx"、"用户名 xxx"、"user: xxx"，密码、Token 同理。
+    // 密码用整行取值（可能含空格），账号 Token 用单 token 取值。
+    // 注意顺序：密码必须先取，否则账号正则里的"用户"会误吞"户\n密码"这类跨行内容。
+    const panelPass = pickLine(/(?:密码|password|passwd|pwd)\s*[:：=]?\s*([^\r\n]+)/i) || form.panelPass;
+    let rest = text;
+    if (panelPass && panelPass !== form.panelPass) {
+      const idx = rest.indexOf(panelPass);
+      if (idx >= 0) rest = `${rest.slice(0, idx)} ${rest.slice(idx + panelPass.length)}`;
+    }
+    const restMatch = (re: RegExp) => {
+      const m = rest.match(re);
+      return m?.[1]?.trim() || '';
+    };
+    const panelUser = restMatch(/(?:账号|用户名|用户|user(?:name)?)\s*[:：=]?\s*([^\s"'<>，,;]+)/i) || form.panelUser;
+    const rawToken = restMatch(/(?:api[\s_-]*token|token|令牌|密钥)\s*[:：=]?\s*([A-Za-z0-9\-_=.+/]{6,})/i);
+    // Token 误吞账号/密码残留时做一次清洗（例如 "Token abc 密码 xxx" 只取 abc）
+    const panelToken = (rawToken.split(/\s+/).find(part => !/^(?:账号|用户名|用户|密码|password|passwd|pwd)$/i.test(part)) || rawToken) || form.panelToken || '';
+
+    // 3) TLS 证书路径（可选，有就带上，TLS 建节点时要用）
+    const tlsCertFile = pick(/(?:证书(?:文件|路径)?|cert(?:file|path)?)\s*[:：=]?\s*([^\s"'<>，,;]+)/i) || form.tlsCertFile || '';
+    const tlsKeyFile = pick(/(?:私钥(?:文件|路径)?|key(?:file|path)?)\s*[:：=]?\s*([^\s"'<>，,;]+)/i) || form.tlsKeyFile || '';
+
+    if (!panelAddress && !panelToken && !panelUser) {
+      showToast('没有识别到面板信息', '请粘贴包含面板地址、账号、密码或 Token 的内容', 'error');
+      return;
+    }
+
+    setForm(prev => ({
+      ...prev,
+      panelProtocol,
+      panelAddress,
+      panelPort,
+      panelPath,
+      panelUser,
+      panelPass,
+      panelToken,
+      tlsCertFile,
+      tlsKeyFile,
+    }));
+    setQuickPaste('');
+    setShowQuickPaste(false);
+    showToast('面板信息已填入', '请核对地址、账号、Token 后再创建节点', 'success');
   };
 
   const handleFetchTls = async () => {
     const cleanAddress = cleanHostStr(form.panelAddress);
     if (!cleanAddress) {
-      showToast('请输入 3x-ui 面板地址', '需要先连接目标面板才能读取 TLS 证书配置', 'warning');
+      showToast('请输入面板地址', '需要先连接目标面板才能读取 TLS 证书配置', 'warning');
       return;
     }
-    const canUseOfficialApi = form.panelFlavor === 'official' && Boolean(form.panelToken?.trim());
+    const canUseOfficialApi = Boolean(form.panelToken?.trim());
     if (!canUseOfficialApi && (!form.panelUser.trim() || !form.panelPass.trim())) {
       showToast('TLS 需要面板账号密码', '证书配置接口只支持登录 Session，不能只使用 API Token', 'warning');
       return;
@@ -163,7 +245,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       setTlsStatus(`已获取面板证书：${data.files.webCertFile}`);
       showToast('TLS 证书配置获取成功', '创建节点时将自动使用目标面板的 Web 证书', 'success');
     } catch (err: any) {
-      const message = err?.message || '请先在 3x-ui 面板中申请或安装证书';
+      const message = err?.message || '请先在面板中申请或安装证书';
       setTlsStatus(message);
       showToast('TLS 证书获取失败', message, 'error');
     } finally {
@@ -184,7 +266,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
         panelUser: initialPanelData.username,
         panelPass: initialPanelData.password || '',
         panelToken: initialPanelData.apiToken || '',
-        panelFlavor: initialPanelData.panelFlavor || 'compatible',
+        panelFlavor: 'official',
         tlsCertFile: initialPanelData.webCertFile || '',
         tlsKeyFile: initialPanelData.webKeyFile || ''
       }));
@@ -295,7 +377,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
     const cleanAddress = cleanHostStr(form.panelAddress);
     if (!cleanAddress) {
-      showToast('请输入 3-xui 面板地址', '例: 192.0.2.1 或 xui.example.com', 'warning');
+      showToast('请输入面板地址', '例: 192.0.2.1 或 xui.example.com', 'warning');
       return;
     }
 
@@ -304,7 +386,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     }
 
     if (!form.panelToken?.trim()) {
-      showToast('缺少 API Token', '请从面板搭建结果进入节点页面，或手动填写 3x-ui API Token', 'warning');
+      showToast('缺少 API Token', '请从面板搭建结果进入节点页面，或手动填写 API Token', 'warning');
       return;
     }
 
@@ -405,7 +487,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       setForm(prev => ({ ...prev, inboundPort: '' }));
       onNodeCreated(result);
       setResultModal(result);
-      showToast('节点创建成功', '已通过 3x-ui API 快速创建入站', 'success');
+      showToast('节点创建成功', '已通过官方 API 快速创建入站', 'success');
     } catch (err: any) {
       if (err?.code === 'PAYMENT_REQUIRED' || err?.status === 402) {
         setDeployStep(0);
@@ -462,12 +544,51 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
               <Lock className="w-4 h-4 text-indigo-400" />
               ui面板 连接参数 (Panel Login)
             </h2>
-            {initialPanelData && (
-              <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> 已自动预填刚部署的面板信息
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {initialPanelData && (
+                <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> 已自动预填刚部署的面板信息
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowQuickPaste(prev => !prev)}
+                className="text-[11px] text-indigo-300 font-medium bg-indigo-500/10 border border-indigo-500/30 px-2.5 py-1 rounded-full flex items-center gap-1 hover:bg-indigo-500/20 transition-colors"
+              >
+                <ClipboardPaste className="w-3 h-3" />
+                粘贴解析
+              </button>
+            </div>
           </div>
+
+          {showQuickPaste && (
+            <div className="space-y-2 p-3 rounded-xl bg-black/30 border border-indigo-500/20">
+              <label className="text-xs font-medium text-zinc-300">一长串粘贴解析</label>
+              <textarea
+                rows={4}
+                placeholder={'把面板访问地址、账号、密码、Token 一起粘进来，例如：\nhttps://1.2.3.4:2053/xui_abc\n账号 admin\n密码 xxxxx\nToken yyyyy'}
+                value={quickPaste}
+                onChange={e => setQuickPaste(e.target.value)}
+                className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-white text-xs font-mono outline-none transition-all resize-y"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setQuickPaste(''); setShowQuickPaste(false); }}
+                  className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-zinc-300 text-xs transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleQuickPaste}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors"
+                >
+                  解析并填入
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="grid sm:grid-cols-4 gap-4">
             <div className="space-y-1.5">
@@ -534,37 +655,15 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
           <div className="grid sm:grid-cols-4 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">面板版本</label>
-              {initialPanelData ? (
-                <input
-                  type="text"
-                  readOnly
-                  value={panelFlavorLabel[form.panelFlavor]}
-                  title="已使用面板安装结果中的版本类型"
-                  className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 text-white text-sm outline-none cursor-default"
-                />
-              ) : (
-                <select
-                  value={form.panelFlavor}
-                  onChange={e => {
-                    const panelFlavor = e.target.value as PanelFlavor;
-                    setForm(prev => ({
-                      ...prev,
-                      panelFlavor,
-                      tlsCertFile: '',
-                      tlsKeyFile: ''
-                    }));
-                    setTlsStatus(null);
-                  }}
-                  className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 focus:border-indigo-500 text-white text-sm outline-none transition-all"
-                >
-                  <option value="compatible">自动兼容</option>
-                  <option value="mogai">推荐版</option>
-                  <option value="official">官方 3x-ui</option>
-                </select>
-              )}
+              <label className="text-xs font-medium text-zinc-300">面板类型</label>
+              <input
+                type="text"
+                readOnly
+                value="官方脚本"
+                title="当前仅支持官方脚本安装的面板"
+                className="w-full px-3.5 py-2 rounded-xl bg-[#121218] border border-white/10 text-white text-sm outline-none cursor-default"
+              />
             </div>
-
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-zinc-300">路径 Path</label>
               <input
@@ -758,7 +857,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-semibold text-emerald-300">无需填写域名或 Short ID</p>
-                  <p className="text-[11px] text-zinc-400 mt-1">创建时按目标 3x-ui 源码中的 Reality 自动规则选择可用伪装目标，同时由面板官方 API 生成密钥对；实际 SNI 会写入节点链接。</p>
+                  <p className="text-[11px] text-zinc-400 mt-1">创建时按目标面板源码中的 Reality 自动规则选择可用伪装目标，同时由面板官方 API 生成密钥对；实际 SNI 会写入节点链接。</p>
                 </div>
               </div>
             </div>

@@ -62,7 +62,7 @@ export function checkSecurityAllowed(
     if (security === 'Reality') {
       return {
         allowed: false,
-        reason: 'Trojan 协议标准实现依赖原生 TLS，3-xui 中 Trojan 不支持 Reality 伪装'
+        reason: 'Trojan 协议标准实现依赖原生 TLS，当前 Trojan 不支持 Reality 伪装'
       };
     }
   }

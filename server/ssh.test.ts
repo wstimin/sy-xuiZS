@@ -55,9 +55,9 @@ test("buildInstallCommand uses official noninteractive environment", () => {
   assert.doesNotMatch(command, /p@ss'word/);
 });
 
-test("buildInstallCommand drives and configures the interactive recommended installer", () => {
+test("buildInstallCommand passes a pinned version through bash -s", () => {
   const command = buildInstallCommand({
-    scriptUrl: "https://raw.githubusercontent.com/wstimin/mogai-3xui/main/install.sh",
+    scriptUrl: "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh",
     username: "admin_test",
     password: "secret'value",
     panelPort: 2053,
@@ -65,26 +65,23 @@ test("buildInstallCommand drives and configures the interactive recommended inst
     serverIp: "panel.example.com",
     sslMode: "none",
     useSudo: false,
-    interactiveAnswers: ["y", "2053", "2", "", ""],
+    scriptArgs: ["v3.6.0"],
     configurePanelAfterInstall: true,
   });
 
-  assert.match(command, /wstimin\/mogai-3xui\/main\/install\.sh/);
-  assert.match(command, /installer=\$\(mktemp\)/);
-  assert.match(command, /printf/);
-  assert.match(command, /2053/);
+  assert.match(command, /mhsanaei\/3x-ui\/master\/install\.sh/);
+  assert.match(command, /bash -s -- 'v3\.6\.0'/);
   assert.match(command, /\/usr\/local\/x-ui\/x-ui setting/);
   assert.match(command, /-username/);
   assert.match(command, /admin_test/);
   assert.match(command, /-webBasePath/);
   assert.match(command, /xui-test/);
-  assert.doesNotMatch(command, /-s --/);
   assert.doesNotMatch(command, /secret'value/);
 });
 
 test("buildInstallCommand applies final panel credentials through the official x-ui command", () => {
   const command = buildInstallCommand({
-    scriptUrl: "https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh",
+    scriptUrl: "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh",
     username: "owner@example.com",
     password: "safe password ' value",
     panelPort: 54321,

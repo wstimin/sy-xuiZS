@@ -105,7 +105,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                 <Sparkles className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
                 <div>
                   <strong className="text-white block mb-0.5">本平台操作流程说明</strong>
-                  填写服务器连接信息或 3x-ui 面板账号后，系统会通过真实 SSH 和官方 API 完成安装与节点创建。云厂商安全组仍需在云控制台手动放行，订阅地址仅在面板已启用订阅时返回。
+                  填写服务器连接信息或面板账号后，系统会通过真实 SSH 和官方 API 完成安装与节点创建。云厂商安全组仍需在云控制台手动放行，订阅地址仅在面板已启用订阅时返回。
                 </div>
               </div>
 
@@ -135,7 +135,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                     一键部署 xui 面板
                   </h3>
                   <p className="text-xs text-zinc-400 leading-relaxed">
-                    输入 VPS IP 和 SSH 凭据，设置面板访问端口与路径，后台会自动安装 3x-ui 面板并生成随机安全登录账号密码。如果厂商提供安全组或云防火墙，安装后还需放行该面板端口。
+                    输入 VPS IP 和 SSH 凭据，设置面板访问端口与路径，后台会自动安装面板并生成随机安全登录账号密码。如果厂商提供安全组或云防火墙，安装后还需放行该面板端口。
                   </p>
                 </div>
 
@@ -224,7 +224,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                       提交并保存登录凭据
                     </div>
                     <p className="text-xs text-zinc-400 pl-6 leading-relaxed">
-                      点击【一键搭建】后，后台将建立 SSH 通道在 VPS 上自动完成依赖补全与 3x-ui 安装。搭建完成后页面会弹窗显示完整的<strong>面板登录 URL、初始 Username 及高强度随机密码</strong>，请注意保存。
+                      点击【一键搭建】后，后台将建立 SSH 通道在 VPS 上自动完成依赖补全与面板安装。搭建完成后页面会弹窗显示完整的<strong>面板登录 URL、初始 Username 及高强度随机密码</strong>，请注意保存。
                     </p>
                   </div>
 
