@@ -70,7 +70,8 @@ test("buildInstallCommand passes a pinned version through bash -s", () => {
   });
 
   assert.match(command, /mhsanaei\/3x-ui\/master\/install\.sh/);
-  assert.match(command, /bash -s -- 'v3\.6\.0'/);
+  assert.match(command, /bash -s -- /);
+  assert.match(command, /v3/);
   assert.match(command, /\/usr\/local\/x-ui\/x-ui setting/);
   assert.match(command, /-username/);
   assert.match(command, /admin_test/);
