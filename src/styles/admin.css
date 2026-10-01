@@ -230,11 +230,14 @@ button.admin-user-cell { cursor: pointer; }
 .admin-external-redeem-toggle .admin-setting-row { border-bottom: 0; }
 .admin-external-redeem-state { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid; border-radius: 15px; }
 .admin-external-redeem-state > svg { width: 22px; height: 22px; flex: 0 0 auto; }
+.admin-external-redeem-state-copy { min-width: 0; flex: 1; }
 .admin-external-redeem-state strong,.admin-external-redeem-state small { display: block; }
 .admin-external-redeem-state strong { color: var(--ink); font-size: 13px; }
 .admin-external-redeem-state small { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .admin-external-redeem-state.enabled { color: #047857; border-color: rgba(16,185,129,.35); background: linear-gradient(135deg,rgba(209,250,229,.82),rgba(224,242,254,.7)); }
 .admin-external-redeem-state.disabled { color: #b45309; border-color: rgba(245,158,11,.36); background: linear-gradient(135deg,rgba(254,243,199,.78),rgba(255,247,237,.72)); }
+.admin-external-redeem-enable { flex: 0 0 auto; min-height: 38px; }
+.admin-external-redeem-enable svg { width: 16px; height: 16px; }
 .admin-external-redeem-test { display: grid; gap: 12px; padding: 15px; border: 1px solid rgba(99,102,241,.24); border-radius: 16px; background: linear-gradient(135deg,rgba(238,242,255,.76),rgba(236,254,255,.68)); }
 .admin-external-redeem-test-head { display: flex; align-items: center; gap: 11px; }
 .admin-external-redeem-test-head > span { width: 36px; height: 36px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 12px; color: #fff; background: var(--gradient); box-shadow: 0 8px 18px rgba(99,102,241,.18); }
@@ -615,7 +618,7 @@ html[data-theme="dark"] .admin-external-redeem-test { border-color: rgba(129,140
 html[data-theme="dark"] .admin-external-redeem-test-control input { border-color: rgba(147,197,253,.24); color: #f3f8ff; background: rgba(15,23,42,.54); }
 html[data-theme="dark"] .admin-external-redeem-test-result.success { color: #a7f3d0; border-color: rgba(52,211,153,.36); background: rgba(6,78,59,.36); }
 html[data-theme="dark"] .admin-external-redeem-test-result.error { color: #fecdd3; border-color: rgba(251,113,133,.4); background: rgba(127,29,29,.3); }
-@media (max-width: 640px) { .admin-external-redeem-test-control { grid-template-columns: 1fr; }.admin-external-redeem-test-control button { width: 100%; } }
+@media (max-width: 640px) { .admin-external-redeem-state { align-items: flex-start; flex-wrap: wrap; }.admin-external-redeem-enable { width: 100%; }.admin-external-redeem-test-control { grid-template-columns: 1fr; }.admin-external-redeem-test-control button { width: 100%; } }
 html[data-theme="dark"] .admin-section,html[data-theme="dark"] .admin-dashboard-panel,html[data-theme="dark"] .admin-exception-center,html[data-theme="dark"] .admin-settings-section,html[data-theme="dark"] .admin-table-wrap,html[data-theme="dark"] .admin-detail-block,html[data-theme="dark"] .admin-detail-item,html[data-theme="dark"] .admin-form-context,html[data-theme="dark"] .admin-settings-content,html[data-theme="dark"] .admin-settings-nav { border-color: rgba(147,197,253,.22); background: linear-gradient(145deg,rgba(30,58,95,.88),rgba(49,46,129,.66)); }
 
 /* 管理设置页：覆盖历史组件中的浅色渐变，确保标题、说明、输入框在夜间模式均有足够对比度。 */
