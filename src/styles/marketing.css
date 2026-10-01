@@ -104,3 +104,25 @@ html[data-theme="dark"] .auth-security svg { color: #93c5fd; }
   background: var(--gradient);
   box-shadow: var(--action-shadow);
 }
+
+/* Give account access a distinct, high-contrast identity instead of placing a
+   low-contrast violet glyph on a translucent square. */
+.auth-panel-icon {
+  color: #fff;
+  background: linear-gradient(135deg, #7c3aed 0%, #2563eb 58%, #0891b2 100%);
+  box-shadow: 0 10px 22px rgba(37,99,235,.24), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.auth-panel-icon svg { stroke-width: 2.2; }
+
+html[data-theme="dark"] .auth-panel-head > div > span,
+html[data-theme="dark"] .admin-auth-panel-head small,
+html[data-theme="dark"] .auth-switch a,
+html[data-theme="dark"] .auth-switch button {
+  color: #e9d5ff;
+}
+html[data-theme="dark"] .auth-panel-icon {
+  color: #fff;
+  border: 1px solid rgba(196,181,253,.3);
+  background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 58%, #22d3ee 100%);
+  box-shadow: 0 12px 26px rgba(15,23,42,.28), inset 0 1px 0 rgba(255,255,255,.24);
+}

@@ -20,6 +20,7 @@
   --action-radius: 8px;
   --action-shadow: 0 9px 22px rgba(99, 102, 241, .22);
   --ease-out: cubic-bezier(.23, 1, .32, 1);
+  --ease-in-out: cubic-bezier(.77, 0, .175, 1);
   --ease-ui: cubic-bezier(.4, 0, .2, 1);
   --shadow-card: 0 12px 40px -10px rgba(139, 92, 246, .15), 0 4px 14px -3px rgba(99, 102, 241, .08);
   --shadow-float: 0 24px 56px -14px rgba(99, 102, 241, .25), 0 9px 24px -7px rgba(45, 212, 191, .12);

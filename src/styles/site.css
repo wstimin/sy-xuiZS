@@ -132,3 +132,29 @@ html[data-theme="dark"] .site-delivery-note small { color: #c7d8ef; }
     box-shadow: 0 14px 28px rgba(99,102,241,.28);
   }
 }
+
+/* The homepage board is illustrative, so a restrained equalizer rhythm can
+   explain continuous delivery activity without changing layout or numbers. */
+.site-board-chart i {
+  transform-origin: center bottom;
+  will-change: transform, opacity;
+  animation: site-board-bar-wave 2.4s var(--ease-in-out) infinite;
+}
+.site-board-chart i:nth-child(2) { animation-delay: -.35s; animation-duration: 2.1s; }
+.site-board-chart i:nth-child(3) { animation-delay: -.85s; animation-duration: 2.7s; }
+.site-board-chart i:nth-child(4) { animation-delay: -1.2s; animation-duration: 2.25s; }
+.site-board-chart i:nth-child(5) { animation-delay: -.6s; animation-duration: 2.6s; }
+.site-board-chart i:nth-child(6) { animation-delay: -1.45s; animation-duration: 2.3s; }
+.site-board-chart i:nth-child(7) { animation-delay: -1.8s; animation-duration: 2.8s; }
+@keyframes site-board-bar-wave {
+  0%,100% { opacity: .72; transform: scaleY(.76); }
+  38% { opacity: 1; transform: scaleY(1.04); }
+  68% { opacity: .84; transform: scaleY(.88); }
+}
+@keyframes site-board-bar-reduced {
+  0%,100% { opacity: .72; }
+  50% { opacity: .94; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-board-chart i { animation: site-board-bar-reduced 2.8s var(--ease-in-out) infinite; }
+}

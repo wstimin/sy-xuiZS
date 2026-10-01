@@ -59,8 +59,7 @@ html[data-theme="dark"] .workspace-kicker,
 html[data-theme="dark"] .workspace-workflow-top small,
 html[data-theme="dark"] .workspace-workflows > header button,
 html[data-theme="dark"] .workspace-workflow-card footer strong,
-html[data-theme="dark"] .resource-page-eyebrow,
-html[data-theme="dark"] .resource-purchase-button { color: #c4b5fd !important; }
+html[data-theme="dark"] .resource-page-eyebrow { color: #e9d5ff !important; }
 html[data-theme="dark"] .workspace-workflow-card footer { border-color: rgba(147,197,253,.2); }
 html[data-theme="dark"] .account-hero,html[data-theme="dark"] .account-section,html[data-theme="dark"] .account-summary-grid article,html[data-theme="dark"] .account-security-card,html[data-theme="dark"] .resource-card { border-color: rgba(147,197,253,.22); background: linear-gradient(145deg,rgba(30,58,95,.88),rgba(49,46,129,.68)); }
 html[data-theme="dark"] .account-identity h1,html[data-theme="dark"] .account-section h2,html[data-theme="dark"] .account-summary-grid strong,html[data-theme="dark"] .account-security-card h2,html[data-theme="dark"] .resource-card h3 { color: #eef6ff; }
@@ -728,7 +727,31 @@ html[data-theme="dark"] .console-ssh-check-button {
 }
 .resource-purchase-button,
 .payment-redeem-purchase { padding: 0 13px; }
-.resource-purchase-button { align-self: stretch; }
+.resource-purchase-button {
+  align-self: stretch;
+  color: #fff !important;
+  font-size: 13px;
+  letter-spacing: .01em;
+  text-shadow: 0 1px 2px rgba(15,23,42,.32);
+  transition: transform 160ms var(--ease-out), box-shadow 160ms ease, filter 160ms ease;
+}
+.resource-purchase-button:active { transform: scale(.97); }
+html[data-theme="dark"] .console-shell .resource-purchase-button { color: #fff !important; }
+
+/* Purple accents need a lighter token on dark surfaces; the regular violet is
+   tuned for white cards and loses contrast on the navy/indigo workbench. */
+html[data-theme="dark"] .console-shell .account-eyebrow,
+html[data-theme="dark"] .console-shell .account-section header > div > span,
+html[data-theme="dark"] .console-shell .workspace-kicker,
+html[data-theme="dark"] .console-shell .workspace-workflow-top small,
+html[data-theme="dark"] .console-shell .workspace-workflow-card footer strong,
+html[data-theme="dark"] .console-shell .payment-dialog > header span,
+html[data-theme="dark"] .console-shell .payment-checkout-dialog > header span,
+html[data-theme="dark"] .console-shell .contact-method-type,
+html[data-theme="dark"] .console-shell .contact-method-open-hint,
+html[data-theme="dark"] .console-shell .contact-method-back {
+  color: #e9d5ff !important;
+}
 .payment-redeem-purchase { min-height: 58px; }
 .payment-redeem-purchase small { color: rgba(255,255,255,.82) !important; }
 .workspace-secondary,
@@ -817,3 +840,70 @@ html[data-theme="dark"] .wallet-recharge-empty strong { color: #f3f8ff; }
 @media (max-width: 650px) { .account-wallet-box { align-items: stretch; flex-direction: column; }.account-wallet-actions { flex-direction: column; }.account-wallet-actions input { min-width: 0; width: 100%; } }
 html[data-theme="dark"] .console-shell .account-pagination button { border-color: rgba(147,197,253,.28); color: #dbeafe; background: rgba(30,64,105,.72); }
 @media (max-width: 650px) { .account-pagination { align-items: flex-start; flex-direction: column; }.account-pagination > div { width: 100%; }.account-pagination button { flex: 1; } }
+
+/* The delivery hub is a state indicator: two independent orbital paths make
+   the system feel active without moving any readable data or controls. */
+.workspace-orbit-ring { will-change: transform; }
+.workspace-orbit-ring::before,
+.workspace-orbit-ring::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  display: block;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(255,255,255,.5), 0 0 18px currentColor;
+}
+.workspace-orbit-ring::before {
+  top: 50%;
+  left: -4px;
+  width: 8px;
+  height: 8px;
+  color: #8b5cf6;
+  background: #8b5cf6;
+  transform: translateY(-50%);
+}
+.workspace-orbit-ring::after {
+  top: 12%;
+  right: 12%;
+  width: 6px;
+  height: 6px;
+  color: #22d3ee;
+  background: #22d3ee;
+}
+.workspace-orbit-ring.ring-one { animation: workspace-orbit-one 8s linear infinite; }
+.workspace-orbit-ring.ring-two { animation: workspace-orbit-two 11s linear infinite; }
+.workspace-orbit-spark {
+  position: absolute;
+  z-index: 2;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f472b6;
+  box-shadow: 0 0 12px currentColor;
+  pointer-events: none;
+  animation: workspace-orbit-spark 2.8s var(--ease-in-out) infinite;
+}
+.workspace-orbit-spark.spark-one { top: 27%; left: 18%; color: #f472b6; }
+.workspace-orbit-spark.spark-two { top: 18%; right: 22%; color: #60a5fa; animation-delay: -.9s; }
+.workspace-orbit-spark.spark-three { right: 17%; bottom: 28%; color: #34d399; animation-delay: -1.7s; }
+@keyframes workspace-orbit-one {
+  from { transform: rotate(-22deg); }
+  to { transform: rotate(338deg); }
+}
+@keyframes workspace-orbit-two {
+  from { transform: rotate(46deg); }
+  to { transform: rotate(-314deg); }
+}
+@keyframes workspace-orbit-spark {
+  0%,100% { opacity: .35; transform: translateY(35%) scale(.82); }
+  50% { opacity: 1; transform: translateY(-35%) scale(1.18); }
+}
+@keyframes workspace-orbit-spark-reduced {
+  0%,100% { opacity: .5; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-orbit-ring.ring-one,
+  .workspace-orbit-ring.ring-two { animation: none; }
+  .workspace-orbit-spark { animation: workspace-orbit-spark-reduced 2.8s var(--ease-in-out) infinite; }
+}

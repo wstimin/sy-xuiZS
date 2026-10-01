@@ -1233,6 +1233,17 @@ html[data-theme="dark"] .admin-dialog-subsection-head { border-color: rgba(147,1
 html[data-theme="dark"] .admin-dialog-subsection-head strong { color: #eef6ff; }
 html[data-theme="dark"] .admin-dialog-subsection-head small { color: #a9bdd8; }
 
+/* Interactive record names use the light accent token on dark data tables;
+   the default violet is intended for white surfaces and was too dim here. */
+html[data-theme="dark"] .admin-record-link,
+html[data-theme="dark"] .admin-link:not(.success):not(.warning):not(.danger) {
+  color: #e9d5ff !important;
+}
+html[data-theme="dark"] .admin-record-link:hover,
+html[data-theme="dark"] .admin-link:not(.success):not(.warning):not(.danger):hover {
+  color: #bae6fd !important;
+}
+
 @media (max-width: 760px) {
   .admin-payment-channel-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-dialog-subsection-head { flex-direction: column; }

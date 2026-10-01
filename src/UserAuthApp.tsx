@@ -5,9 +5,9 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  Fingerprint,
   Mail,
   KeyRound,
-  LockKeyhole,
   Network,
   ShieldCheck,
   Terminal,
@@ -145,7 +145,7 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
 
         <section className="auth-panel" aria-labelledby="auth-title">
           <div className="auth-panel-head">
-            <span className="auth-panel-icon">{isLogin && !resetMode ? <LockKeyhole className="h-5 w-5" /> : <UserRound className="h-5 w-5" />}</span>
+            <span className="auth-panel-icon">{isLogin && !resetMode ? <Fingerprint className="h-6 w-6" /> : <UserRound className="h-5 w-5" />}</span>
             <div>
               <span>{resetMode ? '重置账户密码' : isLogin ? '账户登录' : '创建新账户'}</span>
               <h2 id="auth-title">{resetMode ? '重置密码' : isLogin ? '登录账户' : '注册账户'}</h2>
