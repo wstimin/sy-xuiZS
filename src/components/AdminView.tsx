@@ -229,8 +229,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [redeemCodeDialogOpen, setRedeemCodeDialogOpen] = useState(false);
   const [createdRedeemCodes, setCreatedRedeemCodes] = useState<CreatedRedeemCode[]>([]);
   const [versionStatus, setVersionStatus] = useState<SystemVersionStatus | null>(null);
-  const [updateConfirmation, setUpdateConfirmation] = useState('');
-  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const updateActive = versionStatus?.state === 'scheduled' || versionStatus?.state === 'running';
@@ -866,11 +864,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     try {
       const result = await api<{ status: SystemVersionStatus }>('/api/admin/system/update/check', { method: 'POST' });
       setVersionStatus(result.status);
-      const active = result.status.state === 'scheduled' || result.status.state === 'running';
       showToast(
-        active ? '检测到进行中的更新任务' : result.status.updateAvailable ? '发现新版本' : '当前已经是最新版本',
-        active ? (result.status.message || `正在更新到 v${result.status.targetVersion || result.status.latestVersion}`) : result.status.updateAvailable ? `v${result.status.currentVersion} → v${result.status.latestVersion}；检查版本不会自动安装` : `当前版本 v${result.status.currentVersion}`,
-        active || result.status.updateAvailable ? 'info' : 'success'
+        result.status.updateAvailable ? '发现新版本' : '当前已经是最新版本',
+        result.status.updateAvailable ? `v${result.status.currentVersion} → v${result.status.latestVersion}` : `当前版本 v${result.status.currentVersion}`,
+        result.status.updateAvailable ? 'info' : 'success'
       );
     } catch (error) {
       showToast('检查更新失败', error instanceof Error ? error.message : '请检查服务器到 GitHub 的网络', 'error');
@@ -880,17 +877,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   };
 
   const startSystemUpdate = async () => {
-    if (!versionStatus?.latestVersion || updateConfirmation !== 'UPDATE') return;
+    if (!versionStatus?.latestVersion || !versionStatus.updateAvailable) return;
     setBusy(true);
     try {
       const result = await api<{ status: SystemVersionStatus }>('/api/admin/system/update', {
         method: 'POST',
-        body: JSON.stringify({ confirmation: updateConfirmation }),
       });
       setVersionStatus(result.status);
-      setUpdateDialogOpen(false);
-      setUpdateConfirmation('');
-      showToast('更新任务已手动启动', `目标版本 v${result.status.targetVersion || versionStatus.latestVersion}；可以关闭弹窗，后台进度会持续保存`, 'success');
+      showToast('更新已启动', `目标版本 v${result.status.targetVersion || versionStatus.latestVersion}；后台会继续执行`, 'success');
     } catch (error) {
       showToast('更新启动失败', error instanceof Error ? error.message : '当前版本没有被替换', 'error');
     } finally {
@@ -1296,10 +1290,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       <AdminDialog open={securityDialog === 'password'} title="修改登录密码" description="修改密码后所有已登录会话会立即失效，需要重新登录。" cancelLabel="关闭" onClose={() => setSecurityDialog(null)}>
         <ChangePasswordForm endpoint="/api/admin/auth/change-password" onChanged={onSessionEnded} showToast={showToast} variant="admin" />
       </AdminDialog>
-      <AdminDialog open={securityDialog === 'update'} title="版本与更新" description="先检查官方版本，再从弹窗中确认升级，避免把维护操作长期铺在页面上。" cancelLabel="关闭" onClose={() => setSecurityDialog(null)}>
+      <AdminDialog open={securityDialog === 'update'} title="版本与更新" description="检查完成后可直接点击更新，更新器会在后台校验、备份并执行升级。" cancelLabel="关闭" onClose={() => setSecurityDialog(null)}>
         <div className="admin-update-content">
           <div className="admin-version-summary"><div><small>当前版本</small><strong>v{versionStatus?.currentVersion || '—'}</strong></div><span className={versionStatus?.updateAvailable ? 'available' : ''}>{versionStatus?.updateAvailable ? `发现 v${versionStatus.latestVersion}` : versionStatus?.checkedAt ? '已是最新版本' : '尚未检查'}</span></div>
-          <div className="admin-update-manual-note"><AlertTriangle /><span><strong>检查版本不会安装更新。</strong>只有点击“开始更新”并在确认弹窗输入 UPDATE 后，系统才会修改文件和重启服务。</span></div>
+          <div className="admin-update-manual-note"><AlertTriangle /><span><strong>检查版本不会自动安装更新。</strong>检测到新版本后可直接点击“开始更新”，系统会校验发布包并在失败时回滚。</span></div>
           {updateActive && <div className="admin-update-progress" role="status" aria-live="polite">
             <div className="admin-update-progress-heading"><span><RefreshCw className="spinning" />正在更新到 v{versionStatus?.targetVersion || versionStatus?.latestVersion}</span><strong>{updateProgress}%</strong></div>
             <div className="admin-update-progress-track" aria-label={`更新进度 ${updateProgress}%`}><i style={{ transform: `scaleX(${updateProgress / 100})` }} /></div>
@@ -1308,8 +1302,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           </div>}
           {!updateActive && <p className={versionStatus?.state === 'failed' ? 'is-error' : ''}>{versionStatus?.message || versionStatus?.reason || '正在读取版本信息'}</p>}
           <div className="admin-update-actions">
-            <button type="button" className="admin-button secondary" disabled={busy || updateActive} onClick={() => void checkSystemUpdate()}><RefreshCw className={busy ? 'spinning' : ''} /> {updateActive ? '更新进行中' : '仅检查最新版本'}</button>
-            {versionStatus?.updateAvailable && versionStatus.canAutoUpdate && <button type="button" className="admin-button primary" disabled={busy || updateActive} onClick={() => { setSecurityDialog(null); setUpdateConfirmation(''); setUpdateDialogOpen(true); }}><PackagePlus /> 开始更新到 v{versionStatus.latestVersion}</button>}
+            <button type="button" className="admin-button secondary" disabled={busy} onClick={() => void checkSystemUpdate()}><RefreshCw className={busy ? 'spinning' : ''} /> 检查最新版本</button>
+            {versionStatus?.updateAvailable && versionStatus.canAutoUpdate && <button type="button" className="admin-button primary" disabled={busy} onClick={() => void startSystemUpdate()}><PackagePlus /> 开始更新到 v{versionStatus.latestVersion}</button>}
             {versionStatus?.updateAvailable && !versionStatus.canAutoUpdate && <a className="admin-button secondary" href={versionStatus.releaseUrl} target="_blank" rel="noreferrer">下载发布包 <ExternalLink /></a>}
           </div>
         </div>
@@ -1537,12 +1531,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         <div className="admin-restore-confirmation">
           <div><AlertTriangle /><p><strong>恢复后当前页面会退出登录。</strong><span>系统会先保存恢复前数据库，再将备份中的敏感配置重新加密为当前服务器密钥后导入。</span></p></div>
           <label className="admin-field"><span>输入 RESTORE 确认</span><input value={restoreConfirmation} onChange={event => setRestoreConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="RESTORE" /></label>
-        </div>
-      </AdminDialog>
-      <AdminDialog open={updateDialogOpen} title="确认安装系统更新" description={`这是独立于“检查版本”的手动更新操作，将从官方发布源更新到 v${versionStatus?.latestVersion || '—'}。更新器会校验 SHA256、保留业务数据和环境配置、备份当前程序，失败时自动回滚。`} confirmLabel="确认开始更新" tone="danger" busy={busy} confirmDisabled={updateConfirmation !== 'UPDATE'} onClose={() => { setUpdateDialogOpen(false); setUpdateConfirmation(''); }} onConfirm={() => void startSystemUpdate()}>
-        <div className="admin-restore-confirmation">
-          <div><AlertTriangle /><p><strong>更新期间服务会短暂重启。</strong><span>不要关闭服务器、终止 PM2 或删除应用目录。页面会在新版本通过健康检查后自动刷新。</span></p></div>
-          <label className="admin-field"><span>输入 UPDATE 确认</span><input value={updateConfirmation} onChange={event => setUpdateConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="UPDATE" /></label>
         </div>
       </AdminDialog>
       <AdminDialog open={Boolean(viewDeployment)} title="交付任务详情" description="任务从额度预约到执行完成的真实状态和结果记录。" cancelLabel="关闭" onClose={() => setViewDeployment(null)}>
