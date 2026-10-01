@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import Database from "better-sqlite3";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { CommercialStore } from "./commercial-store.js";
 import { createEpayUrl, epaySign, verifyEpaySignature } from "./payment-service.js";
 
@@ -36,6 +39,25 @@ function createStore() {
   }]);
   return store;
 }
+
+test("file database backups produce a valid standalone snapshot from WAL mode", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "xui-wal-backup-test-"));
+  const store = new CommercialStore(path.join(directory, "data", "app.db"));
+  try {
+    store.bootstrapAdmin("wal-admin", "strong-password");
+    const backup = store.createDatabaseBackup();
+    const snapshot = new Database(backup, { readonly: true });
+    try {
+      assert.notEqual((snapshot.pragma("journal_mode") as Array<Record<string, unknown>>)[0].journal_mode, "wal");
+      assert.equal((snapshot.pragma("integrity_check") as Array<Record<string, unknown>>)[0].integrity_check, "ok");
+    } finally {
+      snapshot.close();
+    }
+  } finally {
+    store.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("email accounts are unique and can still use legacy username login", () => {
   const store = createStore();

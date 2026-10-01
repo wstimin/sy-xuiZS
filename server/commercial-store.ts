@@ -341,7 +341,20 @@ export class CommercialStore {
   }
 
   createDatabaseBackup() {
-    return this.db.serialize();
+    if (this.databasePath === ":memory:") return this.db.serialize();
+
+    // A WAL database cannot be reopened reliably from db.serialize() because
+    // the serialized image retains WAL metadata. VACUUM INTO creates a
+    // consistent, standalone SQLite snapshot that can be validated and
+    // migrated on another server.
+    const temporaryDirectory = fs.mkdtempSync(path.join(path.dirname(this.databasePath), ".backup-"));
+    const temporaryDatabase = path.join(temporaryDirectory, "snapshot.db");
+    try {
+      this.db.prepare("VACUUM INTO ?").run(temporaryDatabase);
+      return fs.readFileSync(temporaryDatabase);
+    } finally {
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
   }
 
   validateDatabaseBackup(data: Buffer, vault = this.vault) {

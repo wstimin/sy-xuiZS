@@ -107,6 +107,7 @@ import {
   UserDetail,
   UserProfileTab,
 } from './admin/adminModel';
+
 import {
   AdminPageLoading,
   AdminSection,
@@ -145,6 +146,22 @@ import {
   userActionDescription,
   userActionTitle,
 } from './admin/adminUtils';
+
+const UPDATE_STAGE_LABELS = [
+  { key: 'queued', label: '排队' },
+  { key: 'downloading', label: '下载' },
+  { key: 'verifying', label: '校验' },
+  { key: 'dependencies', label: '安装' },
+  { key: 'switching', label: '切换' },
+  { key: 'health-check', label: '验证' },
+];
+
+function updateStageIndex(stage?: string) {
+  if (stage === 'completed') return UPDATE_STAGE_LABELS.length;
+  if (stage === 'restarting') return 4;
+  if (stage === 'failed' || stage === 'interrupted' || stage === 'rolled-back') return UPDATE_STAGE_LABELS.findIndex(item => item.key === 'switching');
+  return Math.max(0, UPDATE_STAGE_LABELS.findIndex(item => item.key === stage));
+}
 
 
 interface AdminViewProps {
@@ -235,6 +252,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [commandQuery, setCommandQuery] = useState('');
   const updateActive = versionStatus?.state === 'scheduled' || versionStatus?.state === 'running';
   const updateProgress = Math.max(0, Math.min(100, versionStatus?.progress || 0));
+  const updateStage = updateStageIndex(versionStatus?.stage);
 
   const load = async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -1301,10 +1319,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <div className="admin-version-summary"><div><small>当前版本</small><strong>v{versionStatus?.currentVersion || '—'}</strong></div><span className={versionStatus?.updateAvailable ? 'available' : ''}>{versionStatus?.updateAvailable ? `发现 v${versionStatus.latestVersion}` : versionStatus?.checkedAt ? '已是最新版本' : '尚未检查'}</span></div>
           <div className="admin-update-manual-note"><AlertTriangle /><span><strong>检查版本不会安装更新。</strong>只有点击“开始更新”并在确认弹窗输入 UPDATE 后，系统才会修改文件和重启服务。</span></div>
           {updateActive && <div className="admin-update-progress" role="status" aria-live="polite">
-            <div className="admin-update-progress-heading"><span><RefreshCw className="spinning" />正在更新到 v{versionStatus?.targetVersion || versionStatus?.latestVersion}</span><strong>{updateProgress}%</strong></div>
+            <div className="admin-update-progress-heading">
+              <div className="admin-update-progress-status"><span className="admin-update-progress-orb"><RefreshCw className="spinning" /></span><div><small>后台更新任务</small><strong>正在更新到 v{versionStatus?.targetVersion || versionStatus?.latestVersion}</strong></div></div>
+              <div className="admin-update-progress-percent"><strong>{updateProgress}%</strong><span>实时同步</span></div>
+            </div>
             <div className="admin-update-progress-track" aria-label={`更新进度 ${updateProgress}%`}><i style={{ transform: `scaleX(${updateProgress / 100})` }} /></div>
-            <p>{versionStatus?.message || '更新器正在准备任务'}</p>
-            <small>{versionStatus?.startedAt ? `开始于 ${formatDate(versionStatus.startedAt)} · ` : ''}进度每 3 秒自动刷新；可以关闭此弹窗，更新会继续在后台执行。</small>
+            <div className="admin-update-stage-list" aria-label="更新阶段">
+              {UPDATE_STAGE_LABELS.map((item, index) => <span key={item.key} className={index < updateStage ? 'done' : index === updateStage ? 'active' : ''}><i>{index < updateStage ? '✓' : index + 1}</i>{item.label}</span>)}
+            </div>
+            <div className="admin-update-live"><span /><p>{versionStatus?.message || '更新器正在准备任务'}</p></div>
+            <div className="admin-update-progress-meta"><span>{versionStatus?.startedAt ? `开始于 ${formatDate(versionStatus.startedAt)}` : '任务已提交'}</span><span>可关闭弹窗，更新不会中断</span></div>
           </div>}
           {!updateActive && <p className={versionStatus?.state === 'failed' ? 'is-error' : ''}>{versionStatus?.message || versionStatus?.reason || '正在读取版本信息'}</p>}
           <div className="admin-update-actions">
