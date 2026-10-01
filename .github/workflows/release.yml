@@ -59,7 +59,8 @@ jobs:
           current_ref="${GITHUB_REF_NAME}"
           previous_tag=""
           while IFS= read -r tag; do
-            if [ "$tag" != "$current_ref" ]; then
+            tag_version="${tag#v}"
+            if [ "$tag" != "$current_ref" ] && [ "$tag_version" != "$package_version" ]; then
               previous_tag="$tag"
               break
             fi
