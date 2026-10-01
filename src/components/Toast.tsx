@@ -21,6 +21,9 @@ export const Toast: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
           <div
             key={toast.id}
             className={`admin-toast ${isSuccess ? 'success' : isError ? 'error' : isWarning ? 'warning' : 'info'}`}
+            role={isError ? 'alert' : 'status'}
+            aria-live={isError ? 'assertive' : 'polite'}
+            aria-atomic="true"
           >
             {isSuccess && <CheckCircle2 aria-hidden="true" />}
             {isError && <AlertCircle aria-hidden="true" />}

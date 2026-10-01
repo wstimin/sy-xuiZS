@@ -11,8 +11,26 @@ function sessionCookie(response: Response) {
   return header.split(";")[0];
 }
 
-test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", async () => {
+function createTestStore() {
   const store = new CommercialStore(":memory:");
+  store.createPlan({
+    name: "单次搭建", description: "测试用永久次数套餐", priceCents: 990,
+    durationUnit: "lifetime", durationValue: 0,
+    panelMode: "limited", panelLimit: 1, nodeMode: "limited", nodeLimit: 3,
+    dailyPanelLimit: 0, dailyNodeLimit: 0, concurrencyLimit: 1,
+    enabled: true, homepageVisible: true, sortOrder: 1,
+  });
+  store.setPaymentMethods([{
+    id: "manual", name: "测试支付", type: "epay", provider: "epay", enabled: true,
+    instructions: "测试专用在线支付", paymentUrl: "", gatewayUrl: "https://pay.example.test",
+    merchantId: "1001", merchantSecret: "test-secret", channel: "alipay",
+    enabledChannels: ["alipay"], sortOrder: 10,
+  }]);
+  return store;
+}
+
+test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", async () => {
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use("/api", attachCommercialUser(store));
@@ -73,12 +91,7 @@ test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", as
     const forbidden = await fetch(`${base}/admin/orders`, { headers: { cookie: userCookie } });
     assert.equal(forbidden.status, 401);
 
-    const paidResponse = await fetch(`${base}/admin/orders/${order.id}/mark-paid`, {
-      method: "POST",
-      headers: { "content-type": "application/json", cookie: combinedCookie },
-      body: JSON.stringify({ tradeNo: "manual-test-1" }),
-    });
-    assert.equal(paidResponse.status, 200);
+    store.markOrderPaid(order.id, "manual", "manual-test-1");
 
     const accountResponse = await fetch(`${base}/account`, { headers: { cookie: combinedCookie } });
     assert.equal(accountResponse.status, 200);
@@ -111,7 +124,7 @@ test("HTTP commercial flow bootstraps admin, sells a plan and grants quotas", as
 });
 
 test("admin management endpoints create users and expose protected operational records", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use("/api", attachCommercialUser(store));
@@ -130,15 +143,15 @@ test("admin management endpoints create users and expose protected operational r
     const adminCookie = sessionCookie(adminResponse);
 
     const basePlan = store.listPlans()[0];
-    const quarterlyPlanResponse = await fetch(`${base}/admin/plans`, {
+    const permanentPlanResponse = await fetch(`${base}/admin/plans`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: adminCookie },
-      body: JSON.stringify({ ...basePlan, name: "API 季度套餐", durationUnit: "quarters", durationValue: 1, homepageVisible: false }),
+      body: JSON.stringify({ ...basePlan, name: "API 永久套餐", durationUnit: "lifetime", durationValue: 0, homepageVisible: false }),
     });
-    assert.equal(quarterlyPlanResponse.status, 201);
-    const quarterlyPlan = (await quarterlyPlanResponse.json() as any).plan;
-    assert.equal(quarterlyPlan.durationUnit, "quarters");
-    assert.equal(quarterlyPlan.homepageVisible, false);
+    assert.equal(permanentPlanResponse.status, 201);
+    const permanentPlan = (await permanentPlanResponse.json() as any).plan;
+    assert.equal(permanentPlan.durationUnit, "lifetime");
+    assert.equal(permanentPlan.homepageVisible, false);
 
     const createResponse = await fetch(`${base}/admin/users`, {
       method: "POST",
@@ -214,7 +227,7 @@ test("admin management endpoints create users and expose protected operational r
 });
 
 test("admin order detail and entitlement repair endpoints are protected and audited", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use("/api", attachCommercialUser(store));
@@ -283,7 +296,7 @@ test("admin order detail and entitlement repair endpoints are protected and audi
 });
 
 test("admin operations expose diagnoses, payment checks and guarded database restore", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use("/api", attachCommercialUser(store));
@@ -335,24 +348,18 @@ test("admin operations expose diagnoses, payment checks and guarded database res
 
     store.setPaymentMethods([
       {
-        id: "disabled-manual", name: "Disabled manual", type: "manual", provider: "manual", enabled: false,
-        instructions: "", paymentUrl: "", sortOrder: 10,
-      },
-      {
-        id: "enabled-manual", name: "Enabled manual", type: "manual", provider: "manual", enabled: true,
-        instructions: "Contact support", paymentUrl: "", sortOrder: 20,
+        id: "disabled-epay", name: "Disabled EPay", type: "epay", provider: "epay", enabled: false,
+        instructions: "", paymentUrl: "", enabledChannels: ["alipay"], sortOrder: 10,
       },
       {
         id: "local-epay", name: "Local EPay", type: "epay", provider: "epay", enabled: true,
         instructions: "Online", paymentUrl: "", gatewayUrl: "http://127.0.0.1/pay", merchantId: "1001",
-        merchantSecret: "secret", enabledChannels: ["alipay"], sortOrder: 30,
+        merchantSecret: "secret", enabledChannels: ["alipay"], sortOrder: 20,
       },
     ]);
 
-    const disabledCheck = await fetch(`${base}/admin/payment-methods/disabled-manual/check`, { method: "POST", headers: { cookie: adminCookie } }).then(response => response.json()) as any;
+    const disabledCheck = await fetch(`${base}/admin/payment-methods/disabled-epay/check`, { method: "POST", headers: { cookie: adminCookie } }).then(response => response.json()) as any;
     assert.equal(disabledCheck.result.status, "disabled");
-    const manualCheck = await fetch(`${base}/admin/payment-methods/enabled-manual/check`, { method: "POST", headers: { cookie: adminCookie } }).then(response => response.json()) as any;
-    assert.equal(manualCheck.result.status, "ready");
     const localCheck = await fetch(`${base}/admin/payment-methods/local-epay/check`, { method: "POST", headers: { cookie: adminCookie } }).then(response => response.json()) as any;
     assert.equal(localCheck.result.status, "invalid");
 
@@ -370,6 +377,31 @@ test("admin operations expose diagnoses, payment checks and guarded database res
     });
     assert.equal(validateResponse.status, 200);
     assert.equal(((await validateResponse.json() as any).validation.valid), true);
+
+    const portableResponse = await fetch(`${base}/admin/system-backup`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ password: "portable-password-123" }),
+    });
+    assert.equal(portableResponse.status, 200);
+    assert.equal(portableResponse.headers.get("content-type"), "application/vnd.xui-portable-backup");
+    assert.match(portableResponse.headers.get("content-disposition") || "", /attachment; filename="xui-complete-backup-.*\.xuibak"/);
+    const portableBackup = Buffer.from(await portableResponse.arrayBuffer());
+    assert.equal(portableBackup.includes(Buffer.from("secret")), false);
+
+    const wrongPortablePassword = await fetch(`${base}/admin/system-backup/validate`, {
+      method: "POST",
+      headers: { "content-type": "application/vnd.xui-portable-backup", cookie: adminCookie, "x-backup-password": "incorrect-password-1" },
+      body: portableBackup,
+    });
+    assert.equal(wrongPortablePassword.status, 400);
+    const portableValidation = await fetch(`${base}/admin/system-backup/validate`, {
+      method: "POST",
+      headers: { "content-type": "application/vnd.xui-portable-backup", cookie: adminCookie, "x-backup-password": "portable-password-123" },
+      body: portableBackup,
+    });
+    assert.equal(portableValidation.status, 200);
+    assert.equal((await portableValidation.json() as any).validation.encrypted, true);
 
     const missingConfirmation = await fetch(`${base}/admin/database/restore`, {
       method: "POST",
@@ -395,8 +427,66 @@ test("admin operations expose diagnoses, payment checks and guarded database res
   }
 });
 
+test("deployment history API returns summaries and only decrypts records for their owner", async () => {
+  const store = createTestStore();
+  const app = express();
+  app.use(express.json());
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}/api`;
+
+  try {
+    const owner = store.createUser("api-history-owner", "strong-password");
+    const other = store.createUser("api-history-other", "strong-password");
+    store.grantEntitlement(owner.id, {
+      name: "历史 API 测试",
+      durationUnit: "lifetime",
+      durationValue: 0,
+      panelMode: "limited",
+      panelLimit: 2,
+      nodeMode: "limited",
+      nodeLimit: 2,
+    });
+    const deployment = store.reserveDeployment(owner.id, "node", "history-api-request", "198.51.*.*");
+    store.succeedDeployment(deployment.deploymentId, "VLESS 节点 198.51.*.*:443", {
+      id: deployment.deploymentId,
+      nodeName: "私有节点",
+      shareLink: "vless://history-secret-link",
+      uuid: "history-secret-uuid",
+    });
+    const ownerCookie = `xui_user_session=${store.createSession(owner.id)}`;
+    const otherCookie = `xui_user_session=${store.createSession(other.id)}`;
+
+    assert.equal((await fetch(`${base}/deployment-history`)).status, 401);
+    const listResponse = await fetch(`${base}/deployment-history`, { headers: { cookie: ownerCookie } });
+    assert.equal(listResponse.status, 200);
+    const list = await listResponse.json() as any;
+    assert.equal(list.items.length, 1);
+    assert.equal(list.items[0].hasDetails, true);
+    assert.doesNotMatch(JSON.stringify(list), /history-secret-link|history-secret-uuid/);
+
+    const detailResponse = await fetch(`${base}/deployment-history/${deployment.deploymentId}`, { headers: { cookie: ownerCookie } });
+    assert.equal(detailResponse.status, 200);
+    assert.equal(detailResponse.headers.get("cache-control"), "no-store");
+    const detail = await detailResponse.json() as any;
+    assert.equal(detail.item.nodeData.shareLink, "vless://history-secret-link");
+
+    const crossAccount = await fetch(`${base}/deployment-history/${deployment.deploymentId}`, { headers: { cookie: otherCookie } });
+    assert.equal(crossAccount.status, 404);
+    const clearResponse = await fetch(`${base}/deployment-history`, { method: "DELETE", headers: { cookie: ownerCookie } });
+    assert.equal(clearResponse.status, 200);
+    assert.deepEqual((await fetch(`${base}/deployment-history`, { headers: { cookie: ownerCookie } }).then(response => response.json()) as any).items, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});
+
 test("administrator can change own username and public management path", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use("/api", attachCommercialUser(store));
@@ -473,7 +563,7 @@ test("administrator can change own username and public management path", async (
 });
 
 test("email registration, payment settings and provider validation align across APIs", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use("/api", attachCommercialUser(store));
@@ -496,8 +586,8 @@ test("email registration, payment settings and provider validation align across 
       body: JSON.stringify({
         paymentInstructions: "请将订单号填写为付款备注。",
         paymentMethods: [
-          { id: "alipay", name: "支付宝", type: "alipay", enabled: true, instructions: "打开付款页完成付款", paymentUrl: "https://pay.example.test", sortOrder: 10 },
-          { id: "wechat", name: "微信支付", type: "wechat", enabled: false, instructions: "", paymentUrl: "", sortOrder: 20 },
+          { id: "alipay", name: "支付宝", type: "epay", provider: "epay", enabled: true, instructions: "打开付款页完成付款", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001", merchantSecret: "test-secret", enabledChannels: ["alipay"], sortOrder: 10 },
+          { id: "wechat", name: "微信支付", type: "epay", provider: "epay", enabled: false, instructions: "", paymentUrl: "", enabledChannels: ["wxpay"], sortOrder: 20 },
         ],
       }),
     });
@@ -522,7 +612,7 @@ test("email registration, payment settings and provider validation align across 
     assert.equal(loginResponse.status, 200);
 
     const publicMethods = await fetch(`${base}/payment-methods`).then(response => response.json()) as any;
-    assert.deepEqual(publicMethods.paymentMethods.map((method: any) => method.id), ["alipay"]);
+    assert.deepEqual(publicMethods.paymentMethods.map((method: any) => method.id), ["alipay--alipay"]);
 
     const plan = store.listPlans()[0];
     const disabledOrder = await fetch(`${base}/orders`, {
@@ -535,22 +625,22 @@ test("email registration, payment settings and provider validation align across 
     const orderResponse = await fetch(`${base}/orders`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: userCookie },
-      body: JSON.stringify({ planId: plan.id, paymentProvider: "alipay" }),
+      body: JSON.stringify({ planId: plan.id, paymentProvider: "alipay--alipay" }),
     });
     assert.equal(orderResponse.status, 201);
     assert.equal((await orderResponse.json() as any).order.paymentProvider, "alipay");
 
     const account = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
     assert.equal(account.paymentInstructions, "请将订单号填写为付款备注。");
-    assert.equal(account.paymentMethods[0].id, "alipay");
+    assert.equal(account.paymentMethods[0].id, "alipay--alipay");
 
     const disableOnlinePayments = await fetch(`${base}/admin/settings`, {
       method: "PUT",
       headers: { "content-type": "application/json", cookie: adminCookie },
       body: JSON.stringify({
         paymentMethods: [
-          { id: "alipay", name: "支付宝", type: "alipay", enabled: false, instructions: "打开付款页完成付款", paymentUrl: "https://pay.example.test", sortOrder: 10 },
-          { id: "wechat", name: "微信支付", type: "wechat", enabled: false, instructions: "", paymentUrl: "", sortOrder: 20 },
+          { id: "alipay", name: "支付宝", type: "epay", provider: "epay", enabled: false, instructions: "打开付款页完成付款", paymentUrl: "", enabledChannels: ["alipay"], sortOrder: 10 },
+          { id: "wechat", name: "微信支付", type: "epay", provider: "epay", enabled: false, instructions: "", paymentUrl: "", enabledChannels: ["wxpay"], sortOrder: 20 },
         ],
       }),
     });
@@ -565,8 +655,42 @@ test("email registration, payment settings and provider validation align across 
   }
 });
 
+test("settings updates roll back completely when a later validation fails", async () => {
+  const store = createTestStore();
+  const app = express();
+  app.use(express.json());
+  app.use("/api", attachCommercialUser(store));
+  app.use("/api", createCommercialRouter(store));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  try {
+    const adminResponse = await fetch(`${base}/auth/bootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "atomic-admin", password: "admin-password" }),
+    });
+    const adminCookie = sessionCookie(adminResponse);
+    const failed = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({
+        registrationEnabled: false,
+        email: { emailEnabled: true, smtpHost: "", smtpPort: 465, smtpFromEmail: "" },
+      }),
+    });
+    assert.equal(failed.status, 400);
+    const settings = await fetch(`${base}/admin/settings`, { headers: { cookie: adminCookie } }).then(response => response.json()) as any;
+    assert.equal(settings.settings.registrationEnabled, true);
+    assert.equal(settings.settings.email.emailEnabled, false);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    store.close();
+  }
+});
+
 test("redeem code APIs issue plan benefits once and expose a validated purchase link", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use("/api", attachCommercialUser(store));
@@ -596,7 +720,7 @@ test("redeem code APIs issue plan benefits once and expose a validated purchase 
     const createResponse = await fetch(`${base}/admin/redeem-codes`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: adminCookie },
-      body: JSON.stringify({ planId: plan.id, quantity: 1, note: "api batch" }),
+      body: JSON.stringify({ amountCents: plan.priceCents, quantity: 1, note: "api batch" }),
     });
     assert.equal(createResponse.status, 201);
     const created = (await createResponse.json() as any).redeemCodes[0];
@@ -610,7 +734,7 @@ test("redeem code APIs issue plan benefits once and expose a validated purchase 
     assert.equal(JSON.stringify(listed).includes(created.code), false);
 
     const wrongPlan = store.createPlan({
-      name: "API 其他套餐", priceCents: 9900, durationUnit: "months", durationValue: 1,
+      name: "API 其他套餐", priceCents: 9900, durationUnit: "lifetime", durationValue: 0,
       panelMode: "limited", panelLimit: 1, nodeMode: "limited", nodeLimit: 1,
       dailyPanelLimit: 1, dailyNodeLimit: 1, concurrencyLimit: 1, enabled: true, sortOrder: 9,
     });
@@ -676,7 +800,7 @@ test("redeem code APIs issue plan benefits once and expose a validated purchase 
 });
 
 test("online payment callbacks reject wrong amounts and grant benefits only once", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
@@ -752,7 +876,7 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
 });
 
 test("gateway checkout failures keep the created order available for retry", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json());
   app.use("/api", attachCommercialUser(store));
@@ -792,7 +916,7 @@ test("gateway checkout failures keep the created order available for retry", asy
 });
 
 test("contact methods are independent, limited, migrated and publicly readable", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json({ limit: "2mb" }));
   app.use("/api", attachCommercialUser(store));
@@ -942,7 +1066,7 @@ test("contact methods are independent, limited, migrated and publicly readable",
 });
 
 test("legacy contact settings migrate into one independent contact method", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   store.setSetting("contact_enabled", "true");
   store.setSetting("contact_text", "微信：legacy-account");
   store.setSetting("contact_url", "https://example.test/legacy");
@@ -975,7 +1099,7 @@ test("legacy contact settings migrate into one independent contact method", asyn
 });
 
 test("resource recommendations enforce limits, filtering and protected logo access", async () => {
-  const store = new CommercialStore(":memory:");
+  const store = createTestStore();
   const app = express();
   app.use(express.json({ limit: "2mb" }));
   app.use("/api", attachCommercialUser(store));

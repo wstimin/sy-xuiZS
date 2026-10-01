@@ -7,9 +7,11 @@ import {
   KeyRound,
   LockKeyhole,
   ShieldCheck,
+  Terminal,
   UserRound,
 } from 'lucide-react';
 import { api, CurrentUser } from '../commercial';
+import { ADMIN_THEME_STORAGE_KEY, ThemeToggle } from './ThemeToggle';
 
 interface AdminAuthViewProps {
   bootstrapRequired: boolean;
@@ -45,15 +47,18 @@ export const AdminAuthView: React.FC<AdminAuthViewProps> = ({ bootstrapRequired,
       <div className="admin-auth-grid" aria-hidden="true" />
       <header className="admin-auth-topbar">
         <a href="/" className="admin-auth-brand">
-          <span><ShieldCheck /></span>
-          <div><strong>NEXUS CONTROL</strong><small>OPERATIONS CONSOLE</small></div>
+          <span><Terminal /></span>
+          <div><strong><span>xui面板</span><em>一键搭建助手</em></strong><small>运营管理中心</small></div>
         </a>
-        <a href="/" className="admin-auth-back"><ArrowLeft /> 返回首页</a>
+        <div className="admin-auth-topbar-actions">
+          <ThemeToggle storageKey={ADMIN_THEME_STORAGE_KEY} />
+          <a href="/" className="admin-auth-back"><ArrowLeft /> 返回首页</a>
+        </div>
       </header>
 
       <main className="admin-auth-layout">
         <section className="admin-auth-intro">
-          <span className="admin-auth-kicker">SECURE OPERATIONS ACCESS</span>
+          <span className="admin-auth-kicker">安全运营管理</span>
           <h1>业务运营与交付管理中心</h1>
           <p>统一处理用户、订单、服务权益和交付任务。所有数据均来自当前业务数据库，关键操作会记录并立即影响用户可用权益。</p>
           <div className="admin-auth-capabilities">
@@ -66,7 +71,7 @@ export const AdminAuthView: React.FC<AdminAuthViewProps> = ({ bootstrapRequired,
           <div className="admin-auth-panel-head">
             <span><LockKeyhole /></span>
             <div>
-              <small>{bootstrapRequired ? 'INITIAL SETUP' : 'ADMIN SIGN IN'}</small>
+              <small>{bootstrapRequired ? '首次初始化' : '管理员安全登录'}</small>
               <h2 id="admin-auth-title">{bootstrapRequired ? '初始化管理员' : '管理员登录'}</h2>
             </div>
           </div>

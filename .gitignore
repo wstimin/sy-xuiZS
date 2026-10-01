@@ -7,9 +7,12 @@ coverage/
 *.log
 *.zip
 .npm-cache/
+.codex-baseline/
+.codex-runtime/
 .env*
 !.env.example
 data/
+.tmp/
 *.db
 *.db-shm
 *.db-wal

@@ -12,6 +12,7 @@ import {
   Terminal
 } from 'lucide-react';
 import { CurrentUser } from '../commercial';
+import { ThemeToggle, USER_THEME_STORAGE_KEY } from './ThemeToggle';
 
 interface HeaderProps {
   currentView: ViewMode;
@@ -75,6 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         <div className="app-header-tools" aria-label="辅助功能">
+          <ThemeToggle compact storageKey={USER_THEME_STORAGE_KEY} />
           {onOpenSetupGuide && (
             <button type="button" className="app-header-tool-button app-header-guide" onClick={onOpenSetupGuide} title="查看 xui 面板与节点使用搭建指南">
               <BookOpen /><span>使用说明</span>

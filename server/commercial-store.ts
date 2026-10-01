@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { SecretVault } from "./secret-vault.js";
+import { createPortableBackup, openPortableBackup } from "./portable-backup.js";
 import type { PaymentProvider } from "./payment-service.js";
+import type { ExternalRedeemConfig } from "./external-redeem-service.js";
 
 export type UserRole = "user" | "admin";
 export type Capability = "panel" | "node";
@@ -17,12 +19,13 @@ export interface SessionUser {
   emailVerified: boolean;
   role: UserRole;
   status: "active" | "disabled";
+  balanceCents: number;
 }
 
 export interface PaymentMethod {
   id: string;
   name: string;
-  type: "manual" | "alipay" | "wechat" | "epay" | "mgate" | "tokenpay" | "epusdt" | "paypal";
+  type: "alipay" | "wechat" | "epay" | "mgate" | "tokenpay" | "epusdt" | "paypal";
   enabled: boolean;
   instructions: string;
   paymentUrl: string;
@@ -67,6 +70,7 @@ const DATABASE_BACKUP_TABLES = [
   "payment_events",
   "entitlements",
   "redeem_codes",
+  "wallet_ledger",
   "deployments",
   "usage_ledger",
   "admin_audit_logs",
@@ -85,6 +89,7 @@ const DATABASE_DELETE_ORDER = [
   "payment_attempts",
   "usage_ledger",
   "deployments",
+  "wallet_ledger",
   "redeem_codes",
   "entitlements",
   "payment_events",
@@ -188,6 +193,17 @@ export interface ReservationResult {
   quotaMode: Exclude<QuotaMode, "none">;
 }
 
+export interface DeploymentHistoryItem {
+  id: string;
+  timestamp: string;
+  type: Capability;
+  title: string;
+  summary: string;
+  hasDetails: boolean;
+  panelData?: Record<string, unknown>;
+  nodeData?: Record<string, unknown>;
+}
+
 export interface EntitlementGrantInput {
   name: string;
   durationUnit: DurationUnit;
@@ -202,7 +218,9 @@ export interface EntitlementGrantInput {
 }
 
 export interface RedeemCodeCreateInput {
-  planId: string;
+  amountCents?: number;
+  /** @deprecated plan-bound cards are no longer supported. */
+  planId?: string;
   quantity: number;
   note?: string;
   expiresAt?: string | null;
@@ -212,8 +230,7 @@ export interface CreatedRedeemCode {
   id: string;
   code: string;
   codeMasked: string;
-  planId: string;
-  planName: string;
+  amountCents: number;
   status: "active";
   note: string;
   expiresAt: string | null;
@@ -222,14 +239,13 @@ export interface CreatedRedeemCode {
 export interface RedeemCodeRecord {
   id: string;
   codeMasked: string;
-  planId: string;
-  planName: string;
+  amountCents: number;
   status: "active" | "redeemed" | "disabled" | "expired";
   note: string;
   redeemedByUserId: string | null;
   redeemedByUsername: string | null;
   orderId: string | null;
-  entitlementId: string | null;
+  redemptionKind: "balance" | "purchase" | null;
   redeemedAt: string | null;
   expiresAt: string | null;
   createdAt: string;
@@ -239,6 +255,10 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function formatCents(value: number) {
+  return `¥${(Math.max(0, value) / 100).toFixed(2)}`;
 }
 
 function hashToken(value: string) {
@@ -275,30 +295,20 @@ function verifyPassword(password: string, encoded: string) {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-function addDuration(start: Date, unit: DurationUnit, value: number): string | null {
-  if (unit === "lifetime") return null;
-  const result = new Date(start);
-  if (unit === "days") result.setUTCDate(result.getUTCDate() + value);
-  if (unit === "months") result.setUTCMonth(result.getUTCMonth() + value);
-  if (unit === "quarters") result.setUTCMonth(result.getUTCMonth() + value * 3);
-  if (unit === "years") result.setUTCFullYear(result.getUTCFullYear() + value);
-  return result.toISOString();
-}
-
 function publicPlan(row: any) {
   return {
     id: row.id,
     name: row.name,
     description: row.description || "",
     priceCents: row.price_cents,
-    durationUnit: row.duration_unit,
-    durationValue: row.duration_value,
+    durationUnit: "lifetime" as DurationUnit,
+    durationValue: 0,
     panelMode: row.panel_mode,
     panelLimit: row.panel_limit,
     nodeMode: row.node_mode,
     nodeLimit: row.node_limit,
-    dailyPanelLimit: row.daily_panel_limit,
-    dailyNodeLimit: row.daily_node_limit,
+    dailyPanelLimit: 0,
+    dailyNodeLimit: 0,
     concurrencyLimit: row.concurrency_limit,
     enabled: Boolean(row.enabled),
     homepageVisible: Boolean(row.homepage_visible),
@@ -336,7 +346,7 @@ export class CommercialStore {
     return this.db.serialize();
   }
 
-  validateDatabaseBackup(data: Buffer) {
+  validateDatabaseBackup(data: Buffer, vault = this.vault) {
     if (!Buffer.isBuffer(data) || data.length < 100) throw new Error("请选择有效的 SQLite 数据库备份文件");
     if (data.length > 64 * 1024 * 1024) throw new Error("数据库备份文件不能超过 64MB");
     let source: Database.Database | null = null;
@@ -364,8 +374,14 @@ export class CommercialStore {
 
       for (const row of source.prepare("SELECT merchant_secret_encrypted, private_key_encrypted, api_v3_key_encrypted FROM payment_channels").all() as any[]) {
         for (const value of [row.merchant_secret_encrypted, row.private_key_encrypted, row.api_v3_key_encrypted]) {
-          if (value) this.vault.decrypt(String(value));
+          if (value) vault.decrypt(String(value));
         }
+      }
+
+      const smtpPassword = source.prepare("SELECT value FROM system_settings WHERE key = 'smtp_password_encrypted'").get() as { value?: string } | undefined;
+      if (smtpPassword?.value) vault.decrypt(String(smtpPassword.value));
+      for (const row of source.prepare("SELECT result_payload_encrypted FROM deployments WHERE result_payload_encrypted <> ''").all() as Array<{ result_payload_encrypted: string }>) {
+        vault.decrypt(String(row.result_payload_encrypted));
       }
 
       const counts = Object.fromEntries(DATABASE_BACKUP_TABLES.map(table => [
@@ -380,6 +396,71 @@ export class CommercialStore {
       throw error;
     } finally {
       source?.close();
+    }
+  }
+
+  createPortableBackup(password: string, appVersion: string) {
+    const backup = createPortableBackup(this.createDatabaseBackup(), this.vault.exportKey(), password, appVersion);
+    return {
+      ...backup,
+      validation: this.validateDatabaseBackup(this.createDatabaseBackup()),
+    };
+  }
+
+  validatePortableBackup(data: Buffer, password: string) {
+    const opened = openPortableBackup(data, password);
+    const sourceVault = new SecretVault(":memory:", opened.sourceVaultKey);
+    const validation = this.validateDatabaseBackup(opened.database, sourceVault);
+    return {
+      ...validation,
+      formatVersion: opened.header.version,
+      createdAt: opened.header.createdAt,
+      appVersion: opened.header.appVersion,
+      databaseSchemaVersion: opened.header.databaseSchemaVersion,
+      encrypted: true,
+    };
+  }
+
+  restorePortableBackup(data: Buffer, password: string, operatorUsername: string) {
+    const opened = openPortableBackup(data, password);
+    const sourceVault = new SecretVault(":memory:", opened.sourceVaultKey);
+    this.validateDatabaseBackup(opened.database, sourceVault);
+    const source = new Database(opened.database);
+    try {
+      const rewrap = (value: unknown) => value ? this.vault.encrypt(sourceVault.decrypt(String(value))) : "";
+      const transform = source.transaction(() => {
+        const updatePayment = source.prepare(`
+          UPDATE payment_channels
+          SET merchant_secret_encrypted = ?, private_key_encrypted = ?, api_v3_key_encrypted = ?
+          WHERE id = ?
+        `);
+        for (const row of source.prepare("SELECT id, merchant_secret_encrypted, private_key_encrypted, api_v3_key_encrypted FROM payment_channels").all() as any[]) {
+          updatePayment.run(rewrap(row.merchant_secret_encrypted), rewrap(row.private_key_encrypted), rewrap(row.api_v3_key_encrypted), row.id);
+        }
+
+        const smtpPassword = source.prepare("SELECT value FROM system_settings WHERE key = 'smtp_password_encrypted'").get() as { value?: string } | undefined;
+        if (smtpPassword?.value) source.prepare("UPDATE system_settings SET value = ? WHERE key = 'smtp_password_encrypted'").run(rewrap(smtpPassword.value));
+        const externalRedeemApiKey = source.prepare("SELECT value FROM system_settings WHERE key = 'external_redeem_api_key_encrypted'").get() as { value?: string } | undefined;
+        if (externalRedeemApiKey?.value) source.prepare("UPDATE system_settings SET value = ? WHERE key = 'external_redeem_api_key_encrypted'").run(rewrap(externalRedeemApiKey.value));
+
+        const updateDeployment = source.prepare("UPDATE deployments SET result_payload_encrypted = ? WHERE id = ?");
+        for (const row of source.prepare("SELECT id, result_payload_encrypted FROM deployments WHERE result_payload_encrypted <> ''").all() as any[]) {
+          updateDeployment.run(rewrap(row.result_payload_encrypted), row.id);
+        }
+      });
+      transform.immediate();
+      const rewrappedDatabase = source.serialize();
+      const result = this.restoreDatabaseBackup(rewrappedDatabase, operatorUsername);
+      return {
+        ...result,
+        portableBackup: {
+          formatVersion: opened.header.version,
+          createdAt: opened.header.createdAt,
+          appVersion: opened.header.appVersion,
+        },
+      };
+    } finally {
+      source.close();
     }
   }
 
@@ -429,6 +510,7 @@ export class CommercialStore {
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL CHECK (role IN ('user', 'admin')),
         status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+        balance_cents INTEGER NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         last_login_at TEXT
@@ -472,7 +554,7 @@ export class CommercialStore {
         status TEXT NOT NULL CHECK (status IN ('pending', 'paid', 'expired', 'cancelled', 'refunded')),
         amount_cents INTEGER NOT NULL,
         plan_snapshot TEXT NOT NULL,
-        payment_provider TEXT NOT NULL DEFAULT 'manual',
+        payment_provider TEXT NOT NULL DEFAULT '',
         payment_channel TEXT NOT NULL DEFAULT '',
         payment_trade_no TEXT UNIQUE,
         created_at TEXT NOT NULL,
@@ -520,19 +602,31 @@ export class CommercialStore {
         id TEXT PRIMARY KEY,
         code_hash TEXT NOT NULL UNIQUE,
         code_masked TEXT NOT NULL,
-        plan_id TEXT NOT NULL REFERENCES plans(id),
-        plan_snapshot TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
         status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'redeemed', 'disabled')),
         note TEXT NOT NULL DEFAULT '',
         redeemed_by_user_id TEXT REFERENCES users(id),
         order_id TEXT REFERENCES orders(id),
-        entitlement_id TEXT REFERENCES entitlements(id),
+        redemption_kind TEXT CHECK (redemption_kind IN ('balance', 'purchase')),
         redeemed_at TEXT,
         expires_at TEXT,
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_redeem_codes_status ON redeem_codes(status, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_redeem_codes_user ON redeem_codes(redeemed_by_user_id, redeemed_at DESC);
+
+      CREATE TABLE IF NOT EXISTS wallet_ledger (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        amount_cents INTEGER NOT NULL,
+        balance_after_cents INTEGER NOT NULL CHECK (balance_after_cents >= 0),
+        kind TEXT NOT NULL CHECK (kind IN ('redeem', 'purchase', 'refund', 'adjust')),
+        redeem_code_id TEXT REFERENCES redeem_codes(id),
+        order_id TEXT REFERENCES orders(id),
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_wallet_ledger_user ON wallet_ledger(user_id, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS deployments (
         id TEXT PRIMARY KEY,
@@ -544,6 +638,8 @@ export class CommercialStore {
         quota_mode TEXT NOT NULL CHECK (quota_mode IN ('limited', 'unlimited')),
         target_host_masked TEXT NOT NULL DEFAULT '',
         result_summary TEXT NOT NULL DEFAULT '',
+        result_payload_encrypted TEXT NOT NULL DEFAULT '',
+        history_hidden INTEGER NOT NULL DEFAULT 0,
         error_message TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         started_at TEXT,
@@ -667,6 +763,9 @@ export class CommercialStore {
     if (!userColumns.some(column => column.name === "email_verified")) {
       this.db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0");
     }
+    if (!userColumns.some(column => column.name === "balance_cents")) {
+      this.db.exec("ALTER TABLE users ADD COLUMN balance_cents INTEGER NOT NULL DEFAULT 0 CHECK (balance_cents >= 0)");
+    }
     const orderColumns = this.db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
     for (const [name, definition] of [
       ["expires_at", "TEXT"], ["cancelled_at", "TEXT"], ["refunded_at", "TEXT"],
@@ -680,11 +779,38 @@ export class CommercialStore {
       this.db.exec("ALTER TABLE payment_attempts ADD COLUMN provider_order_id TEXT");
     }
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_payment_attempts_provider_order ON payment_attempts(provider, provider_order_id)");
-    const redeemCodeColumns = this.db.prepare("PRAGMA table_info(redeem_codes)").all() as Array<{ name: string }>;
-    if (!redeemCodeColumns.some(column => column.name === "order_id")) {
-      this.db.exec("ALTER TABLE redeem_codes ADD COLUMN order_id TEXT REFERENCES orders(id)");
+    const deploymentColumns = this.db.prepare("PRAGMA table_info(deployments)").all() as Array<{ name: string }>;
+    if (!deploymentColumns.some(column => column.name === "result_payload_encrypted")) {
+      this.db.exec("ALTER TABLE deployments ADD COLUMN result_payload_encrypted TEXT NOT NULL DEFAULT ''");
     }
-    const migratedPlanDurationSchema = this.migratePlanDurationSchema();
+    if (!deploymentColumns.some(column => column.name === "history_hidden")) {
+      this.db.exec("ALTER TABLE deployments ADD COLUMN history_hidden INTEGER NOT NULL DEFAULT 0");
+    }
+    const redeemCodeColumns = this.db.prepare("PRAGMA table_info(redeem_codes)").all() as Array<{ name: string }>;
+    if (!redeemCodeColumns.some(column => column.name === "amount_cents")) {
+      // Card semantics changed from plan-bound vouchers to monetary vouchers.
+      // Old card rows are intentionally discarded; they are not compatible with the new model.
+      this.db.exec("DROP TABLE redeem_codes");
+      this.db.exec(`
+        CREATE TABLE redeem_codes (
+          id TEXT PRIMARY KEY,
+          code_hash TEXT NOT NULL UNIQUE,
+          code_masked TEXT NOT NULL,
+          amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'redeemed', 'disabled')),
+          note TEXT NOT NULL DEFAULT '',
+          redeemed_by_user_id TEXT REFERENCES users(id),
+          order_id TEXT REFERENCES orders(id),
+          redemption_kind TEXT CHECK (redemption_kind IN ('balance', 'purchase')),
+          redeemed_at TEXT,
+          expires_at TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_redeem_codes_status ON redeem_codes(status, created_at DESC);
+        CREATE INDEX idx_redeem_codes_user ON redeem_codes(redeemed_by_user_id, redeemed_at DESC);
+      `);
+    }
+    this.migratePlanDurationSchema();
     const planColumns = this.db.prepare("PRAGMA table_info(plans)").all() as Array<{ name: string }>;
     if (!planColumns.some(column => column.name === "homepage_visible")) {
       this.db.exec("ALTER TABLE plans ADD COLUMN homepage_visible INTEGER NOT NULL DEFAULT 1");
@@ -696,16 +822,8 @@ export class CommercialStore {
     settings.run("registration_enabled", "true", nowIso());
     settings.run("panel_deploy_enabled", "true", nowIso());
     settings.run("node_deploy_enabled", "true", nowIso());
-    settings.run("payment_instructions", "下单后请按照所选支付方式完成付款，并将订单号作为付款备注。", nowIso());
-    settings.run("payment_methods", JSON.stringify([{
-      id: "manual",
-      name: "人工收款",
-      type: "manual",
-      enabled: true,
-      instructions: "提交订单后，请联系管理员并提供订单号完成付款确认。",
-      paymentUrl: "",
-      sortOrder: 10,
-    }]), nowIso());
+    settings.run("payment_instructions", "请选择在线支付方式完成付款。", nowIso());
+    settings.run("payment_methods", "[]", nowIso());
     settings.run("email_enabled", "false", nowIso());
     settings.run("email_verification_required", "false", nowIso());
     settings.run("smtp_host", "", nowIso());
@@ -723,12 +841,25 @@ export class CommercialStore {
     settings.run("order_expiry_minutes", "30", nowIso());
     settings.run("admin_path", "admin", nowIso());
     settings.run("redeem_code_purchase_url", "", nowIso());
+    settings.run("external_redeem_enabled", "false", nowIso());
+    settings.run("external_redeem_provider", "generic_json", nowIso());
+    settings.run("external_redeem_name", "第三方卡密", nowIso());
+    settings.run("external_redeem_api_url", "", nowIso());
+    settings.run("external_redeem_app_key", "", nowIso());
+    settings.run("external_redeem_api_key_encrypted", "", nowIso());
+    settings.run("external_redeem_auth_mode", "bearer", nowIso());
+    settings.run("external_redeem_amount_unit", "cents", nowIso());
+    settings.run("external_redeem_timeout_seconds", "10", nowIso());
+    settings.run("external_redeem_allow_private_network", "false", nowIso());
 
     this.migratePaymentChannels();
 
-    const count = Number((this.db.prepare("SELECT COUNT(*) AS count FROM plans").get() as any).count);
-    if (count === 0) this.seedPlans();
-    else if (migratedPlanDurationSchema) this.ensureQuarterlyPlan();
+    // Daily quota limits are no longer part of the product model. Keep the
+    // legacy columns for database compatibility, but make all existing rows
+    // unlimited per day; only the total remaining quota is enforced.
+    this.db.exec("UPDATE plans SET daily_panel_limit = 0, daily_node_limit = 0");
+    this.db.exec("UPDATE entitlements SET daily_panel_limit = 0, daily_node_limit = 0");
+
   }
 
   private migratePlanDurationSchema() {
@@ -786,8 +917,7 @@ export class CommercialStore {
   private migratePaymentChannelSchema() {
     const columns = this.db.prepare("PRAGMA table_info(payment_channels)").all() as Array<{ name: string }>;
     const requiredColumns = ["currency", "callback_base_url", "app_id", "private_key_encrypted", "public_key", "certificate_serial", "api_v3_key_encrypted", "archived"];
-    const tableSql = String((this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'payment_channels'").get() as any)?.sql || "");
-    const requiresRebuild = requiredColumns.some(name => !columns.some(column => column.name === name)) || /provider\s+IN\s*\(\s*'manual'\s*,\s*'epay'/i.test(tableSql);
+    const requiresRebuild = requiredColumns.some(name => !columns.some(column => column.name === name));
     if (!requiresRebuild) {
       if (!columns.some(column => column.name === "enabled_channels")) {
         this.db.exec("ALTER TABLE payment_channels ADD COLUMN enabled_channels TEXT NOT NULL DEFAULT '[]'");
@@ -840,120 +970,13 @@ export class CommercialStore {
     if (count > 0) return;
     for (const method of this.getLegacyPaymentMethods(true)) {
       const timestamp = nowIso();
-      const provider = method.type === "epay" ? "epay" : "manual";
+      const provider = method.type === "epay" ? "epay" : method.type;
       this.db.prepare(`
         INSERT INTO payment_channels (id, name, provider, enabled, instructions, payment_url, channel, enabled_channels, sort_order, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(method.id, method.name, provider, method.enabled ? 1 : 0, method.instructions, method.paymentUrl,
         method.channel || "alipay", provider === "epay" ? JSON.stringify([method.channel || "alipay"]) : "[]", method.sortOrder, timestamp, timestamp);
     }
-  }
-
-  private seedPlans() {
-    const samples: PlanInput[] = [
-      {
-        name: "单次搭建",
-        description: "适合临时搭建，包含 1 次面板安装和 3 次节点创建。",
-        priceCents: 990,
-        durationUnit: "days",
-        durationValue: 7,
-        panelMode: "limited",
-        panelLimit: 1,
-        nodeMode: "limited",
-        nodeLimit: 3,
-        dailyPanelLimit: 1,
-        dailyNodeLimit: 3,
-        concurrencyLimit: 1,
-        enabled: true,
-        sortOrder: 10,
-      },
-      {
-        name: "月度会员",
-        description: "30 天有效，面板与节点次数可由管理员随时调整。",
-        priceCents: 2900,
-        durationUnit: "months",
-        durationValue: 1,
-        panelMode: "limited",
-        panelLimit: 5,
-        nodeMode: "limited",
-        nodeLimit: 30,
-        dailyPanelLimit: 3,
-        dailyNodeLimit: 15,
-        concurrencyLimit: 1,
-        enabled: true,
-        sortOrder: 20,
-      },
-      {
-        name: "季度会员",
-        description: "3 个月有效，适合中期使用，包含更多搭建与节点配置额度。",
-        priceCents: 7900,
-        durationUnit: "quarters",
-        durationValue: 1,
-        panelMode: "limited",
-        panelLimit: 12,
-        nodeMode: "limited",
-        nodeLimit: 90,
-        dailyPanelLimit: 4,
-        dailyNodeLimit: 20,
-        concurrencyLimit: 1,
-        enabled: true,
-        sortOrder: 25,
-      },
-      {
-        name: "年度会员",
-        description: "一年有效，适合长期使用。",
-        priceCents: 9900,
-        durationUnit: "years",
-        durationValue: 1,
-        panelMode: "limited",
-        panelLimit: 30,
-        nodeMode: "limited",
-        nodeLimit: 200,
-        dailyPanelLimit: 5,
-        dailyNodeLimit: 30,
-        concurrencyLimit: 1,
-        enabled: true,
-        sortOrder: 30,
-      },
-      {
-        name: "永久使用权",
-        description: "永久有效，具体面板和节点额度由管理员配置。",
-        priceCents: 29900,
-        durationUnit: "lifetime",
-        durationValue: 0,
-        panelMode: "limited",
-        panelLimit: 100,
-        nodeMode: "limited",
-        nodeLimit: 1000,
-        dailyPanelLimit: 5,
-        dailyNodeLimit: 30,
-        concurrencyLimit: 1,
-        enabled: true,
-        sortOrder: 40,
-      },
-    ];
-    for (const plan of samples) this.createPlan(plan);
-  }
-
-  private ensureQuarterlyPlan() {
-    const exists = this.db.prepare("SELECT 1 FROM plans WHERE duration_unit = 'quarters' LIMIT 1").get();
-    if (exists) return;
-    this.createPlan({
-      name: "季度会员",
-      description: "3 个月有效，适合中期使用，包含更多搭建与节点配置额度。",
-      priceCents: 7900,
-      durationUnit: "quarters",
-      durationValue: 1,
-      panelMode: "limited",
-      panelLimit: 12,
-      nodeMode: "limited",
-      nodeLimit: 90,
-      dailyPanelLimit: 4,
-      dailyNodeLimit: 20,
-      concurrencyLimit: 1,
-      enabled: true,
-      sortOrder: 25,
-    });
   }
 
   hasUsers() {
@@ -977,6 +1000,48 @@ export class CommercialStore {
       INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
     `).run(key, value, nowIso());
+  }
+
+  getExternalRedeemSettings(includeSecret = false): ExternalRedeemConfig {
+    const encryptedApiKey = this.getSetting("external_redeem_api_key_encrypted", "");
+    const authMode = this.getSetting("external_redeem_auth_mode", "bearer");
+    const amountUnit = this.getSetting("external_redeem_amount_unit", "cents");
+    return {
+      provider: this.getSetting("external_redeem_provider", "generic_json") === "shiyeka" ? "shiyeka" : "generic_json",
+      enabled: this.getSetting("external_redeem_enabled", "false") === "true",
+      name: this.getSetting("external_redeem_name", "第三方卡密"),
+      apiUrl: this.getSetting("external_redeem_api_url", ""),
+      appKey: this.getSetting("external_redeem_app_key", ""),
+      apiKey: includeSecret && encryptedApiKey ? this.vault.decrypt(encryptedApiKey) : undefined,
+      apiKeyConfigured: Boolean(encryptedApiKey),
+      authMode: authMode === "x-api-key" || authMode === "none" ? authMode : "bearer",
+      amountUnit: amountUnit === "yuan" ? "yuan" : "cents",
+      timeoutSeconds: Math.min(30, Math.max(3, Number(this.getSetting("external_redeem_timeout_seconds", "10")) || 10)),
+      allowPrivateNetwork: this.getSetting("external_redeem_allow_private_network", "false") === "true",
+    };
+  }
+
+  setExternalRedeemSettings(input: Partial<ExternalRedeemConfig>) {
+    const current = this.getExternalRedeemSettings(true);
+    const authMode = input.authMode === "x-api-key" || input.authMode === "none" ? input.authMode : "bearer";
+    const amountUnit = input.amountUnit === "yuan" ? "yuan" : "cents";
+    const timeoutSeconds = Math.min(30, Math.max(3, Math.trunc(Number(input.timeoutSeconds) || 10)));
+    const apiKey = String(input.apiKey || "").trim();
+    const providerChanged = Boolean(input.provider && input.provider !== current.provider);
+    const nextApiKey = apiKey ? this.vault.encrypt(apiKey) : providerChanged ? "" : this.getSetting("external_redeem_api_key_encrypted", "");
+    this.db.transaction(() => {
+      this.setSetting("external_redeem_enabled", String(input.enabled === true));
+      this.setSetting("external_redeem_provider", input.provider === "shiyeka" ? "shiyeka" : "generic_json");
+      this.setSetting("external_redeem_name", String(input.name || current.name || "第三方卡密").trim().slice(0, 40));
+      this.setSetting("external_redeem_api_url", String(input.apiUrl || "").trim().slice(0, 1000));
+      this.setSetting("external_redeem_app_key", String(input.appKey || "").trim().slice(0, 200));
+      this.setSetting("external_redeem_api_key_encrypted", authMode === "none" ? "" : nextApiKey);
+      this.setSetting("external_redeem_auth_mode", authMode);
+      this.setSetting("external_redeem_amount_unit", amountUnit);
+      this.setSetting("external_redeem_timeout_seconds", String(timeoutSeconds));
+      this.setSetting("external_redeem_allow_private_network", String(input.allowPrivateNetwork === true));
+    })();
+    return this.getExternalRedeemSettings();
   }
 
   getAdminPath() {
@@ -1014,7 +1079,8 @@ export class CommercialStore {
     }
     const methods = Array.isArray(value) ? value.map((item: any, index): PaymentMethod | null => {
       if (!item || typeof item !== "object") return null;
-      const type = ["manual", "alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt", "paypal"].includes(item.type) ? item.type : "manual";
+      const type = ["alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt", "paypal"].includes(item.type) ? item.type : null;
+      if (!type) return null;
       return {
         id: String(item.id || "").trim(),
         name: String(item.name || "").trim(),
@@ -1033,7 +1099,10 @@ export class CommercialStore {
       includeDisabled ? "" : "enabled = 1",
       includeArchived ? "" : "archived = 0",
     ].filter(Boolean);
-    const rows = this.db.prepare(`SELECT * FROM payment_channels ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""} ORDER BY sort_order, created_at`).all() as any[];
+    const supportedProviders = ["epay", "mgate", "tokenpay", "epusdt", "paypal", "alipay_official", "wechat_official"];
+    const providerFilter = `provider IN (${supportedProviders.map(() => "?").join(",")})`;
+    const where = [providerFilter, ...filters].filter(Boolean).join(" AND ");
+    const rows = this.db.prepare(`SELECT * FROM payment_channels WHERE ${where} ORDER BY sort_order, created_at`).all(...supportedProviders) as any[];
     const methods = rows.map(row => ({
       id: row.id,
       name: row.name,
@@ -1084,11 +1153,11 @@ export class CommercialStore {
     const methods = value.map((item: any, index): PaymentMethod => {
       const id = String(item?.id || "").trim().toLowerCase();
       const name = String(item?.name || "").trim();
-      const type = String(item?.type || "manual") as PaymentMethod["type"];
+      const type = String(item?.type || "") as PaymentMethod["type"];
       if (!/^[a-z0-9_-]{2,32}$/.test(id)) throw new Error("支付方式标识必须为 2 到 32 位小写字母、数字、下划线或短横线");
       if (ids.has(id)) throw new Error(`支付方式标识 ${id} 重复`);
       if (!name || name.length > 40) throw new Error("支付方式名称必须为 1 到 40 位");
-      if (!["manual", "alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt", "paypal"].includes(type)) throw new Error("支付方式类型无效");
+      if (!["alipay", "wechat", "epay", "mgate", "tokenpay", "epusdt", "paypal"].includes(type)) throw new Error("支付方式类型无效");
       ids.add(id);
       return {
         id,
@@ -1106,13 +1175,15 @@ export class CommercialStore {
       const timestamp = nowIso();
       for (const method of methods) {
         const raw = value.find((item: any) => String(item?.id || "").trim().toLowerCase() === method.id) as any;
-        const supportedProviders: PaymentProvider[] = ["manual", "epay", "mgate", "tokenpay", "epusdt", "paypal", "alipay_official", "wechat_official"];
+        const supportedProviders: PaymentProvider[] = ["epay", "mgate", "tokenpay", "epusdt", "paypal", "alipay_official", "wechat_official"];
         const requestedProvider = String(raw?.provider || "");
         const provider = supportedProviders.includes(requestedProvider as PaymentProvider)
           ? requestedProvider as PaymentProvider
           : method.type === "epay" ? "epay"
             : method.type === "mgate" || method.type === "tokenpay" || method.type === "epusdt" || method.type === "paypal" ? method.type
-              : "manual";
+              : method.type === "alipay" ? "alipay_official"
+                : method.type === "wechat" ? "wechat_official"
+                  : method.type;
         const gatewayUrl = String(raw?.gatewayUrl || "").trim().slice(0, 1000);
         const merchantId = String(raw?.merchantId || "").trim().slice(0, 100);
         const enabledChannels = provider === "epay" ? normalizedEpayChannels(raw?.enabledChannels, raw?.channel) : [];
@@ -1150,7 +1221,7 @@ export class CommercialStore {
           const callback = new URL(callbackBaseUrl);
           if (!['http:', 'https:'].includes(callback.protocol)) throw new Error(`支付通道 ${method.name} 的回调域名必须是 HTTP 或 HTTPS 地址`);
         }
-        if (provider !== "manual" && method.enabled && !gatewayUrl && !["alipay_official", "wechat_official", "paypal"].includes(provider)) {
+        if (method.enabled && !gatewayUrl && !["alipay_official", "wechat_official", "paypal"].includes(provider)) {
           throw new Error(`支付通道 ${method.name} 启用前必须填写网关或 API 地址`);
         }
         if (["epay", "mgate"].includes(provider) && method.enabled && (!merchantId || !encryptedSecret)) {
@@ -1333,16 +1404,16 @@ export class CommercialStore {
   getSessionUser(token: string): SessionUser | null {
     if (!token) return null;
     const row = this.db.prepare(`
-      SELECT u.id, u.username, u.email, u.email_verified AS emailVerified, u.role, u.status
+      SELECT u.id, u.username, u.email, u.email_verified AS emailVerified, u.role, u.status, u.balance_cents AS balanceCents
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ? AND s.expires_at > ?
     `).get(hashToken(token), nowIso()) as any;
-    return row ? { ...row, emailVerified: Boolean(row.emailVerified) } : null;
+    return row ? { ...row, emailVerified: Boolean(row.emailVerified), balanceCents: Number(row.balanceCents) || 0 } : null;
   }
 
   getUserById(id: string): SessionUser | null {
-    const row = this.db.prepare("SELECT id, username, email, email_verified AS emailVerified, role, status FROM users WHERE id = ?").get(id) as any;
-    return row ? { ...row, emailVerified: Boolean(row.emailVerified) } : null;
+    const row = this.db.prepare("SELECT id, username, email, email_verified AS emailVerified, role, status, balance_cents AS balanceCents FROM users WHERE id = ?").get(id) as any;
+    return row ? { ...row, emailVerified: Boolean(row.emailVerified), balanceCents: Number(row.balanceCents) || 0 } : null;
   }
 
   listUsers() {
@@ -1433,13 +1504,13 @@ export class CommercialStore {
       this.db.prepare("DELETE FROM payment_attempts WHERE order_id IN (SELECT id FROM orders WHERE user_id = ?)").run(id);
       this.db.prepare("DELETE FROM payment_events WHERE order_id IN (SELECT id FROM orders WHERE user_id = ?)").run(id);
       this.db.prepare("DELETE FROM usage_ledger WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM wallet_ledger WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM deployments WHERE user_id = ?").run(id);
       this.db.prepare(`
         DELETE FROM redeem_codes
         WHERE redeemed_by_user_id = ?
           OR order_id IN (SELECT id FROM orders WHERE user_id = ?)
-          OR entitlement_id IN (SELECT id FROM entitlements WHERE user_id = ?)
-      `).run(id, id, id);
+      `).run(id, id);
       this.db.prepare("DELETE FROM entitlements WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM orders WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM sessions WHERE user_id = ?").run(id);
@@ -1527,9 +1598,9 @@ export class CommercialStore {
         daily_node_limit, concurrency_limit, enabled, homepage_visible, sort_order, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, input.name.trim(), input.description?.trim() || "", input.priceCents, input.durationUnit,
-      input.durationValue, input.panelMode, input.panelLimit, input.nodeMode, input.nodeLimit,
-      input.dailyPanelLimit, input.dailyNodeLimit, input.concurrencyLimit, input.enabled ? 1 : 0,
+      id, input.name.trim(), input.description?.trim() || "", input.priceCents, "lifetime",
+      0, input.panelMode, input.panelLimit, input.nodeMode, input.nodeLimit,
+      0, 0, input.concurrencyLimit, input.enabled ? 1 : 0,
       input.homepageVisible !== false ? 1 : 0, input.sortOrder, timestamp, timestamp,
     );
     return this.getPlan(id, true)!;
@@ -1543,9 +1614,9 @@ export class CommercialStore {
         daily_node_limit = ?, concurrency_limit = ?, enabled = ?, homepage_visible = ?, sort_order = ?, updated_at = ?
       WHERE id = ?
     `).run(
-      input.name.trim(), input.description?.trim() || "", input.priceCents, input.durationUnit,
-      input.durationValue, input.panelMode, input.panelLimit, input.nodeMode, input.nodeLimit,
-      input.dailyPanelLimit, input.dailyNodeLimit, input.concurrencyLimit, input.enabled ? 1 : 0,
+      input.name.trim(), input.description?.trim() || "", input.priceCents, "lifetime",
+      0, input.panelMode, input.panelLimit, input.nodeMode, input.nodeLimit,
+      0, 0, input.concurrencyLimit, input.enabled ? 1 : 0,
       input.homepageVisible !== false ? 1 : 0, input.sortOrder, nowIso(), id,
     );
     return this.getPlan(id, true);
@@ -1555,9 +1626,9 @@ export class CommercialStore {
     if (!input.name?.trim()) throw new Error("套餐名称不能为空");
     if (!Number.isInteger(input.priceCents) || input.priceCents < 0) throw new Error("套餐价格必须使用非负整数分");
     if (!Number.isInteger(input.durationValue) || input.durationValue < 0) throw new Error("有效期数值无效");
+    if (input.panelMode === "unlimited" || input.nodeMode === "unlimited") throw new Error("套餐权益必须按次数配置");
     for (const [label, value] of [
-      ["面板次数", input.panelLimit], ["节点次数", input.nodeLimit], ["面板每日上限", input.dailyPanelLimit],
-      ["节点每日上限", input.dailyNodeLimit], ["并发上限", input.concurrencyLimit],
+      ["面板次数", input.panelLimit], ["节点次数", input.nodeLimit], ["并发上限", input.concurrencyLimit],
     ] as const) {
       if (!Number.isInteger(value) || value < 0) throw new Error(`${label}必须为非负整数`);
     }
@@ -1566,7 +1637,7 @@ export class CommercialStore {
     if (input.nodeMode === "limited" && input.nodeLimit < 1) throw new Error("限制节点次数时必须至少为 1 次");
   }
 
-  createOrder(userId: string, planId: string, paymentProvider = "manual") {
+  createOrder(userId: string, planId: string, paymentProvider = "") {
     const plan = this.getPlan(planId);
     if (!plan) throw new Error("套餐不存在或已经下架");
     const publicMethod = this.getPaymentMethods().find(method => method.id === paymentProvider);
@@ -1586,6 +1657,30 @@ export class CommercialStore {
       INSERT INTO orders (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, payment_provider, payment_channel, created_at, expires_at, updated_at)
       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
     `).run(id, orderNo, userId, planId, plan.priceCents, JSON.stringify(plan), storedProvider, paymentChannel, timestamp, expiresAt, timestamp);
+    return this.getOrder(id)!;
+  }
+
+  createWalletTopupOrder(userId: string, amountCents: number, paymentProvider = "") {
+    const amount = Math.trunc(Number(amountCents));
+    if (!Number.isInteger(amount) || amount < 1 || amount > 1_000_000_00) throw new Error("充值金额必须在 0.01 元到 1000000 元之间");
+    const publicMethod = this.getPaymentMethods().find(method => method.id === paymentProvider);
+    const legacyMethod = this.getPaymentMethods(true).find(method => method.id === paymentProvider && method.enabled);
+    const paymentMethod = publicMethod || legacyMethod;
+    if (!paymentMethod) throw new Error("所选支付方式不存在或已停用");
+    const storedProvider = paymentMethod.baseMethodId || paymentMethod.id;
+    const paymentChannel = paymentMethod.provider === "epay"
+      ? paymentMethod.channel || paymentMethod.enabledChannels?.[0] || "alipay"
+      : "";
+    const id = randomUUID();
+    const timestamp = nowIso();
+    const orderNo = `XUI${Date.now()}${randomBytes(4).toString("hex").toUpperCase()}`;
+    const expiryMinutes = Math.max(5, Number(this.getSetting("order_expiry_minutes", "30")) || 30);
+    const expiresAt = new Date(Date.now() + expiryMinutes * 60_000).toISOString();
+    const snapshot = { kind: "wallet_topup", name: "账户余额充值", description: "在线支付充值", priceCents: amount };
+    this.db.prepare(`
+      INSERT INTO orders (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, payment_provider, payment_channel, created_at, expires_at, updated_at)
+      VALUES (?, ?, ?, NULL, 'pending', ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, orderNo, userId, amount, JSON.stringify(snapshot), storedProvider, paymentChannel, timestamp, expiresAt, timestamp);
     return this.getOrder(id)!;
   }
 
@@ -1647,7 +1742,7 @@ export class CommercialStore {
     let processingStatus = "pending_payment";
     let processingLabel = "等待用户付款";
     let severity: OrderProcessingSeverity = "info";
-    let recommendedAction = "等待付款，或在核实线下收款后人工确认。";
+    let recommendedAction = "等待用户通过在线支付完成付款。";
 
     if (order.status === "paid" && !entitlementCount) {
       processingStatus = "paid_missing_entitlement";
@@ -1733,7 +1828,7 @@ export class CommercialStore {
       FROM entitlements WHERE source_order_id = ? ORDER BY created_at DESC
     `).all(orderId).map((row: any) => ({ ...row, lifetime: Boolean(row.lifetime) }));
     const redeemCode = this.db.prepare(`
-      SELECT id, code_masked AS codeMasked, note, redeemed_at AS redeemedAt
+      SELECT id, code_masked AS codeMasked, amount_cents AS amountCents, redemption_kind AS redemptionKind, note, redeemed_at AS redeemedAt
       FROM redeem_codes WHERE order_id = ? LIMIT 1
     `).get(orderId) as any;
 
@@ -1825,13 +1920,14 @@ export class CommercialStore {
       const existing = this.db.prepare("SELECT id FROM entitlements WHERE source_order_id = ? LIMIT 1").get(orderId) as any;
       if (existing) throw new Error("该订单已经存在关联权益，不能重复补发");
       const plan = JSON.parse(order.plan_snapshot || "{}");
+      if (plan.kind === "wallet_topup") throw new Error("余额充值订单无需补发套餐权益");
       if (!plan.name) throw new Error("订单套餐快照无效，无法补发权益");
       const entitlementId = this.grantPlanEntitlement(order.user_id, plan, order.id, `订单 ${order.order_no} 异常补发`);
       return { entitlementId, detail: this.getOrderDetail(orderId) };
     })();
   }
 
-  markOrderPaid(orderId: string, provider = "manual", tradeNo = `manual-${randomUUID()}`, allowVerifiedLatePayment = false) {
+  markOrderPaid(orderId: string, provider = "", tradeNo = `payment-${randomUUID()}`, allowVerifiedLatePayment = false) {
     return this.db.transaction(() => {
       const order = this.db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as any;
       if (!order) throw new Error("订单不存在");
@@ -1842,8 +1938,8 @@ export class CommercialStore {
         return this.getOrder(orderId);
       }
       const lateStatus = order.status === "expired" || order.status === "cancelled";
-      if (order.status !== "pending" && !(allowVerifiedLatePayment && lateStatus && order.payment_provider === provider && provider !== "manual")) {
-        throw new Error("只有待支付订单可以确认收款");
+      if (order.status !== "pending" && !(allowVerifiedLatePayment && lateStatus && order.payment_provider === provider)) {
+        throw new Error("只有待支付订单可以完成支付");
       }
       if (!allowVerifiedLatePayment && order.expires_at && order.expires_at <= nowIso()) {
         this.db.prepare("UPDATE orders SET status = 'expired', updated_at = ? WHERE id = ?").run(nowIso(), orderId);
@@ -1864,7 +1960,7 @@ export class CommercialStore {
     if (!order || (userId && order.userId !== userId)) throw new Error("订单不存在");
     if (order.status !== "pending") throw new Error("只有待支付订单可以取消");
     const openAttempt = this.db.prepare("SELECT 1 FROM payment_attempts WHERE order_id = ? AND status IN ('created', 'pending') LIMIT 1").get(orderId);
-    if (openAttempt && order.paymentProvider !== "manual") throw new Error("该订单已有进行中的在线支付，请等待支付结果或订单自动过期");
+    if (openAttempt) throw new Error("该订单已有进行中的在线支付，请等待支付结果或订单自动过期");
     this.db.prepare("UPDATE orders SET status = 'cancelled', cancelled_at = ?, cancel_reason = ?, updated_at = ? WHERE id = ?")
       .run(nowIso(), reason.slice(0, 500), nowIso(), orderId);
     return this.getOrder(orderId);
@@ -1879,7 +1975,7 @@ export class CommercialStore {
       if (!order) throw new Error("订单不存在");
       if (order.status === "refunded") return order;
       if (order.status !== "paid") throw new Error("只有已付款订单可以退款");
-      if (order.paymentProvider === "redeem_code") throw new Error("卡密兑换订单不支持外部退款");
+      if (["redeem_code", "external_redeem", "balance"].includes(order.paymentProvider)) throw new Error("余额或卡密购买订单不支持外部退款");
       const activeDeployment = this.db.prepare(`
         SELECT d.id FROM deployments d
         JOIN entitlements e ON e.id = d.entitlement_id
@@ -1979,12 +2075,21 @@ export class CommercialStore {
 
   private grantOrderEntitlement(order: any) {
     const plan = JSON.parse(order.plan_snapshot);
+    if (plan.kind === "wallet_topup") {
+      const amountCents = Number(order.amount_cents) || 0;
+      const user = this.db.prepare("SELECT balance_cents AS balanceCents FROM users WHERE id = ?").get(order.user_id) as any;
+      if (!user || amountCents < 1) throw new Error("余额充值订单数据无效");
+      const balanceCents = Number(user.balanceCents) || 0;
+      const creditedBalance = balanceCents + amountCents;
+      this.db.prepare("UPDATE users SET balance_cents = ?, updated_at = ? WHERE id = ?").run(creditedBalance, nowIso(), order.user_id);
+      this.addWalletLedger(order.user_id, amountCents, creditedBalance, "adjust", null, order.id, `在线充值 ${order.order_no}`);
+      return;
+    }
     this.grantPlanEntitlement(order.user_id, plan, order.id, `订单 ${order.order_no} 发放`);
   }
 
   private grantPlanEntitlement(userId: string, plan: any, sourceOrderId: string | null, ledgerNote: string) {
     const startedAt = new Date();
-    const expiresAt = addDuration(startedAt, plan.durationUnit, plan.durationValue);
     const id = randomUUID();
     this.db.prepare(`
       INSERT INTO entitlements (
@@ -1993,11 +2098,11 @@ export class CommercialStore {
         daily_panel_limit, daily_node_limit, concurrency_limit, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, userId, sourceOrderId, plan.name, startedAt.toISOString(), expiresAt,
-      plan.durationUnit === "lifetime" ? 1 : 0,
+      id, userId, sourceOrderId, plan.name, startedAt.toISOString(), null,
+      1,
       plan.panelMode, plan.panelMode === "limited" ? plan.panelLimit : 0, plan.panelMode === "limited" ? plan.panelLimit : 0,
       plan.nodeMode, plan.nodeMode === "limited" ? plan.nodeLimit : 0, plan.nodeMode === "limited" ? plan.nodeLimit : 0,
-      plan.dailyPanelLimit, plan.dailyNodeLimit, plan.concurrencyLimit, nowIso(),
+      0, 0, plan.concurrencyLimit, nowIso(),
     );
     for (const capability of ["panel", "node"] as Capability[]) {
       const mode = plan[`${capability}Mode`];
@@ -2008,18 +2113,17 @@ export class CommercialStore {
   }
 
   createRedeemCodes(input: RedeemCodeCreateInput): CreatedRedeemCode[] {
-    const plan = this.getPlan(String(input.planId || ""));
-    if (!plan) throw new Error("套餐不存在或已经下架");
+    const amountCents = Number(input.amountCents) || 0;
+    if (!Number.isInteger(amountCents) || amountCents < 1) throw new Error("卡密金额必须为大于 0 的整数分");
     if (!Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 100) throw new Error("单次生成数量必须为 1 到 100");
     const note = String(input.note || "").trim().slice(0, 300);
     const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
     if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) throw new Error("卡密有效期必须晚于当前时间");
-    const planSnapshot = JSON.stringify(plan);
     return this.db.transaction(() => {
       const created: CreatedRedeemCode[] = [];
       const insert = this.db.prepare(`INSERT INTO redeem_codes
-        (id, code_hash, code_masked, plan_id, plan_snapshot, status, note, expires_at, created_at)
-        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)`);
+        (id, code_hash, code_masked, amount_cents, status, note, expires_at, created_at)
+        VALUES (?, ?, ?, ?, 'active', ?, ?, ?)`);
       for (let index = 0; index < input.quantity; index += 1) {
         let code = "";
         let id = "";
@@ -2027,13 +2131,13 @@ export class CommercialStore {
           code = createRedeemCodeValue();
           id = randomUUID();
           try {
-            insert.run(id, hashToken(code), maskRedeemCode(code), plan.id, planSnapshot, note, expiresAt?.toISOString() || null, nowIso());
+            insert.run(id, hashToken(code), maskRedeemCode(code), amountCents, note, expiresAt?.toISOString() || null, nowIso());
             break;
           } catch (error: any) {
             if (attempt === 4 || !/UNIQUE|code_hash/i.test(String(error?.message))) throw error;
           }
         }
-        created.push({ id, code, codeMasked: maskRedeemCode(code), planId: plan.id, planName: plan.name, status: "active", note, expiresAt: expiresAt?.toISOString() || null });
+        created.push({ id, code, codeMasked: maskRedeemCode(code), amountCents, status: "active", note, expiresAt: expiresAt?.toISOString() || null });
       }
       return created;
     })();
@@ -2041,11 +2145,10 @@ export class CommercialStore {
 
   listRedeemCodes(): RedeemCodeRecord[] {
     return this.db.prepare(`
-      SELECT rc.id, rc.code_masked AS codeMasked, rc.plan_id AS planId,
-        json_extract(rc.plan_snapshot, '$.name') AS planName,
+      SELECT rc.id, rc.code_masked AS codeMasked, rc.amount_cents AS amountCents,
         CASE WHEN rc.status = 'active' AND rc.expires_at IS NOT NULL AND rc.expires_at <= ? THEN 'expired' ELSE rc.status END AS status,
         rc.note, rc.redeemed_by_user_id AS redeemedByUserId, u.username AS redeemedByUsername,
-        rc.order_id AS orderId, rc.entitlement_id AS entitlementId, rc.redeemed_at AS redeemedAt,
+        rc.order_id AS orderId, rc.redemption_kind AS redemptionKind, rc.redeemed_at AS redeemedAt,
         rc.expires_at AS expiresAt, rc.created_at AS createdAt
       FROM redeem_codes rc
       LEFT JOIN users u ON u.id = rc.redeemed_by_user_id
@@ -2060,34 +2163,131 @@ export class CommercialStore {
     this.db.prepare("UPDATE redeem_codes SET status = ? WHERE id = ?").run(status, id);
   }
 
+  hasLocalRedeemCode(value: string) {
+    const code = normalizeRedeemCode(value);
+    return Boolean(code && this.db.prepare("SELECT 1 FROM redeem_codes WHERE code_hash = ?").get(hashToken(code)));
+  }
+
   redeemCode(userId: string, value: string, expectedPlanId = "") {
     const code = normalizeRedeemCode(value);
     if (!/^XUI-[A-Z2-9]{4}(?:-[A-Z2-9]{4}){3}$/.test(code)) throw new Error("卡密格式不正确");
     return this.db.transaction(() => {
       const row = this.db.prepare("SELECT * FROM redeem_codes WHERE code_hash = ?").get(hashToken(code)) as any;
       if (!row) throw new Error("卡密不存在");
-      if (row.status === "redeemed") throw new Error("卡密已经兑换");
-      if (row.status === "disabled") throw new Error("卡密已经停用");
-      if (row.expires_at && row.expires_at <= nowIso()) throw new Error("卡密已经过期");
-      if (expectedPlanId && row.plan_id !== expectedPlanId) throw new Error("卡密不适用于当前选择的套餐");
+      return this.redeemStoredCode(userId, row, expectedPlanId, false, "redeem_code", `redeem-${row.id}`, row.code_masked);
+    })();
+  }
+
+  redeemExternalCode(userId: string, value: string, expectedPlanId: string, input: { amountCents: number; providerName: string; tradeNo: string }) {
+    const code = String(value || "").trim();
+    if (code.length < 4 || code.length > 200) throw new Error("卡密长度必须为 4 到 200 个字符");
+    const amountCents = Math.round(Number(input.amountCents));
+    if (!Number.isSafeInteger(amountCents) || amountCents < 1) throw new Error("第三方卡密金额无效");
+    const providerName = String(input.providerName || "第三方卡密").trim().slice(0, 40) || "第三方卡密";
+    const tradeNo = String(input.tradeNo || "").trim().slice(0, 200);
+    if (!tradeNo) throw new Error("第三方卡密交易号无效");
+    return this.db.transaction(() => {
+      const id = randomUUID();
+      const codeHash = hashToken(`external:${code}`);
+      const codeMasked = maskRedeemCode(code);
+      const note = `${providerName} · 交易号 ${tradeNo}`.slice(0, 300);
+      const inserted = this.db.prepare(`INSERT OR IGNORE INTO redeem_codes
+        (id, code_hash, code_masked, amount_cents, status, note, expires_at, created_at)
+        VALUES (?, ?, ?, ?, 'active', ?, NULL, ?)`)
+        .run(id, codeHash, codeMasked, amountCents, note, nowIso());
+      if (!inserted.changes) throw new Error("该第三方卡密已经在本系统入账，请勿重复兑换");
+      const row = this.db.prepare("SELECT * FROM redeem_codes WHERE id = ?").get(id) as any;
+      return this.redeemStoredCode(userId, row, expectedPlanId, true, "external_redeem", `external-${tradeNo}`, providerName);
+    })();
+  }
+
+  private redeemStoredCode(
+    userId: string,
+    row: any,
+    expectedPlanId: string,
+    allowBalanceFallback: boolean,
+    paymentProvider: string,
+    tradeNo: string,
+    paymentChannel: string,
+  ) {
+    if (row.status === "redeemed") throw new Error("卡密已经兑换");
+    if (row.status === "disabled") throw new Error("卡密已经停用");
+    if (row.expires_at && row.expires_at <= nowIso()) throw new Error("卡密已经过期");
+    const amountCents = Number(row.amount_cents) || 0;
+    if (amountCents < 1) throw new Error("卡密金额无效");
+    let selectedPlan = expectedPlanId ? this.getPlan(expectedPlanId) : null;
+    if (expectedPlanId && !selectedPlan) throw new Error("套餐不存在或已经下架");
+    const requestedPlan = selectedPlan;
+    const user = this.db.prepare("SELECT balance_cents AS balanceCents FROM users WHERE id = ?").get(userId) as any;
+    if (!user) throw new Error("用户不存在");
+    const currentBalance = Number(user.balanceCents) || 0;
+    if (selectedPlan && currentBalance + amountCents < selectedPlan.priceCents) {
+      if (!allowBalanceFallback) throw new Error(`卡密金额与账户余额合计不足，还差 ${formatCents(selectedPlan.priceCents - currentBalance - amountCents)}`);
+      selectedPlan = null;
+    }
+    const timestamp = nowIso();
+    const updated = this.db.prepare(`UPDATE redeem_codes SET status = 'redeemed', redeemed_by_user_id = ?, redeemed_at = ?
+      WHERE id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?)`)
+      .run(userId, timestamp, row.id, timestamp);
+    if (!updated.changes) throw new Error("卡密已经失效");
+    const creditedBalance = currentBalance + amountCents;
+    if (!selectedPlan) {
+      this.db.prepare("UPDATE users SET balance_cents = ?, updated_at = ? WHERE id = ?").run(creditedBalance, timestamp, userId);
+      this.addWalletLedger(userId, amountCents, creditedBalance, "redeem", row.id, null, `卡密 ${row.code_masked} 充值`);
+      this.db.prepare("UPDATE redeem_codes SET redemption_kind = 'balance' WHERE id = ?").run(row.id);
+      return {
+        codeMasked: row.code_masked,
+        amountCents,
+        balanceCents: creditedBalance,
+        redemptionKind: "balance" as const,
+        purchasePending: Boolean(requestedPlan),
+        requestedPlanName: requestedPlan?.name || "",
+        shortfallCents: requestedPlan ? Math.max(0, requestedPlan.priceCents - creditedBalance) : 0,
+      };
+    }
+    const remainingBalance = creditedBalance - selectedPlan.priceCents;
+    this.db.prepare("UPDATE users SET balance_cents = ?, updated_at = ? WHERE id = ?").run(remainingBalance, timestamp, userId);
+    this.addWalletLedger(userId, amountCents, creditedBalance, "redeem", row.id, null, `卡密 ${row.code_masked} 充值`);
+    const { order, orderId, orderNo, entitlementId } = this.createPaidPlanOrder(userId, selectedPlan, paymentProvider, tradeNo, timestamp, paymentChannel);
+    this.addWalletLedger(userId, -selectedPlan.priceCents, remainingBalance, "purchase", row.id, orderId, `购买 ${selectedPlan.name}`);
+    this.db.prepare("UPDATE redeem_codes SET order_id = ?, redemption_kind = 'purchase' WHERE id = ?").run(orderId, row.id);
+    return { order, orderId, orderNo, entitlementId, planId: selectedPlan.id, planName: selectedPlan.name, codeMasked: row.code_masked, amountCents, balanceCents: remainingBalance, redemptionKind: "purchase" as const, purchasePending: false };
+  }
+
+  private addWalletLedger(userId: string, amountCents: number, balanceAfterCents: number, kind: "redeem" | "purchase" | "refund" | "adjust", redeemCodeId: string | null, orderId: string | null, note: string) {
+    this.db.prepare(`INSERT INTO wallet_ledger
+      (id, user_id, amount_cents, balance_after_cents, kind, redeem_code_id, order_id, note, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(randomUUID(), userId, amountCents, balanceAfterCents, kind, redeemCodeId, orderId, note.slice(0, 300), nowIso());
+  }
+
+  private createPaidPlanOrder(userId: string, plan: any, provider: string, tradeNo: string, timestamp = nowIso(), paymentChannel = "") {
+    const orderId = randomUUID();
+    const orderNo = `XUI${Date.now()}${randomBytes(4).toString("hex").toUpperCase()}`;
+    this.db.prepare(`INSERT INTO orders
+      (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, payment_provider, payment_channel, payment_trade_no, created_at, paid_at, updated_at)
+      VALUES (?, ?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(orderId, orderNo, userId, plan.id, Number(plan.priceCents) || 0, JSON.stringify(plan), provider, paymentChannel, tradeNo, timestamp, timestamp, timestamp);
+    this.db.prepare("INSERT INTO payment_events (id, provider, event_key, order_id, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), provider, `${provider}:${tradeNo}`, orderId, JSON.stringify({ source: provider }), timestamp);
+    const entitlementId = this.grantPlanEntitlement(userId, plan, orderId, `订单 ${orderNo} / ${provider === "balance" ? "余额" : "卡密"} 购买`);
+    return { order: this.getOrder(orderId), orderId, orderNo, entitlementId };
+  }
+
+  purchasePlanWithBalance(userId: string, planId: string) {
+    return this.db.transaction(() => {
+      const plan = this.getPlan(planId);
+      if (!plan) throw new Error("套餐不存在或已经下架");
+      const user = this.db.prepare("SELECT balance_cents AS balanceCents FROM users WHERE id = ?").get(userId) as any;
+      if (!user) throw new Error("用户不存在");
+      const balanceCents = Number(user.balanceCents) || 0;
+      if (balanceCents < plan.priceCents) throw new Error(`账户余额不足，还差 ${formatCents(plan.priceCents - balanceCents)}`);
       const timestamp = nowIso();
-      const updated = this.db.prepare(`UPDATE redeem_codes SET status = 'redeemed', redeemed_by_user_id = ?, redeemed_at = ?
-        WHERE id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?)`)
-        .run(userId, timestamp, row.id, timestamp);
-      if (!updated.changes) throw new Error("卡密已经失效");
-      const plan = JSON.parse(row.plan_snapshot);
-      const orderId = randomUUID();
-      const orderNo = `XUI${Date.now()}${randomBytes(4).toString("hex").toUpperCase()}`;
-      const tradeNo = `redeem-${row.id}`;
-      this.db.prepare(`INSERT INTO orders
-        (id, order_no, user_id, plan_id, status, amount_cents, plan_snapshot, payment_provider, payment_channel, payment_trade_no, created_at, paid_at, updated_at)
-        VALUES (?, ?, ?, ?, 'paid', ?, ?, 'redeem_code', '', ?, ?, ?, ?)`)
-        .run(orderId, orderNo, userId, row.plan_id, Number(plan.priceCents) || 0, row.plan_snapshot, tradeNo, timestamp, timestamp, timestamp);
-      this.db.prepare("INSERT INTO payment_events (id, provider, event_key, order_id, payload, created_at) VALUES (?, 'redeem_code', ?, ?, ?, ?)")
-        .run(randomUUID(), `redeem_code:${row.id}`, orderId, JSON.stringify({ codeMasked: row.code_masked }), timestamp);
-      const entitlementId = this.grantPlanEntitlement(userId, plan, orderId, `订单 ${orderNo} / 卡密 ${row.code_masked} 兑换`);
-      this.db.prepare("UPDATE redeem_codes SET order_id = ?, entitlement_id = ? WHERE id = ?").run(orderId, entitlementId, row.id);
-      return { order: this.getOrder(orderId), orderId, orderNo, entitlementId, planId: row.plan_id, planName: plan.name, codeMasked: row.code_masked };
+      const remainingBalance = balanceCents - plan.priceCents;
+      this.db.prepare("UPDATE users SET balance_cents = ?, updated_at = ? WHERE id = ?").run(remainingBalance, timestamp, userId);
+      const result = this.createPaidPlanOrder(userId, plan, "balance", `balance-${randomUUID()}`, timestamp);
+      this.addWalletLedger(userId, -plan.priceCents, remainingBalance, "purchase", null, result.orderId, `购买 ${plan.name}`);
+      return { ...result, balanceCents: remainingBalance };
     })();
   }
 
@@ -2096,9 +2296,10 @@ export class CommercialStore {
     if (!Number.isInteger(input.durationValue) || input.durationValue < 0) throw new Error("权益有效期无效");
     if (input.panelMode === "limited" && (!Number.isInteger(input.panelLimit) || input.panelLimit < 1)) throw new Error("面板次数至少为 1");
     if (input.nodeMode === "limited" && (!Number.isInteger(input.nodeLimit) || input.nodeLimit < 1)) throw new Error("节点次数至少为 1");
+    if (input.panelMode === "unlimited" || input.nodeMode === "unlimited") throw new Error("权益必须按次数配置");
     const starts = new Date();
     const id = randomUUID();
-    const expiresAt = addDuration(starts, input.durationUnit, input.durationValue);
+    const expiresAt = null;
     this.db.prepare(`
       INSERT INTO entitlements (
         id, user_id, plan_name, starts_at, expires_at, lifetime,
@@ -2106,10 +2307,10 @@ export class CommercialStore {
         daily_panel_limit, daily_node_limit, concurrency_limit, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, userId, input.name, starts.toISOString(), expiresAt, input.durationUnit === "lifetime" ? 1 : 0,
+      id, userId, input.name, starts.toISOString(), expiresAt, 1,
       input.panelMode, input.panelMode === "limited" ? input.panelLimit : 0, input.panelMode === "limited" ? input.panelLimit : 0,
       input.nodeMode, input.nodeMode === "limited" ? input.nodeLimit : 0, input.nodeMode === "limited" ? input.nodeLimit : 0,
-      input.dailyPanelLimit || 0, input.dailyNodeLimit || 0, input.concurrencyLimit || 1, nowIso(),
+      0, 0, input.concurrencyLimit || 1, nowIso(),
     );
     for (const capability of ["panel", "node"] as Capability[]) {
       const mode = input[`${capability}Mode`];
@@ -2165,13 +2366,12 @@ export class CommercialStore {
     const values = {
       panelRemaining: input.panelRemaining ?? entitlement.panel_remaining,
       nodeRemaining: input.nodeRemaining ?? entitlement.node_remaining,
-      dailyPanelLimit: input.dailyPanelLimit ?? entitlement.daily_panel_limit,
-      dailyNodeLimit: input.dailyNodeLimit ?? entitlement.daily_node_limit,
+      dailyPanelLimit: 0,
+      dailyNodeLimit: 0,
       concurrencyLimit: input.concurrencyLimit ?? entitlement.concurrency_limit,
     };
     for (const [label, value] of [
       ["面板剩余次数", values.panelRemaining], ["节点剩余次数", values.nodeRemaining],
-      ["每日面板上限", values.dailyPanelLimit], ["每日节点上限", values.dailyNodeLimit],
     ] as const) {
       if (!Number.isInteger(value) || value < 0) throw new Error(`${label}必须为非负整数`);
     }
@@ -2217,17 +2417,6 @@ export class CommercialStore {
       `).get(userId) as any).count);
       if (activeCount >= entitlement.concurrency_limit) throw new Error(`当前套餐最多同时执行 ${entitlement.concurrency_limit} 个搭建任务`);
 
-      const dailyLimit = capability === "panel" ? entitlement.daily_panel_limit : entitlement.daily_node_limit;
-      if (dailyLimit > 0) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const dailyCount = Number((this.db.prepare(`
-          SELECT COUNT(*) AS count FROM deployments
-          WHERE user_id = ? AND capability = ? AND created_at >= ? AND status IN ('reserved', 'running', 'succeeded', 'uncertain')
-        `).get(userId, capability, today.toISOString()) as any).count);
-        if (dailyCount >= dailyLimit) throw new Error(`今日${capability === "panel" ? "面板安装" : "节点创建"}次数已达到套餐上限 ${dailyLimit}`);
-      }
-
       const deploymentId = randomUUID();
       const mode = entitlement[`${capability}_mode`] as Exclude<QuotaMode, "none">;
       if (mode === "limited") {
@@ -2252,19 +2441,24 @@ export class CommercialStore {
       .run(nowIso(), deploymentId);
   }
 
-  succeedDeployment(deploymentId: string, summary = "") {
+  succeedDeployment(deploymentId: string, summary = "", result?: Record<string, unknown>) {
     this.db.transaction(() => {
       const deployment = this.db.prepare("SELECT * FROM deployments WHERE id = ?").get(deploymentId) as any;
       if (!deployment || deployment.status === "succeeded") return;
       if (!["reserved", "running", "uncertain"].includes(deployment.status)) return;
+      const encryptedResult = result
+        ? this.vault.encrypt(JSON.stringify({ version: 1, capability: deployment.capability, data: result }))
+        : "";
       if (deployment.quota_mode === "limited") {
         this.db.prepare(`
           UPDATE entitlements SET ${deployment.capability}_reserved = MAX(0, ${deployment.capability}_reserved - 1),
             ${deployment.capability}_used = ${deployment.capability}_used + 1 WHERE id = ?
         `).run(deployment.entitlement_id);
       }
-      this.db.prepare("UPDATE deployments SET status = 'succeeded', result_summary = ?, finished_at = ? WHERE id = ?")
-        .run(summary.slice(0, 500), nowIso(), deploymentId);
+      this.db.prepare(`
+        UPDATE deployments SET status = 'succeeded', result_summary = ?, result_payload_encrypted = ?,
+          history_hidden = 0, finished_at = ? WHERE id = ?
+      `).run(summary.slice(0, 500), encryptedResult, nowIso(), deploymentId);
       this.addLedger(deployment.user_id, deployment.entitlement_id, deploymentId, deployment.capability, "consume", deployment.quota_mode === "limited" ? 1 : 0, "搭建成功核销权益");
     })();
   }
@@ -2308,6 +2502,58 @@ export class CommercialStore {
       ${userId ? "WHERE d.user_id = ?" : ""}
       ORDER BY d.created_at DESC LIMIT 500
     `).all(...(userId ? [userId] : []));
+  }
+
+  listDeploymentHistory(userId: string): DeploymentHistoryItem[] {
+    const rows = this.db.prepare(`
+      SELECT id, capability, result_summary, result_payload_encrypted, created_at
+      FROM deployments
+      WHERE user_id = ? AND status = 'succeeded' AND history_hidden = 0
+      ORDER BY created_at DESC LIMIT 30
+    `).all(userId) as any[];
+    return rows.map(row => this.deploymentHistorySummary(row));
+  }
+
+  getDeploymentHistoryDetail(userId: string, deploymentId: string): DeploymentHistoryItem | null {
+    const row = this.db.prepare(`
+      SELECT id, capability, result_summary, result_payload_encrypted, created_at
+      FROM deployments
+      WHERE id = ? AND user_id = ? AND status = 'succeeded' AND history_hidden = 0
+    `).get(deploymentId, userId) as any;
+    if (!row) return null;
+    const item = this.deploymentHistorySummary(row);
+    if (!row.result_payload_encrypted) return item;
+
+    const envelope = JSON.parse(this.vault.decrypt(String(row.result_payload_encrypted))) as any;
+    if (envelope?.version !== 1 || envelope?.capability !== row.capability || !envelope?.data || typeof envelope.data !== "object") {
+      throw new Error("搭建历史详情格式无效，请联系管理员检查数据");
+    }
+    if (row.capability === "panel") item.panelData = envelope.data;
+    else item.nodeData = envelope.data;
+    return item;
+  }
+
+  clearDeploymentHistory(userId: string) {
+    return this.db.prepare(`
+      UPDATE deployments SET result_payload_encrypted = '', history_hidden = 1
+      WHERE user_id = ? AND status = 'succeeded' AND history_hidden = 0
+    `).run(userId).changes;
+  }
+
+  private deploymentHistorySummary(row: any): DeploymentHistoryItem {
+    const capability = row.capability === "panel" ? "panel" : "node";
+    const summary = String(row.result_summary || (capability === "panel" ? "面板搭建成功" : "节点创建成功"));
+    const title = capability === "panel"
+      ? "xui 面板"
+      : `${summary.match(/^(.+?)\s+节点\b/)?.[1] || "代理"}节点`;
+    return {
+      id: String(row.id),
+      timestamp: String(row.created_at),
+      type: capability,
+      title,
+      summary,
+      hasDetails: Boolean(row.result_payload_encrypted),
+    };
   }
 
   listUsageLedger() {

@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { CommercialStore } from "./commercial-store.js";
@@ -16,14 +13,28 @@ test("only one initial administrator can be bootstrapped", () => {
     assert.equal(admin?.role, "admin");
     assert.equal(duplicate, null);
     assert.equal(store.listUsers().length, 1);
-    assert.equal(store.listPlans().some(plan => plan.durationUnit === "quarters"), true);
+    assert.deepEqual(store.listPlans(), []);
   } finally {
     store.close();
   }
 });
 
 function createStore() {
-  return new CommercialStore(":memory:");
+  const store = new CommercialStore(":memory:");
+  store.createPlan({
+    name: "测试套餐", description: "测试用永久次数套餐", priceCents: 990,
+    durationUnit: "lifetime", durationValue: 0,
+    panelMode: "limited", panelLimit: 1, nodeMode: "limited", nodeLimit: 3,
+    dailyPanelLimit: 0, dailyNodeLimit: 0, concurrencyLimit: 1,
+    enabled: true, homepageVisible: true, sortOrder: 1,
+  });
+  store.setPaymentMethods([{
+    id: "manual", name: "测试支付", type: "epay", provider: "epay", enabled: true,
+    instructions: "测试专用在线支付", paymentUrl: "", gatewayUrl: "https://pay.example.test",
+    merchantId: "1001", merchantSecret: "test-secret", channel: "alipay",
+    enabledChannels: ["alipay"], sortOrder: 10,
+  }]);
+  return store;
 }
 
 test("email accounts are unique and can still use legacy username login", () => {
@@ -86,8 +97,8 @@ test("orders persist an enabled payment method and reject disabled methods", () 
     const user = store.createUser("payment-user", "strong-password");
     const plan = store.listPlans()[0];
     store.setPaymentMethods([
-      { id: "alipay", name: "支付宝", type: "alipay", enabled: true, instructions: "付款后备注订单号", paymentUrl: "https://pay.example.test", sortOrder: 10 },
-      { id: "wechat", name: "微信支付", type: "wechat", enabled: false, instructions: "", paymentUrl: "", sortOrder: 20 },
+      { id: "alipay", name: "支付宝", type: "epay", provider: "epay", enabled: true, instructions: "在线支付", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001", merchantSecret: "test-secret", enabledChannels: ["alipay"], sortOrder: 10 },
+      { id: "wechat", name: "微信支付", type: "epay", provider: "epay", enabled: false, instructions: "", paymentUrl: "", enabledChannels: ["wxpay"], sortOrder: 20 },
     ]);
     const order = store.createOrder(user.id, plan.id, "alipay");
     assert.equal(order.paymentProvider, "alipay");
@@ -101,8 +112,8 @@ test("all online payment methods can be disabled while remaining editable by adm
   const store = createStore();
   try {
     store.setPaymentMethods([
-      { id: "alipay", name: "支付宝", type: "alipay", enabled: false, instructions: "", paymentUrl: "", sortOrder: 10 },
-      { id: "wechat", name: "微信支付", type: "wechat", enabled: false, instructions: "", paymentUrl: "", sortOrder: 20 },
+      { id: "alipay", name: "支付宝", type: "epay", provider: "epay", enabled: false, instructions: "", paymentUrl: "", enabledChannels: ["alipay"], sortOrder: 10 },
+      { id: "wechat", name: "微信支付", type: "epay", provider: "epay", enabled: false, instructions: "", paymentUrl: "", enabledChannels: ["wxpay"], sortOrder: 20 },
     ]);
     assert.deepEqual(store.getPaymentMethods(), []);
     assert.deepEqual(store.getPaymentMethods(true).map(method => ({ id: method.id, enabled: method.enabled })), [
@@ -120,8 +131,8 @@ test("paid order grants the exact plan snapshot", () => {
   const plan = store.createPlan({
     name: "测试年卡",
     priceCents: 9900,
-    durationUnit: "years",
-    durationValue: 1,
+    durationUnit: "lifetime",
+    durationValue: 0,
     panelMode: "limited",
     panelLimit: 8,
     nodeMode: "limited",
@@ -135,7 +146,7 @@ test("paid order grants the exact plan snapshot", () => {
   });
   assert.equal(plan.homepageVisible, false);
   assert.equal(store.listPlans().find(item => item.id === plan.id)?.panelLimit, 8);
-  const order = store.createOrder(user.id, plan.id);
+  const order = store.createOrder(user.id, plan.id, "manual");
   store.updatePlan(plan.id, { ...plan, name: "修改后的年卡", panelLimit: 1, nodeLimit: 1 });
   store.markOrderPaid(order.id, "test", "trade-1");
   const [entitlement]: any[] = store.listEntitlements(user.id);
@@ -145,15 +156,15 @@ test("paid order grants the exact plan snapshot", () => {
   store.close();
 });
 
-test("quarterly plans grant three months of access", () => {
+test("plans grant permanent access under the current permanent-count model", () => {
   const store = createStore();
   try {
-    const user = store.createUser("quarterly-buyer", "strong-password");
+    const user = store.createUser("permanent-buyer", "strong-password");
     const plan = store.createPlan({
-      name: "季度套餐",
+      name: "永久次数套餐",
       priceCents: 5900,
-      durationUnit: "quarters",
-      durationValue: 1,
+      durationUnit: "lifetime",
+      durationValue: 0,
       panelMode: "limited",
       panelLimit: 10,
       nodeMode: "limited",
@@ -164,104 +175,33 @@ test("quarterly plans grant three months of access", () => {
       enabled: true,
       sortOrder: 25,
     });
-    const order = store.createOrder(user.id, plan.id);
-    store.markOrderPaid(order.id, "manual", "quarterly-trade");
+    const order = store.createOrder(user.id, plan.id, "manual");
+    store.markOrderPaid(order.id, "manual", "permanent-trade");
     const [entitlement]: any[] = store.listEntitlements(user.id);
-    const expectedExpiry = new Date(entitlement.startsAt);
-    expectedExpiry.setUTCMonth(expectedExpiry.getUTCMonth() + 3);
-
-    assert.equal(plan.durationUnit, "quarters");
-    assert.equal(entitlement.expiresAt, expectedExpiry.toISOString());
+    assert.equal(plan.durationUnit, "lifetime");
+    assert.equal(entitlement.expiresAt, null);
+    assert.equal(entitlement.lifetime, true);
   } finally {
     store.close();
   }
 });
 
-test("existing plan databases migrate to support quarterly durations", () => {
-  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "xui-quarter-migration-"));
-  const databasePath = path.join(temporaryDirectory, "app.db");
-  try {
-    const seededStore = new CommercialStore(databasePath, { recoverInterruptedDeployments: false });
-    const existingPlan = seededStore.listPlans()[0];
-    const existingUser = seededStore.createUser("migration-user", "strong-password");
-    const existingOrder = seededStore.createOrder(existingUser.id, existingPlan.id);
-    seededStore.db.prepare("DELETE FROM plans WHERE duration_unit = 'quarters'").run();
-    seededStore.close();
-
-    const legacyDatabase = new Database(databasePath);
-    legacyDatabase.pragma("foreign_keys = OFF");
-    legacyDatabase.exec(`
-      CREATE TABLE plans_legacy_constraint (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
-        duration_unit TEXT NOT NULL CHECK (duration_unit IN ('days', 'months', 'years', 'lifetime')),
-        duration_value INTEGER NOT NULL DEFAULT 1 CHECK (duration_value >= 0),
-        panel_mode TEXT NOT NULL CHECK (panel_mode IN ('none', 'limited', 'unlimited')),
-        panel_limit INTEGER NOT NULL DEFAULT 0 CHECK (panel_limit >= 0),
-        node_mode TEXT NOT NULL CHECK (node_mode IN ('none', 'limited', 'unlimited')),
-        node_limit INTEGER NOT NULL DEFAULT 0 CHECK (node_limit >= 0),
-        daily_panel_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_panel_limit >= 0),
-        daily_node_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_node_limit >= 0),
-        concurrency_limit INTEGER NOT NULL DEFAULT 1 CHECK (concurrency_limit >= 1),
-        enabled INTEGER NOT NULL DEFAULT 1,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      INSERT INTO plans_legacy_constraint (
-        id, name, description, price_cents, duration_unit, duration_value,
-        panel_mode, panel_limit, node_mode, node_limit, daily_panel_limit,
-        daily_node_limit, concurrency_limit, enabled, sort_order, created_at, updated_at
-      ) SELECT
-        id, name, description, price_cents, duration_unit, duration_value,
-        panel_mode, panel_limit, node_mode, node_limit, daily_panel_limit,
-        daily_node_limit, concurrency_limit, enabled, sort_order, created_at, updated_at
-      FROM plans;
-      DROP TABLE plans;
-      ALTER TABLE plans_legacy_constraint RENAME TO plans;
-    `);
-    legacyDatabase.close();
-
-    const migratedStore = new CommercialStore(databasePath, { recoverInterruptedDeployments: false });
-    try {
-      assert.equal(migratedStore.getPlan(existingPlan.id)?.name, existingPlan.name);
-      assert.equal(migratedStore.getPlan(existingPlan.id)?.homepageVisible, true);
-      assert.equal(migratedStore.getOrder(existingOrder.id)?.planId, existingPlan.id);
-      assert.equal(migratedStore.listPlans().some(plan => plan.durationUnit === "quarters"), true);
-      assert.deepEqual(migratedStore.db.prepare("PRAGMA foreign_key_check").all(), []);
-      const quarterlyPlan = migratedStore.createPlan({
-        ...existingPlan,
-        name: "迁移后的季度套餐",
-        durationUnit: "quarters",
-        durationValue: 1,
-      });
-      assert.equal(quarterlyPlan.durationUnit, "quarters");
-    } finally {
-      migratedStore.close();
-    }
-  } finally {
-    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
-  }
-});
-
-test("redeem codes store only hashes and grant their plan once", () => {
+test("redeem codes store only hashes and purchase the selected plan once", () => {
   const store = createStore();
   try {
     const user = store.createUser("redeem-user", "strong-password");
     const plan = store.createPlan({
-      name: "卡密月卡", priceCents: 2900, durationUnit: "months", durationValue: 1,
+      name: "卡密套餐", priceCents: 2900, durationUnit: "lifetime", durationValue: 0,
       panelMode: "limited", panelLimit: 2, nodeMode: "limited", nodeLimit: 8,
       dailyPanelLimit: 1, dailyNodeLimit: 4, concurrencyLimit: 1, enabled: true, sortOrder: 1,
     });
-    const [created]: any[] = store.createRedeemCodes({ planId: plan.id, quantity: 1, note: "测试批次" });
+    const [created]: any[] = store.createRedeemCodes({ amountCents: plan.priceCents, quantity: 1, note: "测试批次" });
     assert.match(created.code, /^XUI-/);
     assert.equal(store.listRedeemCodes()[0].codeMasked, created.codeMasked);
     assert.equal(JSON.stringify(store.listRedeemCodes()).includes(created.code), false);
 
     const result = store.redeemCode(user.id, created.code.toLowerCase(), plan.id);
-    assert.equal(result.planName, "卡密月卡");
+    assert.equal(result.planName, "卡密套餐");
     assert.equal(result.order?.status, "paid");
     assert.equal(result.order?.paymentProvider, "redeem_code");
     assert.equal(result.order?.planId, plan.id);
@@ -272,32 +212,99 @@ test("redeem codes store only hashes and grant their plan once", () => {
     assert.equal(entitlement.sourceOrderId, result.orderId);
     assert.equal(store.listRedeemCodes()[0].status, "redeemed");
     assert.equal(store.listRedeemCodes()[0].orderId, result.orderId);
-    assert.throws(() => store.refundOrder(result.orderId, "测试退款", "REFUND-CODE"), /卡密兑换订单不支持/);
+    assert.throws(() => store.refundOrder(result.orderId, "测试退款", "REFUND-CODE"), /卡密购买订单不支持/);
     assert.throws(() => store.redeemCode(user.id, created.code), /已经兑换/);
   } finally {
     store.close();
   }
 });
 
-test("redeem codes must match the selected plan without being consumed on mismatch", () => {
+test("external redeem codes are recorded once and can purchase a plan", () => {
   const store = createStore();
   try {
-    const user = store.createUser("plan-bound-redeem-user", "strong-password");
+    const user = store.createUser("external-card-user", "strong-password");
+    const plan = store.listPlans()[0];
+    const result = store.redeemExternalCode(user.id, "Case-Sensitive-External-Card", plan.id, {
+      amountCents: 1200,
+      providerName: "合作卡站",
+      tradeNo: "external-trade-1",
+    });
+
+    assert.equal(result.redemptionKind, "purchase");
+    assert.equal(result.order?.paymentProvider, "external_redeem");
+    assert.equal(result.order?.paymentChannel, "合作卡站");
+    assert.equal(result.balanceCents, 210);
+    assert.equal(store.listEntitlements(user.id).length, 1);
+    assert.match(store.listRedeemCodes()[0].note, /external-trade-1/);
+    assert.throws(() => store.redeemExternalCode(user.id, "Case-Sensitive-External-Card", plan.id, {
+      amountCents: 1200,
+      providerName: "合作卡站",
+      tradeNo: "external-trade-1",
+    }), /已经在本系统入账/);
+  } finally {
+    store.close();
+  }
+});
+
+test("an insufficient external card is credited to balance instead of being lost", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("external-card-balance-user", "strong-password");
+    const plan = store.listPlans()[0];
+    const result = store.redeemExternalCode(user.id, "LOW-VALUE-CARD", plan.id, {
+      amountCents: 300,
+      providerName: "合作卡站",
+      tradeNo: "external-trade-low",
+    });
+
+    assert.equal(result.redemptionKind, "balance");
+    assert.equal(result.purchasePending, true);
+    assert.equal(result.shortfallCents, 690);
+    assert.equal(result.balanceCents, 300);
+    assert.equal(store.listOrders(user.id).length, 0);
+    assert.equal(store.listEntitlements(user.id).length, 0);
+  } finally {
+    store.close();
+  }
+});
+
+test("external redeem settings encrypt API credentials", () => {
+  const store = createStore();
+  try {
+    store.setExternalRedeemSettings({
+      enabled: true,
+      name: "合作卡站",
+      apiUrl: "https://cards.example.com/redeem",
+      apiKey: "top-secret",
+      authMode: "bearer",
+      amountUnit: "yuan",
+      timeoutSeconds: 8,
+      allowPrivateNetwork: false,
+    });
+    const publicSettings = store.getExternalRedeemSettings();
+    assert.equal(publicSettings.apiKey, undefined);
+    assert.equal(publicSettings.apiKeyConfigured, true);
+    assert.equal(store.getExternalRedeemSettings(true).apiKey, "top-secret");
+    assert.doesNotMatch(store.getSetting("external_redeem_api_key_encrypted"), /top-secret/);
+  } finally {
+    store.close();
+  }
+});
+
+test("amount redeem codes are not bound to a specific plan", () => {
+  const store = createStore();
+  try {
+    const user = store.createUser("amount-redeem-user", "strong-password");
     const [firstPlan, secondPlan] = store.listPlans();
     const otherPlan = secondPlan || store.createPlan({
-      name: "其他套餐", priceCents: 4900, durationUnit: "months", durationValue: 1,
+      name: "其他套餐", priceCents: 490, durationUnit: "lifetime", durationValue: 0,
       panelMode: "limited", panelLimit: 3, nodeMode: "limited", nodeLimit: 10,
       dailyPanelLimit: 1, dailyNodeLimit: 5, concurrencyLimit: 1, enabled: true, sortOrder: 2,
     });
-    const [created]: any[] = store.createRedeemCodes({ planId: firstPlan.id, quantity: 1 });
-
-    assert.throws(() => store.redeemCode(user.id, created.code, otherPlan.id), /不适用于当前选择的套餐/);
-    assert.equal(store.listRedeemCodes()[0].status, "active");
-    assert.equal(store.listOrders(user.id).length, 0);
-    assert.equal(store.listEntitlements(user.id).length, 0);
-
-    const result = store.redeemCode(user.id, created.code, firstPlan.id);
-    assert.equal(result.planId, firstPlan.id);
+    const [created]: any[] = store.createRedeemCodes({ amountCents: firstPlan.priceCents, quantity: 1 });
+    const result = store.redeemCode(user.id, created.code, otherPlan.id);
+    assert.equal(result.planId, otherPlan.id);
+    assert.equal(result.balanceCents, firstPlan.priceCents - otherPlan.priceCents);
     assert.equal(store.listOrders(user.id).length, 1);
     assert.equal(store.listEntitlements(user.id).length, 1);
   } finally {
@@ -310,10 +317,10 @@ test("disabled and expired redeem codes cannot be used", () => {
   try {
     const user = store.createUser("blocked-redeem-user", "strong-password");
     const plan = store.listPlans()[0];
-    const [disabled]: any[] = store.createRedeemCodes({ planId: plan.id, quantity: 1 });
+    const [disabled]: any[] = store.createRedeemCodes({ amountCents: plan.priceCents, quantity: 1 });
     store.updateRedeemCodeStatus(disabled.id, "disabled");
     assert.throws(() => store.redeemCode(user.id, disabled.code), /已经停用/);
-    assert.throws(() => store.createRedeemCodes({ planId: plan.id, quantity: 1, expiresAt: new Date(Date.now() - 1000).toISOString() }), /晚于当前时间/);
+    assert.throws(() => store.createRedeemCodes({ amountCents: plan.priceCents, quantity: 1, expiresAt: new Date(Date.now() - 1000).toISOString() }), /晚于当前时间/);
   } finally {
     store.close();
   }
@@ -323,7 +330,7 @@ test("refunding an order revokes the entitlement granted by that order", () => {
   const store = createStore();
   const user = store.createUser("refund-buyer", "strong-password");
   const plan = store.listPlans()[0];
-  const order = store.createOrder(user.id, plan.id);
+  const order = store.createOrder(user.id, plan.id, "manual");
   store.markOrderPaid(order.id, "test", "refund-trade-1");
 
   store.refundOrder(order.id, "测试退款", "REFUND-1");
@@ -362,8 +369,8 @@ test("administrators can adjust limited entitlement quotas and limits", () => {
   assert.equal(entitlement.panelTotal, 5);
   assert.equal(entitlement.nodeRemaining, 12);
   assert.equal(entitlement.nodeTotal, 12);
-  assert.equal(entitlement.dailyPanelLimit, 2);
-  assert.equal(entitlement.dailyNodeLimit, 6);
+  assert.equal(entitlement.dailyPanelLimit, 0);
+  assert.equal(entitlement.dailyNodeLimit, 0);
   assert.equal(entitlement.concurrencyLimit, 2);
   store.close();
 });
@@ -430,10 +437,10 @@ test("duplicate request ids never create a second deployment", () => {
   store.close();
 });
 
-test("unlimited membership can still enforce daily and concurrency limits", () => {
+test("unlimited entitlement grants are rejected by the permanent-count model", () => {
   const store = createStore();
   const user = store.createUser("member", "strong-password");
-  store.grantEntitlement(user.id, {
+  assert.throws(() => store.grantEntitlement(user.id, {
     name: "会员",
     durationUnit: "months",
     durationValue: 1,
@@ -444,10 +451,7 @@ test("unlimited membership can still enforce daily and concurrency limits", () =
     dailyPanelLimit: 1,
     dailyNodeLimit: 2,
     concurrencyLimit: 1,
-  });
-  const first = store.reserveDeployment(user.id, "panel", "unlimited-1");
-  store.succeedDeployment(first.deploymentId);
-  assert.throws(() => store.reserveDeployment(user.id, "panel", "unlimited-2"), /今日面板安装次数/);
+  }), /必须按次数配置/);
   store.close();
 });
 
@@ -463,7 +467,7 @@ test("expired entitlements cannot reserve a deployment", () => {
     nodeMode: "none",
     nodeLimit: 0,
   });
-  store.db.prepare("UPDATE entitlements SET expires_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", entitlementId);
+  store.db.prepare("UPDATE entitlements SET expires_at = ?, lifetime = 0 WHERE id = ?").run("2000-01-01T00:00:00.000Z", entitlementId);
   assert.throws(() => store.reserveDeployment(user.id, "panel", "expired-request"), /没有可用的面板安装权益/);
   store.close();
 });
@@ -502,8 +506,8 @@ test("dashboard statistics are derived from persisted operational data", () => {
     store.updateUserStatus(disabledUser.id, "disabled");
 
     const plan = store.listPlans()[0];
-    const pendingOrder = store.createOrder(activeUser.id, plan.id);
-    const paidOrder = store.createOrder(activeUser.id, plan.id);
+    const pendingOrder = store.createOrder(activeUser.id, plan.id, "manual");
+    const paidOrder = store.createOrder(activeUser.id, plan.id, "manual");
     store.markOrderPaid(paidOrder.id, "test", "stats-trade");
 
     const entitlementId = store.grantEntitlement(activeUser.id, {
@@ -515,7 +519,7 @@ test("dashboard statistics are derived from persisted operational data", () => {
       nodeMode: "none",
       nodeLimit: 0,
     });
-    store.db.prepare("UPDATE entitlements SET expires_at = ? WHERE id = ?")
+    store.db.prepare("UPDATE entitlements SET expires_at = ?, lifetime = 0 WHERE id = ?")
       .run("2000-01-01T00:00:00.000Z", entitlementId);
 
     const deployment = store.reserveDeployment(activeUser.id, "panel", "stats-deployment");
@@ -733,8 +737,9 @@ test("channels referenced by historical orders are archived instead of deleting 
     const user = store.createUser("history-user", "strong-password");
     store.createOrder(user.id, store.listPlans()[0].id, "epay-history");
     store.setPaymentMethods([{
-      id: "manual", name: "人工收款", type: "manual", provider: "manual", enabled: true,
-      instructions: "联系管理员", paymentUrl: "", sortOrder: 10,
+      id: "manual", name: "测试支付", type: "epay", provider: "epay", enabled: true,
+      instructions: "在线支付", paymentUrl: "", gatewayUrl: "https://pay.example.test",
+      merchantId: "1001", merchantSecret: "test-secret", enabledChannels: ["alipay"], sortOrder: 10,
     }]);
     assert.equal(store.getPaymentMethods(true).some(method => method.id === "epay-history"), false);
     const archived = store.getPaymentMethods(true, true, true).find(method => method.id === "epay-history");
@@ -882,6 +887,51 @@ test("database backups validate required data and restore without reviving sessi
   }
 });
 
+test("portable backups restore encrypted settings across different server keys", () => {
+  const source = createStore();
+  const target = createStore();
+  try {
+    source.bootstrapAdmin("portable-admin", "strong-password");
+    source.createUser("portable-user", "strong-password", "user", "portable@example.test");
+    source.setSetting("site_name", "Portable X-UI");
+    source.setPaymentMethods([{
+      id: "portable-epay",
+      name: "Portable EPay",
+      type: "epay",
+      provider: "epay",
+      enabled: true,
+      instructions: "",
+      paymentUrl: "",
+      gatewayUrl: "https://pay.example.test",
+      merchantId: "merchant-1",
+      merchantSecret: "source-only-secret",
+      channel: "alipay",
+      enabledChannels: ["alipay"],
+      sortOrder: 10,
+    }]);
+    const backup = source.createPortableBackup("portable-password-123", "3.0.7");
+
+    assert.equal(backup.data.includes(Buffer.from("source-only-secret")), false);
+    assert.throws(() => target.validatePortableBackup(backup.data, "wrong-password-123"), /密码错误|篡改/);
+    const validation = target.validatePortableBackup(backup.data, "portable-password-123") as any;
+    assert.equal(validation.valid, true);
+    assert.equal(validation.encrypted, true);
+    assert.equal(validation.appVersion, "3.0.7");
+    assert.equal(validation.counts.users, 2);
+
+    target.bootstrapAdmin("temporary-admin", "strong-password");
+    const restored = target.restorePortableBackup(backup.data, "portable-password-123", "temporary-admin") as any;
+    assert.equal(restored.success, true);
+    assert.equal(target.getSetting("site_name"), "Portable X-UI");
+    assert.deepEqual(target.listUsers().map((item: any) => item.username).sort(), ["portable-admin", "portable-user"]);
+    const restoredPayment = target.getPaymentMethods(true, true).find(item => item.id === "portable-epay");
+    assert.equal(restoredPayment?.merchantSecret, "source-only-secret");
+  } finally {
+    source.close();
+    target.close();
+  }
+});
+
 test("epay URLs and callback signatures use the documented MD5 scheme", () => {
   const params = { pid: "1001", out_trade_no: "ORDER1", money: "9.90", sign_type: "MD5" };
   const sign = epaySign(params, "secret");
@@ -944,7 +994,7 @@ test("PayPal credentials are encrypted and provider order ids survive capture co
   }
 });
 
-test("verified online callbacks recover expired orders while manual payments cannot", () => {
+test("verified online callbacks recover expired orders while unverified completion cannot", () => {
   const store = createStore();
   try {
     const user = store.createUser("late-payment-user", "strong-password");
@@ -967,7 +1017,60 @@ test("verified online callbacks recover expired orders while manual payments can
     assert.equal(store.listEntitlements(user.id).length, 1);
 
     store.db.prepare("UPDATE orders SET status = 'expired' WHERE id = ?").run(manualOrder.id);
-    assert.throws(() => store.markOrderPaid(manualOrder.id, "manual", "MANUAL-LATE-1", true), /待支付订单/);
+    assert.throws(() => store.markOrderPaid(manualOrder.id, "manual", "UNVERIFIED-LATE-1"), /待支付订单/);
+  } finally {
+    store.close();
+  }
+});
+
+test("deployment history encrypts secrets, returns sanitized lists and enforces ownership", () => {
+  const store = createStore();
+  try {
+    const owner = store.createUser("history-owner", "strong-password");
+    const other = store.createUser("history-other", "strong-password");
+    store.grantEntitlement(owner.id, {
+      name: "历史测试权益",
+      durationUnit: "lifetime",
+      durationValue: 0,
+      panelMode: "limited",
+      panelLimit: 2,
+      nodeMode: "limited",
+      nodeLimit: 2,
+    });
+    const reservation = store.reserveDeployment(owner.id, "panel", "history-request-1", "203.0.*.*");
+    store.markDeploymentRunning(reservation.deploymentId);
+    store.succeedDeployment(reservation.deploymentId, "面板 203.0.*.*:54321", {
+      id: reservation.deploymentId,
+      host: "panel.example.test",
+      username: "panel-admin",
+      password: "history-panel-password",
+      apiToken: "history-api-token",
+      accessUrl: "https://panel.example.test:54321/secret/",
+    });
+
+    const raw = store.db.prepare("SELECT result_payload_encrypted FROM deployments WHERE id = ?")
+      .get(reservation.deploymentId) as any;
+    assert.match(raw.result_payload_encrypted, /^v1\./);
+    assert.doesNotMatch(raw.result_payload_encrypted, /history-panel-password|history-api-token|panel-admin/);
+
+    const list = store.listDeploymentHistory(owner.id);
+    assert.equal(list.length, 1);
+    assert.equal(list[0].hasDetails, true);
+    assert.equal("panelData" in list[0], false);
+    assert.doesNotMatch(JSON.stringify(list), /history-panel-password|history-api-token|panel-admin/);
+
+    const detail = store.getDeploymentHistoryDetail(owner.id, reservation.deploymentId)!;
+    assert.equal(detail.panelData?.password, "history-panel-password");
+    assert.equal(detail.panelData?.apiToken, "history-api-token");
+    assert.equal(store.getDeploymentHistoryDetail(other.id, reservation.deploymentId), null);
+
+    assert.equal(store.clearDeploymentHistory(owner.id), 1);
+    assert.deepEqual(store.listDeploymentHistory(owner.id), []);
+    assert.equal(store.getDeploymentHistoryDetail(owner.id, reservation.deploymentId), null);
+    const cleared = store.db.prepare("SELECT result_payload_encrypted, history_hidden FROM deployments WHERE id = ?")
+      .get(reservation.deploymentId) as any;
+    assert.equal(cleared.result_payload_encrypted, "");
+    assert.equal(cleared.history_hidden, 1);
   } finally {
     store.close();
   }

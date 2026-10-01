@@ -34,7 +34,7 @@ export const ChangePasswordForm: React.FC<ChangePasswordFormProps> = ({ endpoint
 
   if (variant === 'admin') return <form onSubmit={submit} className="admin-password-form">
     <div className="admin-form-grid">
-      <label className="admin-field"><span>当前密码</span><input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required /></label>
+      <label className="admin-field span-2"><span>当前密码</span><input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required /></label>
       <label className="admin-field"><span>新密码</span><input type="password" autoComplete="new-password" value={nextPassword} onChange={event => setNextPassword(event.target.value)} minLength={8} maxLength={128} required /><small>密码长度为 8 到 128 位。</small></label>
       <label className="admin-field"><span>确认新密码</span><input type="password" autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} minLength={8} maxLength={128} required /></label>
     </div>

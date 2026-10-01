@@ -13,6 +13,8 @@ interface PaymentCheckoutDialogProps {
 export const PaymentCheckoutDialog: React.FC<PaymentCheckoutDialogProps> = ({ order, payment, onClose, onPaid }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState(order.status);
+  let walletTopup = false;
+  try { walletTopup = JSON.parse(order.planSnapshot || '{}').kind === 'wallet_topup'; } catch { /* Ignore malformed legacy snapshots. */ }
 
   useEffect(() => {
     if (payment.checkoutType !== 'qrcode' || !canvasRef.current) return;
@@ -49,7 +51,7 @@ export const PaymentCheckoutDialog: React.FC<PaymentCheckoutDialogProps> = ({ or
       </div>
       <div className={`payment-live-status ${status}`}>
         {status === 'paid' ? <CheckCircle2 /> : status === 'pending' ? <LoaderCircle className="animate-spin" /> : <Clock3 />}
-        <span>{status === 'paid' ? '支付成功，权益已经发放' : status === 'pending' ? '正在等待支付结果...' : '订单已结束，请关闭后查看订单记录'}</span>
+        <span>{status === 'paid' ? walletTopup ? '支付成功，余额已经到账' : '支付成功，权益已经发放' : status === 'pending' ? '正在等待支付结果...' : '订单已结束，请关闭后查看订单记录'}</span>
       </div>
       <a className="payment-open-link" href={payment.checkoutUrl} target="_blank" rel="noreferrer"><ExternalLink /> 无法扫码时打开支付链接</a>
     </section>

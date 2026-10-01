@@ -13,7 +13,7 @@ export const ProtocolMatrixGuideModal: React.FC<ProtocolMatrixGuideModalProps> =
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="console-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
       <div className="relative w-full max-w-3xl bg-[#0d0d12] border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-start justify-between pb-4 border-b border-white/10">
@@ -102,7 +102,7 @@ export const ProtocolMatrixGuideModal: React.FC<ProtocolMatrixGuideModalProps> =
             2. SOCKS 链式代理原理 (Chained Proxy)
           </h4>
           <p className="text-zinc-300 leading-relaxed">
-            SOCKS 链式代理将用户的入口流量（Inbound）经由 ui面板 内部 Xray 路由规则分发转发至预设的 SOCKS 出站（Outbounds）。
+            SOCKS 链式代理将用户的入口流量经由 ui面板 内部 Xray 路由规则分发转发至预设的 SOCKS 出站。
           </p>
           <div className="p-3 rounded-xl bg-black/40 border border-white/10 font-mono text-[11px] text-zinc-300 flex items-center justify-between">
             <span>[客户端] &rarr; [ui面板 入口节点] &rarr; [SOCKS 中继] &rarr; [目标网站]</span>

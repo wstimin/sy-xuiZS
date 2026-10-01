@@ -1,15 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { api, CurrentUser } from './commercial';
 import { AdminAuthView } from './components/AdminAuthView';
 import { AdminView } from './components/AdminView';
 import { Toast } from './components/Toast';
 import { ToastMessage } from './types';
+import { ADMIN_THEME_STORAGE_KEY, adminThemeStorageKey, applyStoredTheme } from './components/ThemeToggle';
 
 export default function AdminApp() {
   const [loading, setLoading] = useState(true);
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  useLayoutEffect(() => {
+    applyStoredTheme(user ? adminThemeStorageKey(user.id) : ADMIN_THEME_STORAGE_KEY);
+  }, [user?.id]);
 
   useEffect(() => {
     Promise.all([

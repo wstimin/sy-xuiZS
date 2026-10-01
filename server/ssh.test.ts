@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildInstallCommand, formatServerInspectionError, formatSshConnectionError, parseServerInspectionOutput, shellQuote } from "./ssh.js";
+import { buildInstallCommand, formatServerInspectionError, formatSshConnectionError, matchesSshHostKey, parseServerInspectionOutput, shellQuote, sshHostKeyFingerprint } from "./ssh.js";
 
 test("shellQuote safely escapes single quotes", () => {
   assert.equal(shellQuote("a'b"), "'a'\"'\"'b'");
@@ -19,6 +19,19 @@ test("formatSshConnectionError gives actionable connection diagnostics", () => {
     formatSshConnectionError(new Error("All configured authentication methods failed")),
     "SSH 认证失败，请检查用户名、密码或私钥",
   );
+  assert.match(
+    formatSshConnectionError(new Error("SSH 主机密钥指纹不匹配：检测时为 SHA256:old，当前为 SHA256:new")),
+    /主机密钥指纹不匹配/,
+  );
+});
+
+test("SSH host key fingerprints are stable and reject a changed server key", () => {
+  const originalKey = Buffer.from("original-host-key");
+  const changedKey = Buffer.from("changed-host-key");
+  const expected = sshHostKeyFingerprint(originalKey);
+  assert.match(expected, /^SHA256:/);
+  assert.equal(matchesSshHostKey(originalKey, expected), true);
+  assert.equal(matchesSshHostKey(changedKey, expected), false);
 });
 
 test("formatServerInspectionError distinguishes inspection failures from SSH failures", () => {

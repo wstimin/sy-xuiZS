@@ -18,8 +18,13 @@ function encryptionKey(databasePath: string) {
 export class SecretVault {
   private readonly key: Buffer;
 
-  constructor(databasePath: string) {
-    this.key = encryptionKey(databasePath);
+  constructor(databasePath: string, rawKey?: Buffer) {
+    if (rawKey && rawKey.length !== 32) throw new Error("商业配置密钥长度无效");
+    this.key = rawKey ? Buffer.from(rawKey) : encryptionKey(databasePath);
+  }
+
+  exportKey() {
+    return Buffer.from(this.key);
   }
 
   encrypt(value: string) {

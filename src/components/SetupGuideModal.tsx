@@ -16,7 +16,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+      <div className="console-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
       <div className="relative w-full max-w-4xl max-h-[90vh] bg-[#0d0e12] border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
         
         {/* Header */}
@@ -91,7 +91,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
             }`}
           >
             <HelpCircle className="w-3.5 h-3.5" />
-            <span>常见问题 FAQ</span>
+            <span>常见问题</span>
           </button>
         </div>
 
@@ -224,7 +224,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                       提交并保存登录凭据
                     </div>
                     <p className="text-xs text-zinc-400 pl-6 leading-relaxed">
-                      点击【一键搭建】后，后台将建立 SSH 通道在 VPS 上自动完成依赖补全与面板安装。搭建完成后页面会弹窗显示完整的<strong>面板登录 URL、初始 Username 及高强度随机密码</strong>，请注意保存。
+                      点击【一键搭建】后，后台将建立 SSH 通道在 VPS 上自动完成依赖补全与面板安装。搭建完成后页面会弹窗显示完整的<strong>面板登录地址、初始用户名及高强度随机密码</strong>，请注意保存。
                     </p>
                   </div>
 
@@ -267,10 +267,10 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2">
                     <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
                       <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] flex items-center justify-center font-mono">1</span>
-                      填入 xui 面板信息（搭建结果会自动带入 API Token）
+                      填入 xui 面板信息（搭建结果会自动带入接口令牌）
                     </div>
                     <p className="text-xs text-zinc-400 leading-relaxed pl-6">
-                      从面板搭建结果跳转时，地址、账号、API Token 和 TLS 证书路径会自动填写。手动录入已有面板时请直接填写有效 Token。
+                      从面板搭建结果跳转时，地址、账号、接口令牌和 TLS 证书路径会自动填写。手动录入已有面板时请直接填写有效令牌。
                     </p>
                   </div>
 
@@ -300,7 +300,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                       SOCKS5 链式代理配置 (可选二次中继)
                     </div>
                     <p className="text-xs text-zinc-400 leading-relaxed pl-6">
-                      勾选“启用 SOCKS5 链式代理”并填入落地 SOCKS5 代理的 IP、端口与认证信息。系统会自动在面板中配置 Outbounds 转发，隐藏实际出站出口。
+                    勾选“启用 SOCKS5 链式代理”并填入落地 SOCKS5 代理的 IP、端口与认证信息。系统会自动在面板中配置出站转发，隐藏实际出站出口。
                     </p>
                   </div>
 
@@ -310,7 +310,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                       生成与导入节点
                     </div>
                     <p className="text-xs text-zinc-400 leading-relaxed pl-6">
-                      生成后页面将显示真实节点分享链接和 Canvas 二维码。启用 SOCKS 时会显示实际写入的 Outbound 与 Routing JSON；面板启用订阅时才显示订阅地址。
+                    生成后页面将显示真实节点分享链接和二维码。启用 SOCKS 时会显示实际写入的出站与路由配置；面板启用订阅时才显示订阅地址。
                     </p>
                   </div>
                 </div>
@@ -323,7 +323,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
             <div className="space-y-4">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <HelpCircle className="w-5 h-5 text-purple-400" />
-                常见问题与疑难解答 (FAQ)
+                常见问题与疑难解答
               </h3>
 
               <div className="space-y-3 text-xs">
@@ -331,10 +331,10 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                 <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1.5">
                   <div className="font-bold text-purple-300 flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-purple-400 shrink-0" />
-                    Q: 搭建节点的时候不输入 Token 访问令牌能不能搭建成功？
+                    问：搭建节点的时候不输入接口令牌能不能搭建成功？
                   </div>
                   <div className="text-zinc-300 leading-relaxed pl-6">
-                    <strong>不能。</strong> 创建节点统一要求 API Token，并直接通过 Bearer Token 调用管理 API，避免重复登录和认证检查。
+                    <strong>不能。</strong> 创建节点统一要求接口令牌，并直接通过令牌调用管理接口，避免重复登录和认证检查。
                   </div>
                 </div>
 

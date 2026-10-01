@@ -10,7 +10,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 
-export type PaymentProvider = "manual" | "epay" | "mgate" | "tokenpay" | "epusdt" | "paypal" | "alipay_official" | "wechat_official";
+export type PaymentProvider = "epay" | "mgate" | "tokenpay" | "epusdt" | "paypal" | "alipay_official" | "wechat_official";
 
 export interface PaymentChannelConfig {
   id: string;
@@ -657,7 +657,7 @@ const wechatOfficialDriver: PaymentDriver = {
   },
 };
 
-const drivers: Record<Exclude<PaymentProvider, "manual">, PaymentDriver> = {
+const drivers: Record<PaymentProvider, PaymentDriver> = {
   epay: epayDriver,
   mgate: mgateDriver,
   tokenpay: tokenpayDriver,
@@ -668,7 +668,6 @@ const drivers: Record<Exclude<PaymentProvider, "manual">, PaymentDriver> = {
 };
 
 export function getPaymentDriver(provider: PaymentProvider) {
-  if (provider === "manual") throw new Error("人工收款不使用自动支付驱动");
   const driver = drivers[provider];
   if (!driver) throw new Error("不支持的支付驱动");
   return driver;

@@ -1,0 +1,71 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { compareVersions, UpdateService } from "./update-service.js";
+
+test("version comparison handles upgrades and prereleases", () => {
+  assert.equal(compareVersions("3.1.0", "3.0.7"), 1);
+  assert.equal(compareVersions("3.0.7", "3.0.7"), 0);
+  assert.equal(compareVersions("3.0.7-beta.1", "3.0.7"), -1);
+  assert.equal(compareVersions("3.0.7", "3.0.7-beta.1"), 1);
+});
+
+test("update checks use the fixed version feed and report unsupported environments safely", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "xui-update-test-"));
+  try {
+    const service = new UpdateService({
+      currentVersion: "3.0.7",
+      databasePath: path.join(directory, "app.db"),
+      rootDirectory: directory,
+      platform: "win32",
+      fetchImpl: async () => new Response(JSON.stringify({ version: "3.1.0" }), { status: 200 }),
+    });
+    const initial = service.status();
+    assert.equal(initial.currentVersion, "3.0.7");
+    assert.equal(initial.latestVersion, null);
+    assert.equal(initial.canAutoUpdate, false);
+    const checked = await service.check(true);
+    assert.equal(checked.latestVersion, "3.1.0");
+    assert.equal(checked.updateAvailable, true);
+    await assert.rejects(() => service.startUpdate(), /不是 Linux/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("managed Linux updates launch only the bundled detached runner", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "xui-managed-update-test-"));
+  try {
+    fs.mkdirSync(path.join(directory, "dist"), { recursive: true });
+    fs.writeFileSync(path.join(directory, "install.sh"), "#!/usr/bin/env bash\n", "utf8");
+    fs.writeFileSync(path.join(directory, "dist", "update-runner.cjs"), "", "utf8");
+    let invocation: { command: string; args: string[]; options: Record<string, unknown> } | null = null;
+    const service = new UpdateService({
+      currentVersion: "3.0.7",
+      databasePath: path.join(directory, "data", "app.db"),
+      rootDirectory: directory,
+      platform: "linux",
+      isRoot: true,
+      fetchImpl: async () => new Response(JSON.stringify({ version: "3.1.0" }), { status: 200 }),
+      spawnImpl: ((command: string, args: string[], options: Record<string, unknown>) => {
+        invocation = { command, args, options };
+        return { unref() {} };
+      }) as any,
+    });
+    const status = await service.startUpdate();
+    assert.equal(status.state, "scheduled");
+    assert.equal(status.targetVersion, "3.1.0");
+    assert.equal(invocation?.command, process.execPath);
+    assert.deepEqual(invocation?.args, [
+      path.join(directory, "dist", "update-runner.cjs"),
+      path.join(directory, "install.sh"),
+      path.join(directory, "data", "update-status.json"),
+      "3.1.0",
+    ]);
+    assert.equal(invocation?.options.detached, true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

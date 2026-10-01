@@ -528,7 +528,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       {/* Page Title */}
       <div className="pb-6 border-b border-white/10">
         <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 mb-1">
-          <Network className="w-4 h-4" /> XUI Panel Inbound & Chain Proxy Configurator
+          <Network className="w-4 h-4" /> 节点入站与链式代理配置
         </div>
         <h1 className="text-2xl sm:text-3xl font-extrabold text-white">搭建节点 (支持 SOCKS 链式)</h1>
         <p className="text-xs sm:text-sm text-zinc-400 mt-1">
@@ -665,7 +665,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-zinc-300">路径 Path</label>
+              <label className="text-xs font-medium text-zinc-300">访问路径</label>
               <input
                 type="text"
                 placeholder="例: /xui"
@@ -703,7 +703,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
           <div className="pt-2 border-t border-white/10 space-y-2">
             <label className="text-xs font-medium text-zinc-300 flex items-center gap-2">
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>API Token 访问令牌</span>
+              <span>接口令牌</span>
               <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                 搭建面板后自动带入
               </span>
@@ -712,7 +712,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
             <input
               type="password"
               required
-              placeholder="请填写面板 API Token"
+              placeholder="请填写面板接口令牌"
               value={form.panelToken || ''}
               onChange={e => setForm({ ...form, panelToken: e.target.value })}
               className="w-full px-3.5 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 text-indigo-200 text-xs font-mono outline-none transition-all"
@@ -733,7 +733,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
           {/* 1. Protocol Selection Buttons */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-zinc-300">主传输协议 (Protocol)</label>
+            <label className="text-xs font-medium text-zinc-300">主传输协议</label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {protocolsList.map(p => (
                 <button
@@ -760,7 +760,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
           {/* 2. Transport Selection Buttons with Conflict Check */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-zinc-300">传输类型 (Transport)</label>
+            <label className="text-xs font-medium text-zinc-300">传输类型</label>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
               {transportsList.map(t => {
                 const transRule = checkTransportAllowed(form.protocol, t);
@@ -790,7 +790,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
           {/* 3. Security Selection Buttons with Conflict Check */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-zinc-300">安全 / 加密类型 (Security)</label>
+            <label className="text-xs font-medium text-zinc-300">安全与加密类型</label>
             <div className="grid grid-cols-3 gap-3">
               {securitiesList.map(s => {
                 const secRule = checkSecurityAllowed(form.protocol, form.transport, s);
@@ -1002,7 +1002,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
                   onChange={e => setForm({ ...form, autoOutbound: e.target.checked })}
                   className="w-4 h-4 accent-indigo-500 rounded"
                 />
-                <span className="text-zinc-200 font-medium">自动添加为出站 (Outbound)</span>
+                <span className="text-zinc-200 font-medium">自动添加为出站</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer">
@@ -1028,7 +1028,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
             <p className="text-[11px] text-zinc-400 leading-relaxed pt-2 border-t border-white/10">
               <Info className="w-3.5 h-3.5 text-indigo-400 inline mr-1" />
-              填写 SOCKS 后，系统会在创建节点时自动配置出站 (Outbound) 和路由规则 (Routing Rules)，将该节点接入流量通过中继 SOCKS 转发，实现隐藏落地 IP 及双重加密出站。
+              填写 SOCKS 后，系统会在创建节点时自动配置出站和路由规则，将该节点接入流量通过中继 SOCKS 转发，实现隐藏落地 IP 及双重加密出站。
             </p>
           </div>
         </div>
@@ -1123,7 +1123,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
 
       {/* Output Modal Popup with 100% Real Canvas QR Code */}
       {resultModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="console-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="relative w-full max-w-2xl bg-[#0d0d12] border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <div className="flex items-start justify-between pb-4 border-b border-white/10">
@@ -1204,12 +1204,12 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
                 {/* Collapsible / Viewable JSON Tabs */}
                 <div className="space-y-2 pt-1">
                   <div className="flex items-center justify-between text-[11px] text-zinc-400">
-                    <span>Xray Outbounds JSON:</span>
+                    <span>Xray 出站配置：</span>
                     <button
                       onClick={() => handleCopy(resultModal.xrayOutboundsJson, 'outboundsJson')}
                       className="text-indigo-400 hover:underline flex items-center gap-1"
                     >
-                      {copiedField === 'outboundsJson' ? '已复制' : '复制 Outbounds JSON'}
+                      {copiedField === 'outboundsJson' ? '已复制' : '复制出站配置'}
                     </button>
                   </div>
                   <pre className="p-3 rounded-xl bg-black/40 border border-white/10 text-[11px] font-mono text-zinc-300 max-h-32 overflow-y-auto leading-tight">

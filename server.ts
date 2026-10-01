@@ -5,7 +5,6 @@ import https from "node:https";
 import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { attachCommercialUser, commercialUser, createCommercialRouter, requireCommercialUser } from "./server/commercial-api.js";
 import { CommercialStore, maskHost } from "./server/commercial-store.js";
@@ -14,6 +13,8 @@ import { buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, 
 import { cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
 import { findInboundRecord, isRetryablePanelConnectionError, parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
+import { configureTrustedProxy, createApiRateLimiters, isPaymentNotificationPath } from "./server/network-security.js";
+import { UpdateService } from "./server/update-service.js";
 
 type ServerInspection = Awaited<ReturnType<typeof inspectServer>>;
 type CachedSshInspection = {
@@ -27,6 +28,28 @@ type CachedSshInspection = {
 
 const cachedSshInspections = new Map<string, CachedSshInspection>();
 const SSH_SESSION_TTL_MS = 5 * 60_000;
+
+function applicationVersion() {
+  const configured = optionalString(process.env.APP_VERSION);
+  if (configured && configured.toLowerCase() !== "development") return configured;
+
+  // Local development used to report the literal "development", which made
+  // the version checker unable to compare against the official semver feed.
+  // Release packages still prefer APP_VERSION/VERSION, while source checkouts
+  // can fall back to package.json for a useful and comparable version.
+  for (const filename of ["VERSION", "package.json"]) {
+    try {
+      const file = path.join(process.cwd(), filename);
+      const raw = fs.readFileSync(file, "utf8");
+      const value = filename === "VERSION" ? raw : (JSON.parse(raw) as { version?: unknown }).version;
+      const version = optionalString(value);
+      if (version) return version;
+    } catch {
+      // Continue to the next source and keep the development fallback below.
+    }
+  }
+  return "development";
+}
 
 function cacheSshInspection(
   session: Awaited<ReturnType<typeof connectSsh>>,
@@ -80,10 +103,6 @@ const OFFICIAL_INSTALLER_VERSION = "v3.6.0";
 function noStore(_req: Request, res: Response, next: NextFunction) {
   res.setHeader("Cache-Control", "no-store");
   next();
-}
-
-function isPaymentNotificationPath(pathname: string) {
-  return /^\/payment\/(epay|mgate|tokenpay|epusdt|paypal|alipay_official|wechat_official)\/[^/]+\/notify\/?$/.test(pathname);
 }
 
 function requireAppAuth(req: Request, res: Response, next: NextFunction) {
@@ -141,42 +160,34 @@ function parseInstallerResult(output: string): Record<string, string> {
 async function startServer() {
   const app = express();
   const port = validPort(process.env.PORT, 1888);
-  const commercialStore = new CommercialStore();
+  const host = optionalString(process.env.HOST) || "0.0.0.0";
+  const databasePath = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "app.db");
+  const appVersion = applicationVersion();
+  const commercialStore = new CommercialStore(databasePath);
+  const updateService = new UpdateService({ currentVersion: appVersion, databasePath });
 
   app.disable("x-powered-by");
+  configureTrustedProxy(app);
   app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
   app.use(express.json({
     limit: "2mb",
     verify: (req, _res, buffer) => { (req as Request & { rawBody?: string }).rawBody = buffer.toString("utf8"); },
   }));
   app.use(express.urlencoded({ extended: false, limit: "64kb" }));
-  app.use("/api", rateLimit({
-    windowMs: 60_000,
-    limit: 300,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: req => !isPaymentNotificationPath(req.path),
-  }));
-  app.use("/api", rateLimit({
-    windowMs: 60_000,
-    limit: 60,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: req => isPaymentNotificationPath(req.path),
-  }));
+  for (const limiter of createApiRateLimiters()) app.use("/api", limiter);
   app.use("/api", noStore);
 
   app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
-      version: optionalString(process.env.APP_VERSION) || "development",
+      version: appVersion,
       timestamp: new Date().toISOString(),
     });
   });
 
   app.use("/api", requireAppAuth);
   app.use("/api", attachCommercialUser(commercialStore));
-  app.use("/api", createCommercialRouter(commercialStore));
+  app.use("/api", createCommercialRouter(commercialStore, { updateService, appVersion }));
   app.use("/api", requireCommercialUser);
 
   app.get("/api/download-zip", (_req, res) => {
@@ -268,17 +279,16 @@ async function startServer() {
       const password = panelPassword(body.panelPassword, `Xui_${randomBytes(12).toString("base64url")}`);
 
       const cachedInspection = takeSshInspection(body.sshSessionId, body);
+      if (!cachedInspection) throw new Error("SSH 检测会话无效或已过期，请重新执行快速检测后再部署");
       let systemInfo: ServerInspection;
       write({ type: "log", step: 1, message: `[SSH] 正在建立正式部署连接 ${host}:${body.sshPort || 22}` });
-      session = await connectSsh(body, { timeoutMs: 25_000 });
+      session = await connectSsh(body, {
+        timeoutMs: 25_000,
+        expectedFingerprint: cachedInspection.hostKeyFingerprint,
+      });
       write({ type: "log", step: 1, message: `[SSH] 正式部署连接成功，主机密钥指纹 ${session.fingerprint}` });
-      if (cachedInspection) {
-        systemInfo = cachedInspection;
-        write({ type: "log", step: 2, message: `[OS] 已复用快速检测结果：${systemInfo.osName} / ${systemInfo.arch}` });
-      } else {
-        systemInfo = await inspectServer(session);
-        write({ type: "log", step: 2, message: `[OS] ${systemInfo.osName} / ${systemInfo.arch}` });
-      }
+      systemInfo = cachedInspection;
+      write({ type: "log", step: 2, message: `[OS] 已复用快速检测结果：${systemInfo.osName} / ${systemInfo.arch}` });
       if (!systemInfo.systemdAvailable) throw new Error("服务器没有可用的 systemd，无法安装面板服务");
       if (!systemInfo.canInstall) throw new Error("当前 SSH 用户不是 root，且没有可用的免密 sudo 权限，无法安装面板");
       if (!systemInfo.isRoot) {
@@ -375,7 +385,7 @@ async function startServer() {
       }
 
       const result = {
-        id: `panel-${Date.now()}`,
+        id: reservation.deploymentId,
         createdAt: new Date().toLocaleString("zh-CN"),
         accessUrl,
         protocol: accessUrl.startsWith("https://") ? "https" : "http",
@@ -394,7 +404,11 @@ async function startServer() {
       };
       write({ type: "log", step: 9, message: "[SUCCESS] 面板服务已启动，安装结果验证通过" });
       remoteSucceeded = true;
-      commercialStore.succeedDeployment(reservation.deploymentId, `面板 ${maskHost(domain || host)}:${installedPort}`);
+      commercialStore.succeedDeployment(
+        reservation.deploymentId,
+        `面板 ${maskHost(domain || host)}:${installedPort}`,
+        result,
+      );
       write({ type: "result", result });
       completed = true;
     } catch (error) {
@@ -618,7 +632,7 @@ async function startServer() {
       const address = cleanHostInput(body.panelAddress);
       const realitySettings = built.payload.streamSettings.realitySettings;
       const result = {
-        id: `node-${Date.now()}`,
+        id: reservation.deploymentId,
         inboundId,
         inboundTag,
         createdAt: new Date().toLocaleString("zh-CN"),
@@ -643,7 +657,11 @@ async function startServer() {
       };
       progress(5, "节点创建完成");
       remoteSucceeded = true;
-      commercialStore.succeedDeployment(reservation.deploymentId, `${body.protocol || "VLESS"} 节点 ${maskHost(body.panelAddress)}:${built.port}`);
+      commercialStore.succeedDeployment(
+        reservation.deploymentId,
+        `${body.protocol || "VLESS"} 节点 ${maskHost(body.panelAddress)}:${built.port}`,
+        result,
+      );
       write({ type: "result", result });
     } catch (error) {
       let rollbackFailed = false;
@@ -727,10 +745,10 @@ async function startServer() {
     const server = https.createServer({ cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) }, app);
     server.keepAliveTimeout = 120_000;
     server.headersTimeout = 125_000;
-    server.listen(port, "0.0.0.0", () => console.log(`[HTTPS] 面板部署助手: https://0.0.0.0:${port}`));
+    server.listen(port, host, () => console.log(`[HTTPS] 面板部署助手: https://${host}:${port}`));
     server.on("close", () => commercialStore.close());
   } else {
-    const server = app.listen(port, "0.0.0.0", () => console.log(`[HTTP] 面板部署助手: http://0.0.0.0:${port}`));
+    const server = app.listen(port, host, () => console.log(`[HTTP] 面板部署助手: http://${host}:${port}`));
     server.keepAliveTimeout = 120_000;
     server.headersTimeout = 125_000;
     server.on("close", () => commercialStore.close());
@@ -741,3 +759,5 @@ startServer().catch((error) => {
   console.error("服务启动失败:", error);
   process.exitCode = 1;
 });
+
+

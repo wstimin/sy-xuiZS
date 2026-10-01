@@ -51,7 +51,7 @@ import {
   ContactMethod,
   ContactSettings,
   CurrentUser,
-  DatabaseBackupValidation,
+  PortableBackupValidation,
   DeploymentRecord,
   Entitlement,
   formatDate,
@@ -72,158 +72,80 @@ import {
 } from '../commercial';
 import { copyToClipboard } from '../utils/clipboard';
 import { ChangePasswordForm } from './ChangePasswordForm';
+import { adminThemeStorageKey, ThemeToggle } from './ThemeToggle';
 import { NumberInput } from './NumberInput';
 import { AdminDialog } from './admin/AdminDialog';
+import {
+  AdminTab,
+  AdminUser,
+  adminCommands,
+  adminTabMeta,
+  AuditLog,
+  contactTypeLabels,
+  CreatedRedeemCode,
+  emptyAdminExceptions,
+  emptyContactMethod,
+  emptyContactSettings,
+  emptyEmailSettings,
+  emptyExternalRedeemSettings,
+  emptyGrant,
+  emptyPaymentMethod,
+  emptyPlan,
+  emptyRecommendation,
+  emptyRecommendationSettings,
+  emptyUser,
+  navigation,
+  navigationGroups,
+  PAGE_SIZE,
+  PORTABLE_BACKUP_CONTENT_TYPE,
+  SettingsDialog,
+  SettingsSection,
+  Stats,
+  SystemSettings,
+  SystemVersionStatus,
+  UsageLedgerEntry,
+  UserDetail,
+  UserProfileTab,
+} from './admin/adminModel';
+import {
+  AdminPageLoading,
+  AdminSection,
+  AdminTable,
+  AdminToolbar,
+  ContactMethodEditor,
+  Dashboard,
+  DetailBlock,
+  DetailItem,
+  DiagnosisBadge,
+  EmptyInline,
+  GrantDialog,
+  Pagination,
+  PayloadDetails,
+  PaymentMethodEditor,
+  PlanDialog,
+  PlanSnapshotDetails,
+  QuotaDialog,
+  ResourceRecommendationEditor,
+  SettingSwitch,
+  StatusBadge,
+} from './admin/AdminViewParts';
+import {
+  auditActionText,
+  auditDetail,
+  downloadCsv,
+  entitlementStatus,
+  legacyPaymentType,
+  paymentChannelName,
+  paymentChannelText,
+  paymentCheckLabel,
+  paymentProvider,
+  paymentProviderName,
+  paymentProviderText,
+  planSnapshotName,
+  userActionDescription,
+  userActionTitle,
+} from './admin/adminUtils';
 
-type AdminTab = 'dashboard' | 'orders' | 'plans' | 'redeem-codes' | 'users' | 'entitlements' | 'ledger' | 'deployments' | 'audit' | 'settings' | 'security';
-type SettingsSection = 'general' | 'recommendations' | 'email' | 'payments';
-type SettingsDialog = 'order' | 'redeem' | 'contact' | 'smtp' | 'sender' | 'verification' | 'test-email' | null;
-type AdminUser = { id: string; username: string; email: string | null; emailVerified: boolean; role: 'user' | 'admin'; status: 'active' | 'disabled'; createdAt: string; lastLoginAt?: string };
-type UsageLedgerEntry = { id: string; userId: string; username: string; entitlementId: string; planName: string; deploymentId?: string; capability: 'panel' | 'node'; action: 'grant' | 'reserve' | 'consume' | 'release' | 'adjust'; amount: number; note: string; createdAt: string };
-type AuditLog = { id: string; adminUserId: string; adminUsername: string; action: string; targetType: string; targetId: string; detail: string; createdAt: string };
-type UserDetail = { user: AdminUser; orders: Order[]; entitlements: Entitlement[]; deployments: DeploymentRecord[] };
-type UserProfileTab = 'overview' | 'entitlements' | 'orders' | 'deployments' | 'ledger';
-type Stats = {
-  users: number;
-  activeUsers: number;
-  disabledUsers: number;
-  admins: number;
-  orders: number;
-  pendingOrders: number;
-  paidOrders: number;
-  refundedOrders: number;
-  revenueCents: number;
-  entitlements: number;
-  activeEntitlements: number;
-  expiredEntitlements: number;
-  revokedEntitlements: number;
-  deployments: number;
-  running: number;
-  succeeded: number;
-  failed: number;
-  uncertain: number;
-};
-type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; email: EmailSettings; orderExpiryMinutes: number; adminPath: string; redeemCodePurchaseUrl: string; contact: ContactSettings; recommendations: ResourceRecommendationSettings };
-type CreatedRedeemCode = RedeemCode & { code: string };
-
-const PAGE_SIZE = 10;
-const emptyPlan: Omit<Plan, 'id'> = {
-  name: '',
-  description: '',
-  priceCents: 990,
-  durationUnit: 'days',
-  durationValue: 7,
-  panelMode: 'limited',
-  panelLimit: 1,
-  nodeMode: 'limited',
-  nodeLimit: 3,
-  dailyPanelLimit: 1,
-  dailyNodeLimit: 3,
-  concurrencyLimit: 1,
-  enabled: true,
-  homepageVisible: false,
-  sortOrder: 10,
-};
-const emptyGrant = {
-  userId: '',
-  name: '管理员发放权益',
-  durationUnit: 'months',
-  durationValue: 1,
-  panelMode: 'limited',
-  panelLimit: 1,
-  nodeMode: 'limited',
-  nodeLimit: 5,
-  dailyPanelLimit: 1,
-  dailyNodeLimit: 5,
-  concurrencyLimit: 1,
-};
-const emptyUser = { username: '', email: '', password: '', role: 'user' as 'user' | 'admin' };
-const emptyPaymentMethod = (): PaymentMethod => ({ id: `method-${Date.now()}`, name: '易支付', type: 'epay', provider: 'epay', enabled: true, instructions: '', paymentUrl: '', gatewayUrl: '', merchantId: '', merchantSecret: '', merchantSecretConfigured: false, channel: 'alipay', enabledChannels: ['alipay'], currency: 'CNY', sortOrder: 10 });
-const emptyEmailSettings: EmailSettings = { emailEnabled: false, emailVerificationRequired: false, smtpHost: '', smtpPort: 465, smtpEncryption: 'ssl', smtpUsername: '', smtpPassword: '', smtpPasswordConfigured: false, smtpFromName: 'NEXUS CLOUD', smtpFromEmail: '', smtpReplyTo: '', verificationCodeTtlMinutes: 10, verificationResendSeconds: 60, siteName: 'NEXUS CLOUD', publicBaseUrl: '' };
-const emptyContactSettings: ContactSettings = { enabled: false, buttonLabel: '立即咨询', title: '联系站长', description: '', methods: [] };
-const contactTypeLabels: Record<ContactMethod['type'], string> = {
-  wechat: '微信',
-  qq: 'QQ',
-  telegram: 'Telegram',
-  whatsapp: 'WhatsApp',
-  wecom: '企业微信',
-  email: '邮箱',
-  phone: '电话',
-  discord: 'Discord',
-  line: 'LINE',
-  custom: '自定义',
-};
-const emptyContactMethod = (): ContactMethod => ({
-  id: `contact-${Date.now().toString(36)}`,
-  type: 'wechat',
-  enabled: true,
-  name: '微信',
-  value: '',
-  contactUrl: '',
-  qrCodeUrl: '',
-  qrCodeUploaded: false,
-  sortOrder: 10,
-});
-const emptyRecommendationSettings: ResourceRecommendationSettings = { serverEnabled: true, residentialIpEnabled: true, items: [] };
-const emptyRecommendation = (): ResourceRecommendation => ({
-  id: `resource-${Date.now().toString(36)}`,
-  category: 'server',
-  enabled: true,
-  name: '',
-  description: '',
-  logoUrl: '',
-  logoUploaded: false,
-  badge: '',
-  purchaseUrl: '',
-  buttonLabel: '了解详情',
-  openInNewTab: true,
-  sortOrder: 10,
-});
-const TOKENPAY_CURRENCIES = [
-  { value: 'USDT_TRC20', label: 'USDT-TRC20' },
-  { value: 'USDT_ERC20', label: 'USDT-ERC20' },
-] as const;
-const LEGACY_TOKENPAY_CURRENCIES = ['TRX', 'ETH', 'USDC_ERC20'] as const;
-const MGATE_CURRENCIES = ['CNY', 'USD', 'EUR', 'HKD', 'TWD', 'JPY', 'KRW', 'SGD'] as const;
-const emptyAdminExceptions: AdminExceptions = { summary: { total: 0, critical: 0, warning: 0 }, items: [] };
-const DATABASE_CONTENT_TYPE = 'application/vnd.sqlite3';
-
-const navigationGroups: Array<{ label: string; items: Array<{ id: AdminTab; label: string; icon: React.ElementType; tone: string }> }> = [
-  { label: '工作台', items: [{ id: 'dashboard', label: '运营概览', icon: LayoutDashboard, tone: 'cyan' }] },
-  { label: '客户', items: [
-    { id: 'users', label: '客户列表', icon: Users, tone: 'blue' },
-    { id: 'entitlements', label: '权益管理', icon: BadgeCheck, tone: 'emerald' },
-  ] },
-  { label: '交易', items: [
-    { id: 'orders', label: '订单管理', icon: CreditCard, tone: 'green' },
-    { id: 'plans', label: '套餐管理', icon: Boxes, tone: 'violet' },
-    { id: 'redeem-codes', label: '卡密管理', icon: KeyRound, tone: 'amber' },
-  ] },
-  { label: '交付', items: [
-    { id: 'deployments', label: '搭建任务', icon: Activity, tone: 'amber' },
-    { id: 'ledger', label: '额度流水', icon: FileText, tone: 'sky' },
-  ] },
-  { label: '系统', items: [
-    { id: 'settings', label: '系统设置', icon: Settings, tone: 'indigo' },
-    { id: 'audit', label: '操作审计', icon: ClipboardCheck, tone: 'slate' },
-    { id: 'security', label: '账号安全', icon: KeyRound, tone: 'rose' },
-  ] },
-];
-const navigation = navigationGroups.flatMap(group => group.items);
-
-const adminTabMeta: Record<AdminTab, { area: string; description: string }> = {
-  dashboard: { area: '工作台', description: '业务指标、异常和待处理事项' },
-  orders: { area: '交易', description: '订单状态、支付链路和权益发放' },
-  plans: { area: '交易', description: '套餐价格、有效期和使用额度' },
-  'redeem-codes': { area: '交易', description: '卡密生成、兑换和停用记录' },
-  users: { area: '客户', description: '客户身份、状态和关联业务数据' },
-  entitlements: { area: '客户', description: '客户权益、剩余额度和有效期' },
-  ledger: { area: '交付', description: '额度发放、冻结、核销和返还流水' },
-  deployments: { area: '交付', description: '面板安装和节点创建任务' },
-  audit: { area: '系统', description: '管理员关键操作与变更记录' },
-  settings: { area: '系统', description: '业务、推荐、邮箱和支付配置' },
-  security: { area: '系统', description: '管理员身份、入口和数据安全' },
-};
 
 interface AdminViewProps {
   currentUser: CurrentUser;
@@ -251,7 +173,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
   const [paymentRuntimeOpen, setPaymentRuntimeOpen] = useState(false);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
-  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', contact: emptyContactSettings, recommendations: emptyRecommendationSettings });
+  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', externalRedeem: emptyExternalRedeemSettings, contact: emptyContactSettings, recommendations: emptyRecommendationSettings });
   const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState('');
   const [settingsSaveBusy, setSettingsSaveBusy] = useState(false);
   const [savedPaymentMethodIds, setSavedPaymentMethodIds] = useState<string[]>([]);
@@ -259,7 +181,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [paymentChecks, setPaymentChecks] = useState<Record<string, PaymentCheckResult>>({});
   const [paymentCheckBusy, setPaymentCheckBusy] = useState('');
   const [databaseFile, setDatabaseFile] = useState<File | null>(null);
-  const [databaseValidation, setDatabaseValidation] = useState<DatabaseBackupValidation | null>(null);
+  const [databaseValidation, setDatabaseValidation] = useState<PortableBackupValidation | null>(null);
+  const [backupPassword, setBackupPassword] = useState('');
+  const [restorePassword, setRestorePassword] = useState('');
   const [restoreConfirmation, setRestoreConfirmation] = useState('');
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [savedContactMethodIds, setSavedContactMethodIds] = useState<string[]>([]);
@@ -267,6 +191,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
   const [settingsDialog, setSettingsDialog] = useState<SettingsDialog>(null);
+  const [securityDialog, setSecurityDialog] = useState<'username' | 'path' | 'password' | 'update' | 'backup' | null>(null);
   const [editingPaymentMethod, setEditingPaymentMethod] = useState<{ index: number; method: PaymentMethod } | null>(null);
   const [deletingPaymentMethod, setDeletingPaymentMethod] = useState<{ index: number; method: PaymentMethod } | null>(null);
   const [editingRecommendation, setEditingRecommendation] = useState<{ index: number; item: ResourceRecommendation } | null>(null);
@@ -278,8 +203,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [editingPlan, setEditingPlan] = useState<(Omit<Plan, 'id'> & { id?: string }) | null>(null);
-  const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
-  const [tradeNo, setTradeNo] = useState('');
   const [cancelOrder, setCancelOrder] = useState<Order | null>(null);
   const [refundOrder, setRefundOrder] = useState<Order | null>(null);
   const [refundTradeNo, setRefundTradeNo] = useState('');
@@ -302,14 +225,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [userDetail, setUserDetail] = useState<UserDetail | null>(null);
   const [userProfileTab, setUserProfileTab] = useState<UserProfileTab>('overview');
   const [detailLoading, setDetailLoading] = useState(false);
-  const [redeemCodeDraft, setRedeemCodeDraft] = useState({ planId: '', quantity: 10, note: '', expiresAt: '' });
+  const [redeemCodeDraft, setRedeemCodeDraft] = useState({ amountCents: 0, quantity: 10, note: '', expiresAt: '' });
   const [redeemCodeDialogOpen, setRedeemCodeDialogOpen] = useState(false);
   const [createdRedeemCodes, setCreatedRedeemCodes] = useState<CreatedRedeemCode[]>([]);
+  const [versionStatus, setVersionStatus] = useState<SystemVersionStatus | null>(null);
+  const [updateConfirmation, setUpdateConfirmation] = useState('');
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
 
   const load = async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      const [statsResult, exceptionResult, plansResult, ordersResult, usersResult, entitlementResult, deploymentResult, ledgerResult, auditResult, settingsResult, attemptResult, notificationResult, redeemCodeResult] = await Promise.all([
+      const [statsResult, exceptionResult, plansResult, ordersResult, usersResult, entitlementResult, deploymentResult, ledgerResult, auditResult, settingsResult, attemptResult, notificationResult, redeemCodeResult, versionResult] = await Promise.all([
         api<{ stats: Stats }>('/api/admin/stats'),
         api<AdminExceptions>('/api/admin/exceptions'),
         api<{ plans: Plan[] }>('/api/admin/plans'),
@@ -323,6 +251,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         api<{ attempts: PaymentAttempt[] }>('/api/admin/payment-attempts'),
         api<{ notifications: PaymentNotification[] }>('/api/admin/payment-notifications'),
         api<{ redeemCodes: RedeemCode[] }>('/api/admin/redeem-codes'),
+        api<{ status: SystemVersionStatus }>('/api/admin/system/version'),
       ]);
       setStats(statsResult.stats);
       setExceptions(exceptionResult);
@@ -336,6 +265,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       setPaymentAttempts(attemptResult.attempts);
       setPaymentNotifications(notificationResult.notifications);
       setRedeemCodes(redeemCodeResult.redeemCodes);
+      setVersionStatus(versionResult.status);
       setSettingsData(settingsResult.settings);
       setSavedSettingsSnapshot(JSON.stringify(settingsResult.settings));
       setSavedPaymentMethodIds(settingsResult.settings.paymentMethods.map(method => method.id));
@@ -345,9 +275,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       setAdminPathDraft(settingsResult.settings.adminPath);
       if (!grant.userId && usersResult.users.length) {
         setGrant(value => ({ ...value, userId: usersResult.users.find(user => user.role === 'user')?.id || usersResult.users[0].id }));
-      }
-      if (!redeemCodeDraft.planId && plansResult.plans.length) {
-        setRedeemCodeDraft(value => ({ ...value, planId: plansResult.plans.find(plan => plan.enabled)?.id || plansResult.plans[0].id }));
       }
     } catch (error) {
       if (error && typeof error === 'object' && 'status' in error && error.status === 401) onSessionEnded();
@@ -366,6 +293,30 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     setMobileNavOpen(false);
   }, [tab]);
   useEffect(() => { setPage(1); }, [query, statusFilter]);
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandQuery('');
+        setCommandOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, []);
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const handleNavigationKeys = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileNavOpen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleNavigationKeys);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleNavigationKeys);
+    };
+  }, [mobileNavOpen]);
 
   const runAction = async (title: string, url: string, options: RequestInit, after?: () => void) => {
     setBusy(true);
@@ -394,7 +345,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     return matchesQuery && (statusFilter === 'all' || (statusFilter === 'enabled' ? plan.enabled : !plan.enabled));
   }), [normalizedQuery, plans, statusFilter]);
   const filteredRedeemCodes = useMemo(() => redeemCodes.filter(item => {
-    const matchesQuery = !normalizedQuery || `${item.codeMasked} ${item.planName} ${item.note} ${item.redeemedByUsername || ''}`.toLowerCase().includes(normalizedQuery);
+    const matchesQuery = !normalizedQuery || `${item.codeMasked} ${item.amountCents} ${item.note} ${item.redeemedByUsername || ''}`.toLowerCase().includes(normalizedQuery);
     return matchesQuery && (statusFilter === 'all' || item.status === statusFilter);
   }), [normalizedQuery, redeemCodes, statusFilter]);
   const filteredUsers = useMemo(() => users.filter(user => {
@@ -512,16 +463,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     setSettingsDialog('contact');
   };
 
+  const normalizeContactMethod = (method: ContactMethod) => ({
+    ...method,
+    id: method.id.trim().toLowerCase(),
+    name: method.name.trim(),
+    value: method.value.trim(),
+    contactUrl: method.contactUrl.trim(),
+    qrCodeUrl: method.qrCodeUrl.trim(),
+  });
+
   const saveContactMethodDraft = () => {
     if (!editingContactMethod) return;
-    const normalized = {
-      ...editingContactMethod.method,
-      id: editingContactMethod.method.id.trim().toLowerCase(),
-      name: editingContactMethod.method.name.trim(),
-      value: editingContactMethod.method.value.trim(),
-      contactUrl: editingContactMethod.method.contactUrl.trim(),
-      qrCodeUrl: editingContactMethod.method.qrCodeUrl.trim(),
-    };
+    const normalized = normalizeContactMethod(editingContactMethod.method);
     const duplicate = settingsData.contact.methods.some((method, index) => method.id === normalized.id && index !== editingContactMethod.index);
     if (duplicate) return showToast('联系方式标识重复', '请为每种联系方式填写不同的唯一标识', 'warning');
     setSettingsData(value => ({
@@ -545,21 +498,44 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     if (!file) return;
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return showToast('图片格式不支持', '请选择 PNG、JPEG 或 WebP 图片', 'warning');
     if (file.size > 1024 * 1024) return showToast('图片过大', '咨询二维码不能超过 1MB', 'warning');
-    if (!savedContactMethodIds.includes(method.id)) return showToast('请先保存联系方式', '点击右上角“保存更改”后再上传二维码', 'warning');
+    const normalized = normalizeContactMethod(method);
+    if (!normalized.id || !normalized.name) return showToast('请先完善联系方式', '填写显示名称和唯一标识后即可上传', 'warning');
+    const duplicate = settingsData.contact.methods.some((item, itemIndex) => item.id === normalized.id && itemIndex !== index);
+    if (duplicate) return showToast('联系方式标识重复', '请为每种联系方式填写不同的唯一标识', 'warning');
     setBusy(true);
     try {
+      let targetIndex = index;
+      if (!savedContactMethodIds.includes(normalized.id)) {
+        const methods = index < 0
+          ? [...settingsData.contact.methods, normalized]
+          : settingsData.contact.methods.map((item, itemIndex) => itemIndex === index ? normalized : item);
+        targetIndex = index < 0 ? methods.length - 1 : index;
+        const contact = { ...settingsData.contact, methods };
+        await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ contact }) });
+        setSettingsData(value => ({ ...value, contact }));
+        setSavedContactMethodIds(methods.map(item => item.id));
+        setSavedSettingsSnapshot(snapshot => {
+          try {
+            const saved = JSON.parse(snapshot) as SystemSettings;
+            return JSON.stringify({ ...saved, contact });
+          } catch {
+            return snapshot;
+          }
+        });
+        setEditingContactMethod({ index: targetIndex, method: normalized });
+      }
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('图片读取失败'));
         reader.onerror = () => reject(new Error('图片读取失败'));
         reader.readAsDataURL(file);
       });
-      await api(`/api/admin/contact-methods/${encodeURIComponent(method.id)}/qr`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
-      updateContactMethod(index, { qrCodeUploaded: true });
-      setEditingContactMethod(current => current && current.index === index
+      await api(`/api/admin/contact-methods/${encodeURIComponent(normalized.id)}/qr`, { method: 'POST', body: JSON.stringify({ dataUrl }) });
+      updateContactMethod(targetIndex, { qrCodeUploaded: true });
+      setEditingContactMethod(current => current && current.index === targetIndex
         ? { ...current, method: { ...current.method, qrCodeUploaded: true } }
         : current);
-      showToast(`${method.name}二维码已上传`, '前台会优先显示上传的图片', 'success');
+      showToast(`${normalized.name}二维码已上传`, index < 0 ? '联系方式已自动保存，前台会优先显示上传的图片' : '前台会优先显示上传的图片', 'success');
     } catch (error) {
       showToast('二维码上传失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
@@ -670,14 +646,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     }
   };
 
-  const confirmPayment = async () => {
-    if (!paymentOrder) return;
-    await runAction('订单已确认收款', `/api/admin/orders/${paymentOrder.id}/mark-paid`, {
-      method: 'POST',
-      body: JSON.stringify({ tradeNo: tradeNo.trim() }),
-    }, () => { setPaymentOrder(null); setTradeNo(''); });
-  };
-
   const confirmUserAction = async () => {
     if (!userAction) return;
     if (userAction.kind === 'password') {
@@ -714,8 +682,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       body: JSON.stringify({
         panelRemaining: editingEntitlement.panelMode === 'limited' ? editingEntitlement.panelRemaining : undefined,
         nodeRemaining: editingEntitlement.nodeMode === 'limited' ? editingEntitlement.nodeRemaining : undefined,
-        dailyPanelLimit: editingEntitlement.dailyPanelLimit,
-        dailyNodeLimit: editingEntitlement.dailyNodeLimit,
+        dailyPanelLimit: 0,
+        dailyNodeLimit: 0,
         concurrencyLimit: editingEntitlement.concurrencyLimit,
       }),
     }, () => setEditingEntitlement(null));
@@ -780,16 +748,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   };
 
   const downloadDatabaseBackup = async () => {
+    if (backupPassword.length < 12) return showToast('请设置备份密码', '至少 12 位；迁移恢复时必须使用同一密码', 'warning');
     setBusy(true);
     try {
-      const response = await fetch('/api/admin/database/backup');
+      const response = await fetch('/api/admin/system-backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: backupPassword }),
+      });
       if (!response.ok) {
         const data = await response.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error || `备份下载失败（HTTP ${response.status}）`);
       }
       const blob = await response.blob();
       const disposition = response.headers.get('content-disposition') || '';
-      const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] || `xui-backup-${new Date().toISOString().slice(0, 10)}.db`;
+      const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] || `xui-complete-backup-${new Date().toISOString().slice(0, 10)}.xuibak`;
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -798,9 +771,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      showToast('数据库备份已下载', `${Math.max(1, Math.round(blob.size / 1024))} KB`, 'success');
+      setBackupPassword('');
+      showToast('完整系统备份已下载', `${Math.max(1, Math.round(blob.size / 1024))} KB · 请妥善保存备份密码`, 'success');
     } catch (error) {
-      showToast('数据库备份失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+      showToast('完整备份失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
       setBusy(false);
     }
@@ -810,33 +784,34 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     setDatabaseValidation(null);
     setRestoreConfirmation('');
     if (!file) return setDatabaseFile(null);
-    if (!file.name.toLowerCase().endsWith('.db')) {
+    if (!file.name.toLowerCase().endsWith('.xuibak')) {
       setDatabaseFile(null);
-      return showToast('备份文件格式不正确', '请选择扩展名为 .db 的 SQLite 数据库备份', 'warning');
+      return showToast('备份文件格式不正确', '请选择扩展名为 .xuibak 的完整系统备份', 'warning');
     }
-    if (file.size > 64 * 1024 * 1024) {
+    if (file.size > 96 * 1024 * 1024) {
       setDatabaseFile(null);
-      return showToast('备份文件过大', '数据库备份不能超过 64MB', 'warning');
+      return showToast('备份文件过大', '完整系统备份不能超过 96MB', 'warning');
     }
     setDatabaseFile(file);
   };
 
   const validateDatabaseFile = async () => {
-    if (!databaseFile) return showToast('请选择数据库备份', '上传 .db 文件后再进行校验', 'warning');
+    if (!databaseFile) return showToast('请选择完整备份', '上传 .xuibak 文件后再进行校验', 'warning');
+    if (restorePassword.length < 12) return showToast('请输入备份密码', '使用创建此备份时设置的密码', 'warning');
     setBusy(true);
     setDatabaseValidation(null);
     try {
-      const response = await fetch('/api/admin/database/validate', {
+      const response = await fetch('/api/admin/system-backup/validate', {
         method: 'POST',
-        headers: { 'Content-Type': DATABASE_CONTENT_TYPE },
+        headers: { 'Content-Type': PORTABLE_BACKUP_CONTENT_TYPE, 'x-backup-password': restorePassword },
         body: databaseFile,
       });
-      const data = await response.json().catch(() => ({})) as { validation?: DatabaseBackupValidation; error?: string };
+      const data = await response.json().catch(() => ({})) as { validation?: PortableBackupValidation; error?: string };
       if (!response.ok || !data.validation) throw new Error(data.error || `备份校验失败（HTTP ${response.status}）`);
       setDatabaseValidation(data.validation);
-      showToast('数据库备份校验通过', '可以进入恢复确认步骤', 'success');
+      showToast('完整备份校验通过', '加密配置和业务数据均可恢复', 'success');
     } catch (error) {
-      showToast('数据库备份不可用', error instanceof Error ? error.message : '请选择其他备份文件', 'error');
+      showToast('完整备份不可用', error instanceof Error ? error.message : '请检查文件和密码', 'error');
     } finally {
       setBusy(false);
     }
@@ -846,18 +821,66 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     if (!databaseFile || !databaseValidation || restoreConfirmation !== 'RESTORE') return;
     setBusy(true);
     try {
-      const response = await fetch('/api/admin/database/restore', {
+      const response = await fetch('/api/admin/system-backup/restore', {
         method: 'POST',
-        headers: { 'Content-Type': DATABASE_CONTENT_TYPE, 'x-restore-confirmation': restoreConfirmation },
+        headers: { 'Content-Type': PORTABLE_BACKUP_CONTENT_TYPE, 'x-backup-password': restorePassword, 'x-restore-confirmation': restoreConfirmation },
         body: databaseFile,
       });
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || `数据库恢复失败（HTTP ${response.status}）`);
       setRestoreDialogOpen(false);
-      showToast('数据库已恢复', '全部登录会话已失效，请重新登录', 'success');
+      showToast('系统备份已恢复', '数据和加密配置已迁移，全部登录会话已失效', 'success');
       window.setTimeout(onSessionEnded, 300);
     } catch (error) {
-      showToast('数据库恢复失败', error instanceof Error ? error.message : '当前数据库未被替换', 'error');
+      showToast('完整备份恢复失败', error instanceof Error ? error.message : '当前数据未被替换', 'error');
+      setBusy(false);
+    }
+  };
+
+  const checkSystemUpdate = async () => {
+    setBusy(true);
+    try {
+      const result = await api<{ status: SystemVersionStatus }>('/api/admin/system/update/check', { method: 'POST' });
+      setVersionStatus(result.status);
+      showToast(result.status.updateAvailable ? '发现新版本' : '当前已经是最新版本', result.status.updateAvailable ? `v${result.status.currentVersion} → v${result.status.latestVersion}` : `当前版本 v${result.status.currentVersion}`, result.status.updateAvailable ? 'info' : 'success');
+    } catch (error) {
+      showToast('检查更新失败', error instanceof Error ? error.message : '请检查服务器到 GitHub 的网络', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const waitForUpdatedServer = async (targetVersion: string) => {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await new Promise(resolve => window.setTimeout(resolve, 4_000));
+      try {
+        const response = await fetch('/api/health', { cache: 'no-store' });
+        if (!response.ok) continue;
+        const health = await response.json() as { version?: string };
+        if (health.version === targetVersion) {
+          window.location.reload();
+          return;
+        }
+      } catch { /* 服务重启期间连接失败是正常状态 */ }
+    }
+  };
+
+  const startSystemUpdate = async () => {
+    if (!versionStatus?.latestVersion || updateConfirmation !== 'UPDATE') return;
+    setBusy(true);
+    try {
+      const result = await api<{ status: SystemVersionStatus }>('/api/admin/system/update', {
+        method: 'POST',
+        body: JSON.stringify({ confirmation: updateConfirmation }),
+      });
+      setVersionStatus(result.status);
+      setUpdateDialogOpen(false);
+      setUpdateConfirmation('');
+      showToast('自动更新已启动', `目标版本 v${result.status.targetVersion || versionStatus.latestVersion}；完成后页面会自动刷新`, 'success');
+      void waitForUpdatedServer(result.status.targetVersion || versionStatus.latestVersion);
+    } catch (error) {
+      showToast('自动更新启动失败', error instanceof Error ? error.message : '当前版本没有被替换', 'error');
+    } finally {
       setBusy(false);
     }
   };
@@ -996,65 +1019,64 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
     showToast('数据已导出', `共导出 ${rows.length} 条记录`, 'success');
   };
 
+  const filteredCommands = adminCommands.filter(item => `${item.label} ${item.description}`.toLowerCase().includes(commandQuery.trim().toLowerCase()));
+  const runCommand = (item: typeof adminCommands[number]) => {
+    setTab(item.tab);
+    if (item.section) setSettingsSection(item.section);
+    setCommandOpen(false);
+    setCommandQuery('');
+  };
+
   return (
-    <div className="admin-workspace">
-      <aside id="admin-navigation" className={`admin-sidebar ${mobileNavOpen ? 'open' : ''}`}>
-        <div className="admin-sidebar-brand">
-          <span className="admin-brand-mark"><Terminal /></span>
-          <div><strong>X-UI CONTROL</strong><small>运营管理系统</small></div>
-        </div>
-        <nav className="admin-navigation">
-          {navigationGroups.map(group => <section className="admin-nav-group" key={group.label}>
-            <div className="admin-nav-section">{group.label}</div>
+    <div className="pro-admin">
+      <aside id="admin-navigation" className={`pro-sidebar ${mobileNavOpen ? 'open' : ''}`}>
+        <div className="pro-brand"><span className="pro-brand-mark"><Terminal /></span><span><strong>xui<span>OPS</span></strong><small>商业运营控制台</small></span></div>
+        <div className="pro-workspace"><span className="pro-workspace-dot" /> 生产环境 <ChevronRight /></div>
+        <nav className="pro-navigation" aria-label="管理导航">
+          {navigationGroups.map(group => <div className="pro-nav-group" key={group.label}>
+            <div className="pro-nav-label">{group.label}</div>
             {group.items.map(item => {
               const Icon = item.icon;
-              return <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => { setTab(item.id); setMobileNavOpen(false); }}><span className={`admin-nav-icon ${item.tone}`}><Icon /></span><span>{item.label}</span>{item.id === 'orders' && Boolean(stats?.pendingOrders) && <b>{stats?.pendingOrders}</b>}{item.id === 'deployments' && Boolean(stats?.uncertain) && <b className="warning">{stats?.uncertain}</b>}</button>;
+              return <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => { setTab(item.id); setMobileNavOpen(false); }}><Icon /><span>{item.label}</span>{item.id === 'orders' && Boolean(stats?.pendingOrders) && <b>{stats?.pendingOrders}</b>}{item.id === 'deployments' && Boolean(stats?.uncertain) && <b>{stats?.uncertain}</b>}</button>;
             })}
-          </section>)}
+          </div>)}
         </nav>
-        <div className="admin-sidebar-footer">
-          <div className="admin-sidebar-account"><div className="admin-avatar">{currentUser.username.slice(0, 1).toUpperCase()}</div><div><strong>{currentUser.username}</strong><small>系统管理员</small></div><button type="button" className="admin-sidebar-logout" title="退出管理端" onClick={onLogout}><LogOut /><span>退出</span></button></div>
-        </div>
+        <div className="pro-sidebar-bottom"><div className="pro-system-status"><i />系统运行正常<span>v{versionStatus?.currentVersion || 'dev'}</span></div><div className="pro-account"><span className="pro-avatar">{currentUser.username.slice(0, 1).toUpperCase()}</span><div><strong>{currentUser.username}</strong><small>系统管理员</small></div><button type="button" onClick={onLogout} title="退出管理端"><LogOut /></button></div></div>
       </aside>
-      {mobileNavOpen && <button type="button" className="admin-sidebar-overlay" onClick={() => setMobileNavOpen(false)} aria-label="关闭导航" />}
-
-      <div className="admin-main">
-        <header className="admin-topbar">
-          <div className="admin-topbar-title"><button type="button" className="admin-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} title={mobileNavOpen ? '关闭导航' : '打开导航'} aria-label={mobileNavOpen ? '关闭导航' : '打开导航'} aria-controls="admin-navigation" aria-expanded={mobileNavOpen}>{mobileNavOpen ? <X /> : <Menu />}</button><div className="admin-breadcrumb"><span>管理后台</span><ChevronRight /><strong>{currentMeta.area}</strong><ChevronRight /><b>{currentTitle}</b></div></div>
-          <div className="admin-topbar-actions">
-            <span className="admin-topbar-context"><i />{currentContext}</span>
-            {activeList.length > 0 && <button type="button" className="admin-button secondary admin-export-button" onClick={exportCurrent}><Download /> 导出当前列表</button>}
-            <a href="/" target="_blank" rel="noreferrer">打开用户端 <ExternalLink /></a>
-            <button type="button" className="admin-icon-button" onClick={() => void load()} disabled={loading} title="刷新全部数据"><RefreshCw className={loading ? 'spinning' : ''} /></button>
-          </div>
+      {mobileNavOpen && <button type="button" className="pro-overlay" onClick={() => setMobileNavOpen(false)} aria-label="关闭导航" />}
+      <div className="pro-shell">
+        <header className="pro-header">
+          <div className="pro-header-left"><button type="button" className="pro-mobile-menu" onClick={() => setMobileNavOpen(value => !value)} aria-label="打开导航"><Menu /></button><div className="pro-breadcrumb"><span>控制台</span><ChevronRight /><strong>{currentMeta.area}</strong><ChevronRight /><b>{currentTitle}</b></div></div>
+          <div className="pro-header-actions"><span className="pro-live"><i />{currentContext}</span><button type="button" className="pro-command" onClick={() => { setCommandQuery(''); setCommandOpen(true); }}><Search /><span>搜索功能</span><kbd>⌘ K</kbd></button><ThemeToggle compact storageKey={adminThemeStorageKey(currentUser.id)} /><a href="/" target="_blank" rel="noreferrer">用户端 <ExternalLink /></a><button type="button" className="pro-refresh" onClick={() => void load()} disabled={loading} title="刷新全部数据"><RefreshCw className={loading ? 'spinning' : ''} /></button></div>
         </header>
-
-        <main className="admin-content">
+        <main className="pro-main">
+          <div className="pro-page-heading"><div><div className="pro-eyebrow">{currentMeta.area} / {currentMeta.description}</div><h1>{currentTitle}</h1><p>{currentMeta.description}</p></div>{activeList.length > 0 && <button type="button" className="pro-export" onClick={exportCurrent}><Download /> 导出数据</button>}</div>
+          <div className="pro-content">
           {loading ? <AdminPageLoading /> : <>
             {tab === 'dashboard' && <Dashboard stats={stats} exceptions={exceptions} orders={orders} deployments={deployments} onNavigate={setTab} onOpenOrder={order => void openOrderDetail(order)} onOpenDeployment={setViewDeployment} />}
 
-            {tab === 'orders' && <AdminSection title="订单管理" description="核对用户订单、人工收款、取消待付订单与退款撤权。" action={<button type="button" className="admin-button secondary" onClick={() => setPaymentRuntimeOpen(true)}><Activity /> 支付记录</button>}>
+            {tab === 'orders' && <AdminSection title="订单管理" description="核对在线支付订单、取消待付订单与退款撤权。" action={<button type="button" className="admin-button secondary" onClick={() => setPaymentRuntimeOpen(true)}><Activity /> 支付记录</button>}>
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索订单号、用户、交易号或处理状态" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部处理状态'], ['paid_missing_entitlement', '已付款但缺少权益'], ['payment_attention', '支付链路需核对'], ['completed', '付款与权益完成'], ['paid_entitlement_inactive', '已付款但权益不可用'], ['pending_payment', '等待用户付款'], ['expired', '订单已过期'], ['cancelled', '订单已取消'], ['refunded', '订单已退款']]} />
               <AdminTable columns={['订单信息', '用户', '金额', '订单状态', '处理状态', '支付信息', '创建时间', '操作']} empty="没有符合条件的订单">
                 {filteredOrders.slice(pageStart, pageStart + PAGE_SIZE).map(order => <tr key={order.id}>
                   <td><strong className="admin-primary-text">{order.orderNo}</strong><small className="admin-cell-sub">{planSnapshotName(order)}</small></td>
                   <td>{order.username ? <button type="button" className="admin-record-link" onClick={() => openUserById(order.userId, 'orders')}>{order.username}</button> : '-'}</td><td className="admin-money">{formatMoney(order.amountCents)}</td><td><StatusBadge status={order.status} /></td><td>{order.diagnosis ? <DiagnosisBadge diagnosis={order.diagnosis} /> : <span className="admin-muted">-</span>}</td>
-                  <td>{order.paymentTradeNo ? <><span>{paymentProviderName(order.paymentProvider || 'manual')}</span><small className="admin-cell-sub">{order.paymentTradeNo}</small></> : <span className="admin-muted">未支付</span>}</td>
+                  <td>{order.paymentTradeNo ? <><span>{paymentProviderName(order.paymentProvider || '-')}</span><small className="admin-cell-sub">{order.paymentTradeNo}</small></> : <span className="admin-muted">未支付</span>}</td>
                   <td>{formatDate(order.createdAt)}</td>
-                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" disabled={orderDetailLoading} onClick={() => void openOrderDetail(order)}><Eye /></button>{order.status === 'pending' && <><button className="admin-link success" onClick={() => { setPaymentOrder(order); setTradeNo(''); }}>确认收款</button><button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button></>}{order.status === 'paid' && order.paymentProvider !== 'redeem_code' && <button className="admin-link warning" onClick={() => { setRefundOrder(order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}</div></td>
+                  <td><div className="admin-row-actions"><button className="admin-icon-button small" title="查看订单详情" disabled={orderDetailLoading} onClick={() => void openOrderDetail(order)}><Eye /></button>{order.status === 'pending' && <button className="admin-link danger" onClick={() => setCancelOrder(order)}>取消</button>}{order.status === 'paid' && !['redeem_code', 'external_redeem', 'balance'].includes(order.paymentProvider) && <button className="admin-link warning" onClick={() => { setRefundOrder(order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}</div></td>
                 </tr>)}
               </AdminTable>
               <Pagination total={filteredOrders.length} page={safePage} pageCount={pageCount} onPage={setPage} />
             </AdminSection>}
 
-            {tab === 'plans' && <AdminSection title="套餐管理" description="配置一次性服务、周期会员与对应的面板和节点使用额度。" action={<button className="admin-button primary" onClick={() => setEditingPlan({ ...emptyPlan })}><PackagePlus /> 新增套餐</button>}>
+            {tab === 'plans' && <AdminSection title="套餐管理" description="手动配置永久次数套餐的价格、面板次数和节点次数。" action={<button className="admin-button primary" onClick={() => setEditingPlan({ ...emptyPlan })}><PackagePlus /> 新增套餐</button>}>
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索套餐名称或说明" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部状态'], ['enabled', '已上架'], ['disabled', '已下架']]} />
-              <AdminTable columns={['套餐', '价格与有效期', '面板额度', '节点额度', '每日/并发限制', '官网首页', '状态', '操作']} empty="没有符合条件的套餐">
+              <AdminTable columns={['套餐', '价格与有效期', '面板额度', '节点额度', '并发限制', '官网首页', '状态', '操作']} empty="没有符合条件的套餐">
                 {filteredPlans.slice(pageStart, pageStart + PAGE_SIZE).map(plan => <tr key={plan.id}>
                   <td><strong className="admin-primary-text">{plan.name}</strong><small className="admin-cell-sub admin-truncate">{plan.description || '暂无说明'}</small></td>
-                  <td><strong>{formatMoney(plan.priceCents)}</strong><small className="admin-cell-sub">{durationText(plan)}</small></td>
+                  <td><strong>{formatMoney(plan.priceCents)}</strong><small className="admin-cell-sub">永久有效</small></td>
                   <td>{quotaText(plan.panelMode, plan.panelLimit)}</td><td>{quotaText(plan.nodeMode, plan.nodeLimit)}</td>
-                  <td><span>每日 {plan.dailyPanelLimit || '不限'} / {plan.dailyNodeLimit || '不限'}</span><small className="admin-cell-sub">并发 {plan.concurrencyLimit}</small></td>
+                  <td><span>永久有效</span><small className="admin-cell-sub">并发 {plan.concurrencyLimit}</small></td>
                   <td>{plan.homepageVisible ? <span className="admin-link success">展示</span> : <span className="admin-muted">隐藏</span>}</td>
                   <td><StatusBadge status={plan.enabled ? 'enabled' : 'disabled'} /></td>
                   <td><div className="admin-row-actions"><button className="admin-icon-button small" title="编辑套餐" onClick={() => setEditingPlan({ ...plan })}><Pencil /></button><button className="admin-icon-button small" title="复制套餐" onClick={() => setEditingPlan({ ...plan, id: undefined, name: `${plan.name} 副本`, enabled: false, homepageVisible: false })}><ClipboardCopy /></button><button className={plan.homepageVisible ? 'admin-link warning' : 'admin-link success'} onClick={() => void runAction(plan.homepageVisible ? '已从官网首页隐藏' : '已在官网首页展示', `/api/admin/plans/${plan.id}`, { method: 'PUT', body: JSON.stringify({ ...plan, homepageVisible: !plan.homepageVisible }) })}>{plan.homepageVisible ? '首页隐藏' : '首页展示'}</button><button className={plan.enabled ? 'admin-link danger' : 'admin-link success'} onClick={() => void runAction(plan.enabled ? '套餐已下架' : '套餐已上架', `/api/admin/plans/${plan.id}`, { method: 'PUT', body: JSON.stringify({ ...plan, enabled: !plan.enabled }) })}>{plan.enabled ? '下架' : '上架'}</button></div></td>
@@ -1063,12 +1085,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               <Pagination total={filteredPlans.length} page={safePage} pageCount={pageCount} onPage={setPage} />
             </AdminSection>}
 
-            {tab === 'redeem-codes' && <AdminSection title="卡密管理" description="生成绑定套餐的一次性卡密，并查看兑换和停用状态。" action={<button className="admin-button primary" onClick={() => setRedeemCodeDialogOpen(true)}><KeyRound /> 生成卡密</button>}>
-              <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索卡密、套餐、备注或兑换用户" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部状态'], ['active', '未兑换'], ['redeemed', '已兑换'], ['disabled', '已停用'], ['expired', '已过期']]} />
-              <AdminTable columns={['卡密', '套餐', '状态', '备注', '兑换用户', '有效期', '创建时间', '操作']} empty="没有符合条件的卡密">
+            {tab === 'redeem-codes' && <AdminSection title="卡密管理" description="生成固定金额的一次性卡密，用户可充值余额或直接购买套餐。" action={<button className="admin-button primary" onClick={() => setRedeemCodeDialogOpen(true)}><KeyRound /> 生成卡密</button>}>
+              <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索卡密、金额、备注或兑换用户" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部状态'], ['active', '未兑换'], ['redeemed', '已兑换'], ['disabled', '已停用'], ['expired', '已过期']]} />
+              <AdminTable columns={['卡密', '金额', '状态', '备注', '兑换用户', '有效期', '创建时间', '操作']} empty="没有符合条件的卡密">
                 {filteredRedeemCodes.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}>
                   <td><strong className="admin-primary-text admin-code">{item.codeMasked}</strong></td>
-                  <td>{item.planName}</td><td><StatusBadge status={item.status} /></td><td>{item.note || <span className="admin-muted">-</span>}</td>
+                  <td className="admin-money">{formatMoney(item.amountCents)}</td><td><StatusBadge status={item.status} /></td><td>{item.note || <span className="admin-muted">-</span>}</td>
                   <td>{item.redeemedByUsername ? <><strong>{item.redeemedByUsername}</strong><small className="admin-cell-sub">{formatDate(item.redeemedAt)}</small></> : <span className="admin-muted">未兑换</span>}</td>
                   <td>{item.expiresAt ? formatDate(item.expiresAt) : '长期有效'}</td><td>{formatDate(item.createdAt)}</td>
                   <td>{item.status === 'active' || item.status === 'disabled' ? <button className={item.status === 'active' ? 'admin-link danger' : 'admin-link success'} onClick={() => void runAction(item.status === 'active' ? '卡密已停用' : '卡密已启用', `/api/admin/redeem-codes/${item.id}`, { method: 'PATCH', body: JSON.stringify({ status: item.status === 'active' ? 'disabled' : 'active' }) })}>{item.status === 'active' ? '停用' : '启用'}</button> : <span className="admin-muted">-</span>}</td>
@@ -1091,13 +1113,13 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
 
             {tab === 'entitlements' && <AdminSection title="权益管理" description="查看和调整用户实际可用的面板、节点次数与执行限制。" action={<button className="admin-button primary" onClick={() => setGrantOpen(true)}><BadgeCheck /> 发放权益</button>}>
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索用户或权益名称" filter={statusFilter} onFilter={setStatusFilter} options={[['all', '全部状态'], ['active', '有效'], ['expired', '已过期'], ['revoked', '已撤销']]} />
-              <AdminTable columns={['用户与权益', '面板额度', '节点额度', '每日/并发限制', '有效期', '状态', '操作']} empty="没有符合条件的权益">
+              <AdminTable columns={['用户与权益', '面板额度', '节点额度', '并发限制', '有效期', '状态', '操作']} empty="没有符合条件的权益">
                 {filteredEntitlements.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}>
                   <td>{item.username ? <button type="button" className="admin-record-link stacked" onClick={() => openUserById(item.userId, 'entitlements')}><strong>{item.username}</strong><small>{item.planName}</small></button> : <><strong className="admin-primary-text">-</strong><small className="admin-cell-sub">{item.planName}</small></>}</td>
                   <td>{quotaText(item.panelMode, item.panelRemaining, item.panelTotal)}<small className="admin-cell-sub">已用 {item.panelUsed} / 冻结 {item.panelReserved}</small></td>
                   <td>{quotaText(item.nodeMode, item.nodeRemaining, item.nodeTotal)}<small className="admin-cell-sub">已用 {item.nodeUsed} / 冻结 {item.nodeReserved}</small></td>
-                  <td><span>每日 {item.dailyPanelLimit || '不限'} / {item.dailyNodeLimit || '不限'}</span><small className="admin-cell-sub">并发 {item.concurrencyLimit}</small></td>
-                  <td>{formatDate(item.expiresAt)}</td><td><StatusBadge status={entitlementStatus(item)} /></td>
+                  <td><span>永久有效</span><small className="admin-cell-sub">并发 {item.concurrencyLimit}</small></td>
+                  <td>永久有效</td><td><StatusBadge status={entitlementStatus(item)} /></td>
                   <td><div className="admin-row-actions"><button className="admin-link" onClick={() => setEditingEntitlement({ ...item })}>调整额度</button><button className={item.status === 'active' ? 'admin-link danger' : 'admin-link success'} onClick={() => setEntitlementAction(item)}>{item.status === 'active' ? '撤销' : '重新启用'}</button></div></td>
                 </tr>)}
               </AdminTable>
@@ -1126,7 +1148,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
             {tab === 'audit' && <AdminSection title="操作审计" description="记录管理员对套餐、用户、订单、权益、交付任务和系统设置的真实变更。">
               <AdminToolbar query={query} onQuery={setQuery} placeholder="搜索管理员、动作或操作内容" filter={statusFilter} onFilter={setStatusFilter} options={[["all", "全部对象"], ["user", "用户"], ["plan", "套餐"], ["order", "订单"], ["entitlement", "权益"], ["deployment", "交付任务"], ["settings", "系统设置"]]} />
               <AdminTable columns={['管理员', '操作动作', '对象类型', '对象编号', '操作内容', '操作时间']} empty="暂无管理操作记录">
-                {filteredAudit.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}><td><strong className="admin-primary-text">{item.adminUsername}</strong></td><td>{item.action}</td><td><StatusBadge status={item.targetType} /></td><td className="admin-code">{item.targetId ? item.targetId.slice(0, 12) : '-'}</td><td><span className="admin-result-text" title={item.detail}>{auditDetail(item.detail)}</span></td><td>{formatDate(item.createdAt)}</td></tr>)}
+                {filteredAudit.slice(pageStart, pageStart + PAGE_SIZE).map(item => <tr key={item.id}><td><strong className="admin-primary-text">{item.adminUsername}</strong></td><td>{auditActionText(item.action)}</td><td><StatusBadge status={item.targetType} /></td><td className="admin-code">{item.targetId ? item.targetId.slice(0, 12) : '-'}</td><td><span className="admin-result-text" title={auditDetail(item.detail)}>{auditDetail(item.detail)}</span></td><td>{formatDate(item.createdAt)}</td></tr>)}
               </AdminTable>
               <Pagination total={filteredAudit.length} page={safePage} pageCount={pageCount} onPage={setPage} />
             </AdminSection>}
@@ -1156,8 +1178,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                       <div className="admin-settings-section-title"><h3>配置摘要</h3><p>点击设置后在弹窗中维护详细内容。</p></div>
                       <div className="admin-settings-summary-list">
                         <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('order')}><span className="admin-setting-summary-icon"><Clock3 /></span><span><strong>订单规则</strong><small>待付款订单保留 {settingsData.orderExpiryMinutes} 分钟 · {settingsData.paymentInstructions.trim() ? '已配置付款说明' : '未配置付款说明'}</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
-                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('redeem')}><span className="admin-setting-summary-icon"><KeyRound /></span><span><strong>卡密购买</strong><small>{settingsData.redeemCodePurchaseUrl.trim() ? '已配置购买链接' : '未配置购买链接'}</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
-                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('contact')}><span className="admin-setting-summary-icon"><Headphones /></span><span><strong>咨询窗口</strong><small>{settingsData.contact.methods.length} 种联系方式 · 按钮名称“{settingsData.contact.buttonLabel || '立即咨询'}”</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('redeem')}><span className="admin-setting-summary-icon"><KeyRound /></span><span><strong>卡密与第三方系统</strong><small>{settingsData.externalRedeem.enabled ? `${settingsData.externalRedeem.name} 已启用` : settingsData.redeemCodePurchaseUrl.trim() ? '已配置购买链接，仅使用本地卡密' : '仅使用本地卡密'}</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
+                        <button type="button" className="admin-settings-summary-row" onClick={() => setSettingsDialog('contact')}><span className="admin-setting-summary-icon"><Headphones /></span><span><strong>客服与咨询</strong><small>{settingsData.contact.methods.length} 种联系方式 · 按钮名称“{settingsData.contact.buttonLabel || '立即咨询'}”</small></span><span className="admin-settings-row-action">设置 <ChevronRight /></span></button>
                       </div>
                     </section>
                   </>}
@@ -1232,49 +1254,75 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
               </div>
             </AdminSection>}
 
-            {tab === 'security' && <AdminSection title="账号安全" description="管理当前管理员身份、后台访问入口和登录密码。">
-              <div className="admin-security-grid">
-                <section className="admin-security-card">
-                  <header><span><Users /></span><div><h2>管理员账号</h2><p>修改当前账号的登录用户名，不会中断当前会话。</p></div></header>
-                  <form onSubmit={saveAccountUsername}>
-                    <label className="admin-field"><span>登录用户名</span><input value={accountUsername} onChange={event => setAccountUsername(event.target.value)} minLength={3} maxLength={64} autoComplete="username" /><small>支持字母、数字以及 . _ @ -</small></label>
-                    <button type="submit" className="admin-button primary" disabled={busy || accountUsername.trim() === currentUser.username}><Save /> 保存用户名</button>
-                  </form>
-                </section>
-
-                <section className="admin-security-card">
-                  <header><span><ExternalLink /></span><div><h2>管理端入口</h2><p>修改浏览器访问管理后台时使用的地址后缀。</p></div></header>
-                  <form onSubmit={saveAdminPath}>
-                    <label className="admin-field"><span>入口后缀</span><div className="admin-path-input"><b>/</b><input value={adminPathDraft} onChange={event => setAdminPathDraft(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} minLength={3} maxLength={40} autoComplete="off" /></div><small>保存后当前页面会自动跳转，新入口为 /{adminPathDraft || '...'}</small></label>
-                    <button type="submit" className="admin-button primary" disabled={busy || adminPathDraft === settingsData.adminPath}><Save /> 保存并跳转</button>
-                  </form>
-                </section>
-
-                <section className="admin-security-card admin-security-password">
-                  <header><span><ShieldCheck /></span><div><h2>登录密码</h2><p>修改密码后所有已登录会话会立即失效，需要重新登录。</p></div></header>
-                  <ChangePasswordForm endpoint="/api/admin/auth/change-password" onChanged={onSessionEnded} showToast={showToast} variant="admin" />
-                </section>
-
-                <section className="admin-security-card admin-database-maintenance">
-                  <header><span><Database /></span><div><h2>数据库备份与恢复</h2><p>下载完整业务数据库，或校验并恢复同一系统生成的 SQLite 备份。</p></div></header>
-                  <div className="admin-database-actions">
-                    <button type="button" className="admin-button secondary" disabled={busy} onClick={() => void downloadDatabaseBackup()}><Download /> 下载当前备份</button>
-                    <label className="admin-database-file"><Upload /><span><strong>{databaseFile?.name || '选择 .db 备份文件'}</strong><small>{databaseFile ? `${Math.max(1, Math.round(databaseFile.size / 1024))} KB` : '最大 64MB，选择后需要先校验'}</small></span><input type="file" accept=".db,application/vnd.sqlite3,application/x-sqlite3" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; selectDatabaseFile(file); }} /></label>
-                    <button type="button" className="admin-button secondary" disabled={busy || !databaseFile} onClick={() => void validateDatabaseFile()}><ShieldCheck /> 校验备份</button>
-                  </div>
-                  {databaseValidation && <div className="admin-database-validation"><CheckCircle2 /><div><strong>备份校验通过</strong><span>文件大小 {Math.max(1, Math.round(databaseValidation.sizeBytes / 1024))} KB · 管理员 {databaseValidation.counts.users || 0} · 订单 {databaseValidation.counts.orders || 0} · 权益 {databaseValidation.counts.entitlements || 0}</span></div><button type="button" className="admin-button danger" disabled={busy} onClick={() => { setRestoreConfirmation(''); setRestoreDialogOpen(true); }}><ArchiveRestore /> 恢复此备份</button></div>}
-                  <p className="admin-database-note"><AlertTriangle /> 恢复前系统会自动备份当前数据库；恢复完成后所有账号都需要重新登录。支付密钥必须使用相同的 `.key` 文件或 `COMMERCIAL_SECRET_KEY`。</p>
-                </section>
+            {tab === 'security' && <AdminSection title="账号安全" description="先查看状态，再按需打开对应弹窗完成敏感设置，避免长表单占满页面。">
+              <div className="admin-security-grid admin-security-summary-grid">
+                <section className="admin-security-card admin-security-summary-card"><header><span><Users /></span><div><h2>管理员账号</h2><p>修改当前账号的登录用户名。</p></div></header><strong className="admin-security-summary-value">{accountUsername || '未设置'}</strong><small className="admin-security-summary-meta">当前会话不会被中断</small><button type="button" className="admin-button secondary admin-security-summary-action" onClick={() => setSecurityDialog('username')}><Pencil /> 修改用户名</button></section>
+                <section className="admin-security-card admin-security-summary-card"><header><span><ExternalLink /></span><div><h2>管理端入口</h2><p>修改后台访问地址后缀。</p></div></header><strong className="admin-security-summary-value">/{adminPathDraft || settingsData.adminPath}</strong><small className="admin-security-summary-meta">保存后将自动跳转到新入口</small><button type="button" className="admin-button secondary admin-security-summary-action" onClick={() => setSecurityDialog('path')}><Pencil /> 修改入口</button></section>
+                <section className="admin-security-card admin-security-summary-card"><header><span><ShieldCheck /></span><div><h2>登录密码</h2><p>修改后所有会话立即失效。</p></div></header><strong className="admin-security-summary-value">已设置</strong><small className="admin-security-summary-meta">敏感操作使用独立弹窗确认</small><button type="button" className="admin-button secondary admin-security-summary-action" onClick={() => setSecurityDialog('password')}><ShieldCheck /> 修改密码</button></section>
+                <section className="admin-security-card admin-security-summary-card"><header><span><PackagePlus /></span><div><h2>版本与更新</h2><p>检查版本并执行受控升级。</p></div></header><strong className="admin-security-summary-value">v{versionStatus?.currentVersion || '—'}</strong><small className="admin-security-summary-meta">{versionStatus?.updateAvailable ? `发现 v${versionStatus.latestVersion}` : versionStatus?.checkedAt ? '当前已是最新版本' : '尚未检查版本'}</small><button type="button" className="admin-button secondary admin-security-summary-action" onClick={() => setSecurityDialog('update')}><RefreshCw /> 查看更新</button></section>
+                <section className="admin-security-card admin-security-summary-card"><header><span><Database /></span><div><h2>完整系统备份</h2><p>备份、校验和迁移集中处理。</p></div></header><strong className="admin-security-summary-value">{databaseFile ? '已选择备份文件' : '尚未选择文件'}</strong><small className="admin-security-summary-meta">{databaseValidation ? '备份校验已通过，可执行迁移' : '不会在页面上直接展开密码表单'}</small><button type="button" className="admin-button secondary admin-security-summary-action" onClick={() => setSecurityDialog('backup')}><Database /> 打开备份工具</button></section>
               </div>
             </AdminSection>}
           </>}
+          </div>
         </main>
       </div>
 
+      <AdminDialog open={securityDialog === 'username'} title="修改管理员用户名" description="修改后不会中断当前会话，下次登录可使用新用户名。" cancelLabel="关闭" onClose={() => setSecurityDialog(null)}>
+        <form className="admin-form-grid one" onSubmit={async event => { await saveAccountUsername(event); setSecurityDialog(null); }}>
+          <label className="admin-field"><span>登录用户名</span><input value={accountUsername} onChange={event => setAccountUsername(event.target.value)} minLength={3} maxLength={64} autoComplete="username" /><small>支持字母、数字以及 . _ @ -</small></label>
+          <button type="submit" className="admin-button primary" disabled={busy || accountUsername.trim() === currentUser.username}><Save /> 保存用户名</button>
+        </form>
+      </AdminDialog>
+      <AdminDialog open={securityDialog === 'path'} title="修改管理端入口" description="保存后当前页面会自动跳转到新的管理地址。" cancelLabel="关闭" onClose={() => setSecurityDialog(null)}>
+        <form className="admin-form-grid one" onSubmit={async event => { await saveAdminPath(event); setSecurityDialog(null); }}>
+          <label className="admin-field"><span>入口后缀</span><div className="admin-path-input"><b>/</b><input value={adminPathDraft} onChange={event => setAdminPathDraft(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} minLength={3} maxLength={40} autoComplete="off" /></div><small>新入口为 /{adminPathDraft || '...'}</small></label>
+          <button type="submit" className="admin-button primary" disabled={busy || adminPathDraft === settingsData.adminPath}><Save /> 保存并跳转</button>
+        </form>
+      </AdminDialog>
+      <AdminDialog open={securityDialog === 'password'} title="修改登录密码" description="修改密码后所有已登录会话会立即失效，需要重新登录。" cancelLabel="关闭" onClose={() => setSecurityDialog(null)}>
+        <ChangePasswordForm endpoint="/api/admin/auth/change-password" onChanged={onSessionEnded} showToast={showToast} variant="admin" />
+      </AdminDialog>
+      <AdminDialog open={securityDialog === 'update'} title="版本与更新" description="先检查官方版本，再从弹窗中确认升级，避免把维护操作长期铺在页面上。" cancelLabel="关闭" onClose={() => setSecurityDialog(null)}>
+        <div className="admin-update-content">
+          <div className="admin-version-summary"><div><small>当前版本</small><strong>v{versionStatus?.currentVersion || '—'}</strong></div><span className={versionStatus?.updateAvailable ? 'available' : ''}>{versionStatus?.updateAvailable ? `发现 v${versionStatus.latestVersion}` : versionStatus?.checkedAt ? '已是最新版本' : '尚未检查'}</span></div>
+          <p>{versionStatus?.message || versionStatus?.reason || '正在读取版本信息'}</p>
+          <div className="admin-update-actions">
+            <button type="button" className="admin-button secondary" disabled={busy} onClick={() => void checkSystemUpdate()}><RefreshCw className={busy ? 'spinning' : ''} /> 检查最新版本</button>
+            {versionStatus?.updateAvailable && versionStatus.canAutoUpdate && <button type="button" className="admin-button primary" disabled={busy || versionStatus.state === 'scheduled' || versionStatus.state === 'running'} onClick={() => { setSecurityDialog(null); setUpdateConfirmation(''); setUpdateDialogOpen(true); }}><PackagePlus /> 自动更新到 v{versionStatus.latestVersion}</button>}
+            {versionStatus?.updateAvailable && !versionStatus.canAutoUpdate && <a className="admin-button secondary" href={versionStatus.releaseUrl} target="_blank" rel="noreferrer">下载发布包 <ExternalLink /></a>}
+          </div>
+        </div>
+      </AdminDialog>
+      <AdminDialog open={securityDialog === 'backup'} size="wide" title="完整系统备份与迁移" description="备份、校验和恢复属于高风险操作，集中在弹窗内完成，主页面只保留状态摘要。" cancelLabel="关闭" onClose={() => setSecurityDialog(null)}>
+        <div className="admin-database-actions">
+          <label className="admin-field admin-database-backup-password"><span>新备份密码</span><input type="password" value={backupPassword} minLength={12} maxLength={256} autoComplete="new-password" placeholder="至少 12 位，恢复时必需" onChange={event => setBackupPassword(event.target.value)} /><small>密码只用于本次加密，不会保存在服务器或浏览器中。</small></label>
+          <button type="button" className="admin-button secondary" disabled={busy || backupPassword.length < 12} onClick={() => void downloadDatabaseBackup()}><Download /> 创建并下载完整备份</button>
+          <label className={`admin-database-file ${busy ? 'disabled' : ''}`}>
+            <span className="admin-database-file-trigger"><Upload /><strong>选择上传</strong></span>
+            <span className="admin-database-file-copy"><strong>{databaseFile?.name || '.xuibak 完整备份'}</strong><small>{databaseFile ? `${Math.max(1, Math.round(databaseFile.size / 1024))} KB` : '最大 96MB，支持迁移到使用不同密钥的新服务器'}</small></span>
+            <input type="file" accept=".xuibak,application/vnd.xui-portable-backup" disabled={busy} aria-label="选择 .xuibak 完整备份" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; selectDatabaseFile(file); }} />
+          </label>
+          <label className="admin-field admin-database-restore-password"><span>备份密码</span><input type="password" value={restorePassword} minLength={12} maxLength={256} autoComplete="current-password" placeholder="输入创建备份时的密码" onChange={event => { setRestorePassword(event.target.value); setDatabaseValidation(null); }} /></label>
+          <button type="button" className="admin-button secondary" disabled={busy || !databaseFile || restorePassword.length < 12} onClick={() => void validateDatabaseFile()}><ShieldCheck /> 解密并校验备份</button>
+        </div>
+        {databaseValidation && <div className="admin-database-validation"><CheckCircle2 /><div><strong>完整备份校验通过</strong><span>源版本 {databaseValidation.appVersion} · 创建于 {formatDate(databaseValidation.createdAt)} · 用户 {databaseValidation.counts.users || 0} · 订单 {databaseValidation.counts.orders || 0} · 权益 {databaseValidation.counts.entitlements || 0}</span></div><button type="button" className="admin-button danger" disabled={busy} onClick={() => { setRestoreConfirmation(''); setRestoreDialogOpen(true); }}><ArchiveRestore /> 恢复并迁移</button></div>}
+        <p className="admin-database-note"><AlertTriangle /> 备份使用 scrypt 与 AES-256-GCM 加密；换服务器时只需上传此文件并输入密码。恢复前会自动保留当前数据库，恢复后全部账号需重新登录。</p>
+      </AdminDialog>
+
       <PlanDialog plan={editingPlan} busy={busy} onChange={setEditingPlan} onClose={() => setEditingPlan(null)} onSave={() => void savePlan()} />
-      <AdminDialog open={redeemCodeDialogOpen} title="生成卡密" description="每张卡密只能兑换一次，并按当前套餐内容创建权益。" confirmLabel="生成卡密" tone="success" busy={busy} confirmDisabled={!redeemCodeDraft.planId || redeemCodeDraft.quantity < 1 || redeemCodeDraft.quantity > 100} onClose={() => setRedeemCodeDialogOpen(false)} onConfirm={() => void createRedeemCodes()}>
+      <AdminDialog open={commandOpen} title="快速导航" description="搜索管理模块或设置项，也可以使用快捷键 K 打开。" cancelLabel="关闭" onClose={() => { setCommandOpen(false); setCommandQuery(''); }}>
+        <div className="admin-command-palette">
+          <label className="admin-command-search"><Search /><input value={commandQuery} onChange={event => setCommandQuery(event.target.value)} autoComplete="off" placeholder="搜索订单、客户、资源、支付或安全设置" /></label>
+          <div className="admin-command-results">
+            {filteredCommands.map(item => <button type="button" key={item.id} onClick={() => runCommand(item)}><span><strong>{item.label}</strong><small>{item.description}</small></span><kbd>打开</kbd></button>)}
+            {!filteredCommands.length && <div className="admin-command-empty"><Search /><strong>没有匹配的功能</strong><span>尝试输入“客户”“支付”或“备份”</span></div>}
+          </div>
+        </div>
+      </AdminDialog>
+      <AdminDialog open={redeemCodeDialogOpen} title="生成金额卡密" description="每张卡密只能兑换一次，金额可充值到账户余额，也可在购买套餐时直接抵扣。" confirmLabel="生成卡密" tone="success" busy={busy} confirmDisabled={redeemCodeDraft.amountCents < 1 || redeemCodeDraft.quantity < 1 || redeemCodeDraft.quantity > 100} onClose={() => setRedeemCodeDialogOpen(false)} onConfirm={() => void createRedeemCodes()}>
         <div className="admin-form-grid">
-          <label className="admin-field span-2"><span>绑定套餐</span><select value={redeemCodeDraft.planId} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, planId: event.target.value })}>{plans.filter(plan => plan.enabled).map(plan => <option key={plan.id} value={plan.id}>{plan.name} · {formatMoney(plan.priceCents)}</option>)}</select><small>仅能为当前已上架套餐生成卡密。</small></label>
+          <label className="admin-field"><span>卡密金额（元）</span><NumberInput min="0.01" step="0.01" value={redeemCodeDraft.amountCents / 100} onValueChange={value => setRedeemCodeDraft({ ...redeemCodeDraft, amountCents: Math.round(value * 100) })} /><small>用户可充值余额或直接抵扣套餐金额。</small></label>
           <label className="admin-field"><span>生成数量</span><NumberInput min="1" max="100" value={redeemCodeDraft.quantity} onValueChange={quantity => setRedeemCodeDraft({ ...redeemCodeDraft, quantity })} /></label>
           <label className="admin-field"><span>有效期</span><input type="datetime-local" value={redeemCodeDraft.expiresAt} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, expiresAt: event.target.value })} /><small>留空表示长期有效。</small></label>
           <label className="admin-field span-2"><span>批次备注</span><input value={redeemCodeDraft.note} maxLength={300} onChange={event => setRedeemCodeDraft({ ...redeemCodeDraft, note: event.target.value })} placeholder="例如：淘宝 8 月批次" /></label>
@@ -1290,10 +1338,23 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <label className="admin-field"><span>支付与联系说明</span><textarea value={settingsData.paymentInstructions} maxLength={2000} onChange={event => setSettingsData({ ...settingsData, paymentInstructions: event.target.value })} placeholder="填写收款方式、联系渠道和订单备注要求" /><small>{settingsData.paymentInstructions.length} / 2000</small></label>
         </div>
       </AdminDialog>
-      <AdminDialog open={settingsDialog === 'redeem'} title="设置卡密购买入口" description="配置后，用户可以从订单和账户相关页面前往指定链接购买卡密。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
-        <label className="admin-field"><span>卡密购买链接</span><input type="url" value={settingsData.redeemCodePurchaseUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, redeemCodePurchaseUrl: event.target.value })} placeholder="https://example.com/buy" /><small>留空则不显示购买按钮，仅支持 HTTP 或 HTTPS。</small></label>
+      <AdminDialog open={settingsDialog === 'redeem'} size="wide" title="设置卡密与第三方系统" description="本地卡密优先匹配；本地不存在时，系统才会调用已启用的第三方核销接口。确认后仍需点击“保存更改”生效。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+        <div className="admin-form-grid">
+          <label className="admin-field span-2"><span>卡密购买链接</span><input type="url" value={settingsData.redeemCodePurchaseUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, redeemCodePurchaseUrl: event.target.value })} placeholder="https://example.com/buy" /><small>留空则不显示购买按钮，仅支持 HTTP 或 HTTPS。</small></label>
+          <div className="admin-field span-2"><SettingSwitch label="启用第三方卡密核销" description="用户提交非本地卡密时，服务端调用下面的标准 JSON 接口进行一次性核销。" checked={settingsData.externalRedeem.enabled} onChange={enabled => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, enabled } })} /></div>
+          <label className="admin-field"><span>接口类型</span><select value={settingsData.externalRedeem.provider} onChange={event => { const provider = event.target.value as 'generic_json' | 'shiyeka'; setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, provider, name: provider === 'shiyeka' ? '十夜卡密' : '第三方卡密', apiKey: '', apiKeyConfigured: false } }); }}><option value="shiyeka">十夜卡密（原生适配）</option><option value="generic_json">通用 JSON 接口</option></select></label>
+          <label className="admin-field"><span>系统名称</span><input value={settingsData.externalRedeem.name} maxLength={40} onChange={event => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, name: event.target.value } })} placeholder="第三方卡密" /></label>
+          {settingsData.externalRedeem.provider === 'generic_json' && <label className="admin-field"><span>鉴权方式</span><select value={settingsData.externalRedeem.authMode} onChange={event => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, authMode: event.target.value as typeof settingsData.externalRedeem.authMode } })}><option value="bearer">Authorization: Bearer</option><option value="x-api-key">X-API-Key</option><option value="none">无需鉴权</option></select></label>}
+          <label className="admin-field span-2"><span>{settingsData.externalRedeem.provider === 'shiyeka' ? '十夜卡密服务地址' : '核销接口地址'}</span><input type="url" value={settingsData.externalRedeem.apiUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, apiUrl: event.target.value } })} placeholder={settingsData.externalRedeem.provider === 'shiyeka' ? 'http://服务器IP:1111 或 https://卡密域名' : 'https://cards.example.com/api/redeem'} /><small>{settingsData.externalRedeem.provider === 'shiyeka' ? '填写站点根地址，系统会自动调用 /api/v1/card/activate 和 /query。' : '服务端以 POST JSON 调用；重定向响应会被拒绝。'}</small></label>
+          {settingsData.externalRedeem.provider === 'shiyeka' && <label className="admin-field span-2"><span>App Key</span><input value={settingsData.externalRedeem.appKey || ''} maxLength={200} onChange={event => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, appKey: event.target.value } })} placeholder="在十夜卡密后台的项目管理中获取" /><small>对应十夜卡密项目的 app_key。</small></label>}
+          {(settingsData.externalRedeem.provider === 'shiyeka' || settingsData.externalRedeem.authMode !== 'none') && <label className="admin-field span-2"><span>{settingsData.externalRedeem.provider === 'shiyeka' ? 'App Secret' : 'API 密钥'}</span><input type="password" value={settingsData.externalRedeem.apiKey || ''} maxLength={500} onChange={event => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, apiKey: event.target.value } })} placeholder={settingsData.externalRedeem.apiKeyConfigured ? '已配置，留空保持不变' : settingsData.externalRedeem.provider === 'shiyeka' ? '填写十夜卡密项目的 app_secret' : '填写第三方系统提供的 API 密钥'} /><small>密钥加密保存，保存后不会回传明文。</small></label>}
+          {settingsData.externalRedeem.provider === 'generic_json' && <label className="admin-field"><span>amount 金额单位</span><select value={settingsData.externalRedeem.amountUnit} onChange={event => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, amountUnit: event.target.value as 'cents' | 'yuan' } })}><option value="cents">分</option><option value="yuan">元</option></select><small>若响应直接返回 amountCents，则始终按分处理。</small></label>}
+          <label className="admin-field"><span>接口超时（秒）</span><NumberInput min="3" max="30" value={settingsData.externalRedeem.timeoutSeconds} onValueChange={timeoutSeconds => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, timeoutSeconds } })} /></label>
+          <div className="admin-field span-2"><SettingSwitch label="允许访问内网接口" description="仅当卡密系统部署在同一内网时开启；默认阻止环回、私网和链路本地地址。" checked={settingsData.externalRedeem.allowPrivateNetwork} onChange={allowPrivateNetwork => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, allowPrivateNetwork } })} /></div>
+          <div className="admin-field span-2"><small>{settingsData.externalRedeem.provider === 'shiyeka' ? <>仅接受十夜卡密中的“金额卡”；请求使用其文档规定的 HMAC-SHA256 签名，成功激活后按返回的 <code>data.amount</code> 充值。</> : <>请求：<code>{'{ code, requestId, userId, username, planId }'}</code>；成功响应：<code>{'{ success: true, amountCents, tradeNo }'}</code>。也支持字段放在 <code>data</code> 中，或按上方单位返回 <code>amount</code>。</>}</small></div>
+        </div>
       </AdminDialog>
-      <AdminDialog open={settingsDialog === 'contact'} size="wide" title="设置咨询窗口" description="统一管理悬浮按钮文案、咨询说明和各联系方式对应的账号、链接与二维码。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+      <AdminDialog open={settingsDialog === 'contact'} size="wide" title="客服与咨询设置" description="统一管理悬浮按钮文案、咨询说明和各联系方式对应的账号、链接与二维码。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
         <div className="admin-form-grid contact-settings-form">
           <label className="admin-field"><span>悬浮按钮名称</span><input value={settingsData.contact.buttonLabel} maxLength={40} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, buttonLabel: event.target.value } })} placeholder="立即咨询" /></label>
           <label className="admin-field"><span>咨询弹窗标题</span><input value={settingsData.contact.title} maxLength={100} onChange={event => setSettingsData({ ...settingsData, contact: { ...settingsData.contact, title: event.target.value } })} placeholder="联系站长" /></label>
@@ -1371,12 +1432,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                     ? <img src={editingContactMethod.method.qrCodeUrl} alt={`${editingContactMethod.method.name || '联系方式'}二维码`} />
                     : <QrCode />}
               </span>
-              <div><strong>二维码图片</strong><small>{editingContactMethod.index >= 0 && savedContactMethodIds.includes(editingContactMethod.method.id) ? '支持 PNG、JPEG 或 WebP，图片不能超过 1MB；本地上传优先于图片地址。' : '新增联系方式需先保存联系方式并点击页面右上角“保存更改”，之后重新编辑即可上传。'}</small></div>
+              <div><strong>二维码图片</strong><small>{editingContactMethod.index >= 0 && savedContactMethodIds.includes(editingContactMethod.method.id) ? '支持 PNG、JPEG 或 WebP，图片不能超过 1MB；本地上传优先于图片地址。' : '选择图片后会自动保存当前联系方式并上传，图片不能超过 1MB。'}</small></div>
             </div>
             <div className="admin-resource-logo-actions">
-              <label className={`admin-button secondary ${busy || editingContactMethod.index < 0 || !savedContactMethodIds.includes(editingContactMethod.method.id) ? 'disabled' : ''}`}>
-                <Upload /> 上传二维码
-                <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || editingContactMethod.index < 0 || !savedContactMethodIds.includes(editingContactMethod.method.id)} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(editingContactMethod.index, editingContactMethod.method, file); }} />
+              <label
+                className={`admin-button secondary ${busy ? 'disabled' : ''}`}
+                aria-disabled={busy}
+                title={editingContactMethod.index >= 0 && savedContactMethodIds.includes(editingContactMethod.method.id) ? '上传二维码' : '选择图片并自动保存联系方式'}
+              >
+                <Upload /> {editingContactMethod.index >= 0 && savedContactMethodIds.includes(editingContactMethod.method.id) ? '上传二维码' : '上传并保存'}
+                <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void uploadContactQr(editingContactMethod.index, editingContactMethod.method, file); }} />
               </label>
               {editingContactMethod.method.qrCodeUploaded && <button type="button" className="admin-button danger" disabled={busy} onClick={() => void deleteContactQr(editingContactMethod.index, editingContactMethod.method)}><Trash2 /> 删除二维码</button>}
             </div>
@@ -1384,11 +1449,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         </>}
       </AdminDialog>
       <AdminDialog open={Boolean(deletingContactMethod)} title="删除联系方式" description={`将从设置草稿中删除“${deletingContactMethod?.method.name || '未命名联系方式'}”。已上传的二维码会保留，使用相同标识重新添加后仍可显示。`} confirmLabel="确认删除" tone="danger" busy={busy} onClose={returnToContactSettings} onConfirm={() => { if (deletingContactMethod) removeContactMethod(deletingContactMethod.index); returnToContactSettings(); }} />
-      <AdminDialog open={Boolean(paymentOrder)} title="确认人工收款" description="确认后将按照下单时的套餐快照发放权益，此操作会直接改变用户可用次数。" confirmLabel="确认收款并发放权益" tone="success" busy={busy} confirmDisabled={!tradeNo.trim()} onClose={() => { setPaymentOrder(null); setTradeNo(''); }} onConfirm={() => void confirmPayment()}>
-        {paymentOrder && <div className="admin-dialog-summary"><div><span>订单号</span><strong>{paymentOrder.orderNo}</strong></div><div><span>用户</span><strong>{paymentOrder.username || '-'}</strong></div><div><span>金额</span><strong>{formatMoney(paymentOrder.amountCents)}</strong></div></div>}
-        <label className="admin-field"><span>支付交易号或收款凭证号</span><input value={tradeNo} onChange={event => setTradeNo(event.target.value)} maxLength={128} placeholder="请输入唯一的交易号，便于后续核对" /><small>该编号会写入订单和支付事件记录。</small></label>
-      </AdminDialog>
-      <AdminDialog open={Boolean(cancelOrder)} title="取消待付款订单" description={`订单 ${cancelOrder?.orderNo || ''} 将变为已取消，之后不能再确认收款。`} confirmLabel="确认取消订单" tone="danger" busy={busy} onClose={() => setCancelOrder(null)} onConfirm={() => cancelOrder && void runAction('订单已取消', `/api/admin/orders/${cancelOrder.id}/cancel`, { method: 'POST' }, () => setCancelOrder(null))} />
+      <AdminDialog open={Boolean(cancelOrder)} title="取消待付款订单" description={`订单 ${cancelOrder?.orderNo || ''} 将变为已取消，之后不能继续支付。`} confirmLabel="确认取消订单" tone="danger" busy={busy} onClose={() => setCancelOrder(null)} onConfirm={() => cancelOrder && void runAction('订单已取消', `/api/admin/orders/${cancelOrder.id}/cancel`, { method: 'POST' }, () => setCancelOrder(null))} />
       <AdminDialog open={Boolean(refundOrder)} title="登记外部退款并撤销权益" description="请先在对应支付平台完成真实退款，再登记退款凭证。系统只负责标记订单并撤销权益，不会主动向支付平台发起退款。" confirmLabel="确认已退款并撤权" tone="danger" busy={busy} confirmDisabled={!refundTradeNo.trim() || !refundReason.trim()} onClose={() => { setRefundOrder(null); setRefundTradeNo(''); setRefundReason(''); }} onConfirm={() => refundOrder && void runAction('外部退款已登记并撤销权益', `/api/admin/orders/${refundOrder.id}/refund`, { method: 'POST', body: JSON.stringify({ refundTradeNo, reason: refundReason }) }, () => { setRefundOrder(null); setRefundTradeNo(''); setRefundReason(''); })}>
         {refundOrder && <div className="admin-dialog-summary"><div><span>订单号</span><strong>{refundOrder.orderNo}</strong></div><div><span>用户</span><strong>{refundOrder.username || '-'}</strong></div><div><span>退款金额</span><strong>{formatMoney(refundOrder.amountCents)}</strong></div></div>}
         <div className="admin-form-grid one">
@@ -1426,14 +1487,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           </div>
           <div className="admin-detail-summary"><DetailItem label="订单号" value={orderDetail.order.orderNo} mono /><DetailItem label="用户" value={<>{orderDetail.order.username || '-'}{orderDetail.order.email && <small className="admin-detail-subvalue">{orderDetail.order.email}</small>}</>} /><DetailItem label="订单金额" value={formatMoney(orderDetail.order.amountCents)} accent /><DetailItem label="订单状态" value={<StatusBadge status={orderDetail.order.status} />} /></div>
           <div className="admin-order-detail-actions">
-            {orderDetail.order.status === 'pending' && <><button className="admin-button success" onClick={() => { setViewOrder(null); setOrderDetail(null); setPaymentOrder(orderDetail.order); setTradeNo(''); }}><CheckCircle2 /> 确认人工收款</button><button className="admin-button danger" onClick={() => { setViewOrder(null); setOrderDetail(null); setCancelOrder(orderDetail.order); }}>取消订单</button></>}
-            {orderDetail.order.status === 'paid' && orderDetail.order.paymentProvider !== 'redeem_code' && <button className="admin-button warning" onClick={() => { setViewOrder(null); setOrderDetail(null); setRefundOrder(orderDetail.order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}
+            {orderDetail.order.status === 'pending' && <button className="admin-button danger" onClick={() => { setViewOrder(null); setOrderDetail(null); setCancelOrder(orderDetail.order); }}>取消订单</button>}
+            {orderDetail.order.status === 'paid' && !['redeem_code', 'external_redeem', 'balance'].includes(orderDetail.order.paymentProvider) && <button className="admin-button warning" onClick={() => { setViewOrder(null); setOrderDetail(null); setRefundOrder(orderDetail.order); setRefundTradeNo(''); setRefundReason(''); }}>登记外部退款</button>}
             {orderDetail.diagnosis.canRepairEntitlement && <button className="admin-button danger" onClick={() => { setViewOrder(null); setOrderDetail(null); setRepairOrder(orderDetail.order); }}><Wrench /> 补发缺失权益</button>}
           </div>
           <DetailBlock title="支付与时间">
-            <div className="admin-detail-grid"><DetailItem label="支付渠道" value={paymentProviderName(orderDetail.order.paymentProvider || 'manual')} /><DetailItem label="支付子渠道" value={orderDetail.order.paymentChannel || '-'} /><DetailItem label="交易号" value={orderDetail.order.paymentTradeNo || '未支付'} mono /><DetailItem label="创建时间" value={formatDate(orderDetail.order.createdAt)} /><DetailItem label="到期时间" value={orderDetail.order.expiresAt ? formatDate(orderDetail.order.expiresAt) : '-'} /><DetailItem label="付款时间" value={orderDetail.order.paidAt ? formatDate(orderDetail.order.paidAt) : '未付款'} />{orderDetail.order.cancelledAt && <DetailItem label="取消时间" value={formatDate(orderDetail.order.cancelledAt)} />}{orderDetail.order.refundedAt && <DetailItem label="退款时间" value={formatDate(orderDetail.order.refundedAt)} />}{orderDetail.order.refundTradeNo && <DetailItem label="退款凭证" value={orderDetail.order.refundTradeNo} mono />}{(orderDetail.order.cancelReason || orderDetail.order.refundReason) && <DetailItem label="处理原因" value={orderDetail.order.refundReason || orderDetail.order.cancelReason || '-'} />}</div>
+            <div className="admin-detail-grid"><DetailItem label="支付渠道" value={paymentProviderName(orderDetail.order.paymentProvider || '-')} /><DetailItem label="支付子渠道" value={orderDetail.order.paymentChannel || '-'} /><DetailItem label="交易号" value={orderDetail.order.paymentTradeNo || '未支付'} mono /><DetailItem label="创建时间" value={formatDate(orderDetail.order.createdAt)} /><DetailItem label="到期时间" value={orderDetail.order.expiresAt ? formatDate(orderDetail.order.expiresAt) : '-'} /><DetailItem label="付款时间" value={orderDetail.order.paidAt ? formatDate(orderDetail.order.paidAt) : '未付款'} />{orderDetail.order.cancelledAt && <DetailItem label="取消时间" value={formatDate(orderDetail.order.cancelledAt)} />}{orderDetail.order.refundedAt && <DetailItem label="退款时间" value={formatDate(orderDetail.order.refundedAt)} />}{orderDetail.order.refundTradeNo && <DetailItem label="退款凭证" value={orderDetail.order.refundTradeNo} mono />}{(orderDetail.order.cancelReason || orderDetail.order.refundReason) && <DetailItem label="处理原因" value={orderDetail.order.refundReason || orderDetail.order.cancelReason || '-'} />}</div>
           </DetailBlock>
-          {orderDetail.redeemCode && <DetailBlock title="卡密兑换来源"><div className="admin-detail-grid"><DetailItem label="卡密" value={orderDetail.redeemCode.codeMasked} mono /><DetailItem label="兑换时间" value={formatDate(orderDetail.redeemCode.redeemedAt)} /><DetailItem label="卡密备注" value={orderDetail.redeemCode.note || '-'} /></div></DetailBlock>}
+            {orderDetail.redeemCode && <DetailBlock title="金额卡密来源"><div className="admin-detail-grid"><DetailItem label="卡密" value={orderDetail.redeemCode.codeMasked} mono /><DetailItem label="卡密金额" value={formatMoney(orderDetail.redeemCode.amountCents)} /><DetailItem label="兑换用途" value={orderDetail.redeemCode.redemptionKind === 'purchase' ? '直接购买套餐' : '充值账户余额'} /><DetailItem label="兑换时间" value={formatDate(orderDetail.redeemCode.redeemedAt)} /><DetailItem label="卡密备注" value={orderDetail.redeemCode.note || '-'} /></div></DetailBlock>}
           <DetailBlock title={`关联权益 · ${orderDetail.entitlements.length}`}>
             <div className="admin-order-record-list">{orderDetail.entitlements.map(item => <article key={item.id}><div><strong>{item.planName}</strong><small>{item.lifetime ? '永久有效' : `有效期至 ${formatDate(item.expiresAt)}`} · 创建于 {formatDate(item.createdAt)}</small><p>面板 {quotaText(item.panelMode, item.panelRemaining)} · 节点 {quotaText(item.nodeMode, item.nodeRemaining)} · 并发 {item.concurrencyLimit}</p></div><StatusBadge status={entitlementStatus(item)} /></article>)}{!orderDetail.entitlements.length && <EmptyInline text="该订单尚未生成关联权益" />}</div>
           </DetailBlock>
@@ -1452,10 +1513,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       <AdminDialog open={Boolean(repairOrder)} title="补发订单权益" description="仅用于已确认付款但没有任何关联权益的异常订单。系统会严格按照下单时的套餐快照补发，并记录管理员审计日志。" confirmLabel="确认补发权益" tone="danger" busy={busy} onClose={() => setRepairOrder(null)} onConfirm={() => void confirmRepairEntitlement()}>
         {repairOrder && <div className="admin-dialog-summary"><div><span>订单号</span><strong>{repairOrder.orderNo}</strong></div><div><span>用户</span><strong>{repairOrder.username || '-'}</strong></div><div><span>补发套餐</span><strong>{planSnapshotName(repairOrder)}</strong></div></div>}
       </AdminDialog>
-      <AdminDialog open={restoreDialogOpen} title="恢复数据库备份" description="此操作会用已校验的备份替换当前业务数据，并立即清除全部登录会话。" confirmLabel="确认恢复数据库" tone="danger" busy={busy} confirmDisabled={!databaseValidation || restoreConfirmation !== 'RESTORE'} onClose={() => { setRestoreDialogOpen(false); setRestoreConfirmation(''); }} onConfirm={() => void restoreDatabase()}>
+      <AdminDialog open={restoreDialogOpen} title="恢复完整系统备份" description="此操作会迁移已校验的业务数据与加密配置，并立即清除全部登录会话。" confirmLabel="确认恢复系统" tone="danger" busy={busy} confirmDisabled={!databaseValidation || restoreConfirmation !== 'RESTORE'} onClose={() => { setRestoreDialogOpen(false); setRestoreConfirmation(''); }} onConfirm={() => void restoreDatabase()}>
         <div className="admin-restore-confirmation">
-          <div><AlertTriangle /><p><strong>恢复后当前页面会退出登录。</strong><span>系统会先在数据目录的 backups 文件夹保存恢复前数据库，随后导入所选备份。</span></p></div>
+          <div><AlertTriangle /><p><strong>恢复后当前页面会退出登录。</strong><span>系统会先保存恢复前数据库，再将备份中的敏感配置重新加密为当前服务器密钥后导入。</span></p></div>
           <label className="admin-field"><span>输入 RESTORE 确认</span><input value={restoreConfirmation} onChange={event => setRestoreConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="RESTORE" /></label>
+        </div>
+      </AdminDialog>
+      <AdminDialog open={updateDialogOpen} title="安装系统更新" description={`将从官方发布源更新到 v${versionStatus?.latestVersion || '—'}。安装器会先备份数据并校验 SHA256，失败时自动回滚。`} confirmLabel="开始自动更新" tone="danger" busy={busy} confirmDisabled={updateConfirmation !== 'UPDATE'} onClose={() => { setUpdateDialogOpen(false); setUpdateConfirmation(''); }} onConfirm={() => void startSystemUpdate()}>
+        <div className="admin-restore-confirmation">
+          <div><AlertTriangle /><p><strong>更新期间服务会短暂重启。</strong><span>不要关闭服务器、终止 PM2 或删除应用目录。页面会在新版本通过健康检查后自动刷新。</span></p></div>
+          <label className="admin-field"><span>输入 UPDATE 确认</span><input value={updateConfirmation} onChange={event => setUpdateConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="UPDATE" /></label>
         </div>
       </AdminDialog>
       <AdminDialog open={Boolean(viewDeployment)} title="交付任务详情" description="任务从额度预约到执行完成的真实状态和结果记录。" cancelLabel="关闭" onClose={() => setViewDeployment(null)}>
@@ -1487,7 +1554,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
             <DetailBlock title="最近业务记录"><div className="admin-profile-timeline">{[...userDetail.orders.map(item => ({ id: `order-${item.id}`, title: `订单 ${item.orderNo}`, subtitle: `${planSnapshotName(item)} · ${formatMoney(item.amountCents)}`, createdAt: item.createdAt, status: item.status, action: () => { setUserDetail(null); void openOrderDetail(item); } })), ...userDetail.deployments.map(item => ({ id: `deployment-${item.id}`, title: `${item.capability === 'panel' ? '面板安装' : '节点创建'} ${item.requestId}`, subtitle: item.targetHostMasked || '未记录目标', createdAt: item.createdAt, status: item.status, action: () => { setUserDetail(null); setViewDeployment(item); } }))].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 6).map(item => <button type="button" key={item.id} onClick={item.action}><span><Activity /></span><div><strong>{item.title}</strong><small>{item.subtitle} · {formatDate(item.createdAt)}</small></div><StatusBadge status={item.status} /><ChevronRight /></button>)}{!userDetail.orders.length && !userDetail.deployments.length && <EmptyInline text="该客户暂无业务记录" />}</div></DetailBlock>
           </div>}
 
-          {userProfileTab === 'entitlements' && <div className="admin-profile-content"><div className="admin-profile-section-head"><div><h3>客户权益</h3><p>查看有效期、剩余额度和使用限制。</p></div><button type="button" className="admin-button primary" onClick={() => { setGrant(value => ({ ...value, userId: userDetail.user.id })); setUserDetail(null); setGrantOpen(true); }}><BadgeCheck /> 发放权益</button></div><div className="admin-profile-records">{userDetail.entitlements.map(item => <article key={item.id}><div><strong>{item.planName}</strong><small>{item.lifetime ? '永久有效' : `有效期至 ${formatDate(item.expiresAt)}`} · 创建于 {formatDate(item.createdAt)}</small><p>面板 {quotaText(item.panelMode, item.panelRemaining, item.panelTotal)}，已用 {item.panelUsed}，冻结 {item.panelReserved} · 节点 {quotaText(item.nodeMode, item.nodeRemaining, item.nodeTotal)}，已用 {item.nodeUsed}，冻结 {item.nodeReserved}</p></div><div><StatusBadge status={entitlementStatus(item)} /><button type="button" className="admin-link" onClick={() => { setUserDetail(null); setEditingEntitlement({ ...item }); }}>调整额度</button></div></article>)}{!userDetail.entitlements.length && <EmptyInline text="该客户暂无权益" />}</div></div>}
+          {userProfileTab === 'entitlements' && <div className="admin-profile-content"><div className="admin-profile-section-head"><div><h3>客户权益</h3><p>查看永久有效权益的剩余次数和使用限制。</p></div><button type="button" className="admin-button primary" onClick={() => { setGrant(value => ({ ...value, userId: userDetail.user.id })); setUserDetail(null); setGrantOpen(true); }}><BadgeCheck /> 发放权益</button></div><div className="admin-profile-records">{userDetail.entitlements.map(item => <article key={item.id}><div><strong>{item.planName}</strong><small>{item.lifetime ? '永久有效' : `有效期至 ${formatDate(item.expiresAt)}`} · 创建于 {formatDate(item.createdAt)}</small><p>面板 {quotaText(item.panelMode, item.panelRemaining, item.panelTotal)}，已用 {item.panelUsed}，冻结 {item.panelReserved} · 节点 {quotaText(item.nodeMode, item.nodeRemaining, item.nodeTotal)}，已用 {item.nodeUsed}，冻结 {item.nodeReserved}</p></div><div><StatusBadge status={entitlementStatus(item)} /><button type="button" className="admin-link" onClick={() => { setUserDetail(null); setEditingEntitlement({ ...item }); }}>调整额度</button></div></article>)}{!userDetail.entitlements.length && <EmptyInline text="该客户暂无权益" />}</div></div>}
 
           {userProfileTab === 'orders' && <div className="admin-profile-content"><div className="admin-profile-section-head"><div><h3>客户订单</h3><p>订单、金额和处理状态集中展示。</p></div></div><div className="admin-profile-records">{userDetail.orders.map(order => <button type="button" key={order.id} onClick={() => { setUserDetail(null); void openOrderDetail(order); }}><div><strong>{order.orderNo}</strong><small>{planSnapshotName(order)} · {formatDate(order.createdAt)}</small><p>{order.paymentTradeNo ? `交易号 ${order.paymentTradeNo}` : '尚未记录支付交易号'}</p></div><div><b>{formatMoney(order.amountCents)}</b><StatusBadge status={order.status} /><ChevronRight /></div></button>)}{!userDetail.orders.length && <EmptyInline text="该客户暂无订单" />}</div></div>}
 
@@ -1500,402 +1567,3 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   );
 };
 
-const Dashboard: React.FC<{
-  stats: Stats | null;
-  exceptions: AdminExceptions;
-  orders: Order[];
-  deployments: DeploymentRecord[];
-  onNavigate: (tab: AdminTab) => void;
-  onOpenOrder: (order: Order) => void;
-  onOpenDeployment: (deployment: DeploymentRecord) => void;
-}> = ({ stats, exceptions, orders, deployments, onNavigate, onOpenOrder, onOpenDeployment }) => {
-  const successRate = stats?.deployments ? Math.round((stats.succeeded / stats.deployments) * 100) : 0;
-  const recentOrders = orders.slice(0, 5);
-  const recentDeployments = deployments.slice(0, 5);
-  return <div className="admin-dashboard">
-    <header className="admin-page-heading admin-dashboard-heading"><div><h2>运营概览与待处理</h2><p>优先查看需要处理的支付、权益和搭建异常，再浏览核心业务指标。</p></div><span className="admin-live"><i /> 数据已同步</span></header>
-    <div className="admin-dashboard-strip"><div><strong>业务健康度</strong><p>支付、权益与交付链路的当前运行摘要</p></div><small>数据来自当前业务数据库</small></div>
-    <div className="admin-stat-grid">
-      <Stat icon={Users} label="用户总数" value={stats?.users || 0} detail={`${stats?.activeUsers || 0} 正常 / ${stats?.disabledUsers || 0} 禁用`} tone="cyan" />
-      <Stat icon={CircleDollarSign} label="实际收入" value={formatMoney(stats?.revenueCents || 0)} detail={`${stats?.paidOrders || 0} 笔已付款订单`} tone="green" />
-      <Stat icon={BadgeCheck} label="有效权益" value={stats?.activeEntitlements || 0} detail={`${stats?.expiredEntitlements || 0} 过期 / ${stats?.revokedEntitlements || 0} 撤销`} tone="indigo" />
-      <Stat icon={Network} label="交付成功率" value={`${successRate}%`} detail={`${stats?.succeeded || 0} 成功 / ${stats?.failed || 0} 失败`} tone="amber" />
-    </div>
-    <div className="admin-attention-grid">
-      <button type="button" onClick={() => onNavigate('orders')}><span className="amber"><FileClock /></span><div><strong>{stats?.pendingOrders || 0}</strong><small>待确认付款订单</small></div><ChevronRight /></button>
-      <button type="button" onClick={() => onNavigate('deployments')}><span className="rose"><ClipboardCheck /></span><div><strong>{stats?.uncertain || 0}</strong><small>待人工核对任务</small></div><ChevronRight /></button>
-      <button type="button" onClick={() => onNavigate('deployments')}><span className="cyan"><Activity /></span><div><strong>{stats?.running || 0}</strong><small>正在执行的任务</small></div><ChevronRight /></button>
-    </div>
-    <section className={`admin-exception-center ${exceptions.summary.total ? 'has-exceptions' : 'clear'}`}>
-      <header><div><span><AlertTriangle /></span><div><h3>待处理事项</h3><p>自动汇总支付、权益发放和搭建任务中需要人工处理的问题。</p></div></div><div className="admin-exception-summary"><b>{exceptions.summary.total}</b><span><strong>{exceptions.summary.critical}</strong> 紧急 · <strong>{exceptions.summary.warning}</strong> 提醒</span></div></header>
-      <div className="admin-exception-list">
-        {exceptions.items.slice(0, 8).map(item => <button type="button" key={item.id} className={item.severity} onClick={() => item.order ? onOpenOrder(item.order) : item.deployment ? onOpenDeployment(item.deployment) : onNavigate(item.targetType === 'order' ? 'orders' : 'deployments')}>
-          <span>{item.severity === 'danger' ? <AlertTriangle /> : <Clock3 />}</span><div><strong>{item.title}</strong><p>{item.description}</p><small>{formatDate(item.createdAt)}</small></div><ChevronRight />
-        </button>)}
-        {!exceptions.items.length && <div className="admin-exception-empty"><CheckCircle2 /><div><strong>当前没有业务异常</strong><span>支付、权益和交付任务状态均未发现需要人工处理的问题。</span></div></div>}
-      </div>
-    </section>
-    <div className="admin-dashboard-columns">
-      <section className="admin-dashboard-panel"><header><div><h3>最近订单</h3><p>按创建时间倒序</p></div><button onClick={() => onNavigate('orders')}>查看全部</button></header><div className="admin-activity-list">{recentOrders.map(order => <div key={order.id}><span className="admin-activity-icon"><CreditCard /></span><div><strong>{order.username || '-'}</strong><small>{order.orderNo}</small></div><div className="right"><strong>{formatMoney(order.amountCents)}</strong><StatusBadge status={order.status} /></div></div>)}{!recentOrders.length && <EmptyInline text="暂无订单" />}</div></section>
-      <section className="admin-dashboard-panel"><header><div><h3>最近交付任务</h3><p>面板安装与节点创建记录</p></div><button onClick={() => onNavigate('deployments')}>查看全部</button></header><div className="admin-activity-list">{recentDeployments.map(item => <div key={item.id}><span className="admin-activity-icon"><Network /></span><div><strong>{item.username || '-'}</strong><small>{item.capability === 'panel' ? '面板安装' : '节点创建'} · {item.targetHostMasked || '-'}</small></div><div className="right"><StatusBadge status={item.status} /><small>{formatDate(item.createdAt)}</small></div></div>)}{!recentDeployments.length && <EmptyInline text="暂无交付任务" />}</div></section>
-    </div>
-  </div>;
-};
-
-const DiagnosisBadge: React.FC<{ diagnosis: OrderDetail['diagnosis'] }> = ({ diagnosis }) => <span className={`admin-diagnosis-badge ${diagnosis.severity}`} title={diagnosis.recommendedAction}><i />{diagnosis.processingLabel}</span>;
-
-type AdminToolbarProps = { query: string; onQuery: (value: string) => void; placeholder: string; filter: string; onFilter: (value: string) => void; options: Array<[string, string]>; action?: React.ReactNode };
-
-const AdminSection: React.FC<{ title: string; description: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => {
-  return <div className="admin-section">
-    <header className="admin-page-heading"><div><h2>{title}</h2><p>{description}</p></div>{action && <div className="admin-page-actions">{action}</div>}</header>
-    <div className="admin-section-body">{children}</div>
-  </div>;
-};
-const AdminToolbar: React.FC<AdminToolbarProps> = ({ query, onQuery, placeholder, filter, onFilter, options, action }) => <div className="admin-toolbar"><label className="admin-search"><Search /><input value={query} onChange={event => onQuery(event.target.value)} placeholder={placeholder} />{query && <button type="button" title="清除搜索" onClick={() => onQuery('')}><X /></button>}</label><div className="admin-toolbar-right"><div className="admin-filter-buttons" aria-label="状态筛选">{options.map(([value, label]) => <button type="button" key={value} className={`admin-filter-button ${filter === value ? 'active' : ''}`} aria-pressed={filter === value} onClick={() => onFilter(value)}>{label}</button>)}</div>{(query || filter !== 'all') && <button type="button" className="admin-toolbar-clear" onClick={() => { onQuery(''); onFilter('all'); }}><X /> 清理</button>}{action && <div className="admin-toolbar-actions">{action}</div>}</div></div>;
-const AdminTable: React.FC<{ columns: string[]; empty: string; children: React.ReactNode }> = ({ columns, empty, children }) => <div className="admin-table-wrap"><table className="admin-table"><thead><tr>{columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{children}</tbody></table>{React.Children.count(children) === 0 && <div className="admin-table-empty"><Search /><strong>{empty}</strong><span>调整搜索词或筛选条件后再试。</span></div>}</div>;
-const Pagination: React.FC<{ total: number; page: number; pageCount: number; onPage: (page: number) => void }> = ({ total, page, pageCount, onPage }) => {
-  const pages = Array.from({ length: pageCount }, (_, index) => index + 1).filter(item => item === 1 || item === pageCount || Math.abs(item - page) <= 1);
-  return <div className="admin-pagination"><span>共 <strong>{total}</strong> 条记录</span><div className="admin-page-buttons"><button className="admin-icon-button small" disabled={page <= 1} onClick={() => onPage(page - 1)} title="上一页"><ChevronLeft /></button>{pages.map((item, index) => <React.Fragment key={item}>{index > 0 && item - pages[index - 1] > 1 && <span className="admin-page-gap">...</span>}<button type="button" className={`admin-page-number ${item === page ? 'active' : ''}`} aria-current={item === page ? 'page' : undefined} onClick={() => onPage(item)}>{item}</button></React.Fragment>)}<button className="admin-icon-button small" disabled={page >= pageCount} onClick={() => onPage(page + 1)} title="下一页"><ChevronRight /></button></div></div>;
-};
-const Stat: React.FC<{ icon: React.ElementType; label: string; value: React.ReactNode; detail: string; tone: string }> = ({ icon: Icon, label, value, detail, tone }) => <div className={`admin-stat ${tone}`}><div className="admin-stat-head"><span className="admin-stat-icon"><Icon /></span><span className="admin-stat-signal"><i /> 实时</span></div><strong>{value}</strong><small>{label}</small><p>{detail}</p></div>;
-const EmptyInline: React.FC<{ text: string }> = ({ text }) => <div className="admin-empty-inline">{text}</div>;
-const AdminPageLoading = () => <div className="admin-page-loading"><RefreshCw /><p>正在读取管理数据...</p></div>;
-const DetailBlock: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => <section className="admin-detail-block"><header><FileText /><h3>{title}</h3></header>{children}</section>;
-const DetailItem: React.FC<{ label: string; value: React.ReactNode; mono?: boolean; accent?: boolean }> = ({ label, value, mono, accent }) => <div className={`admin-detail-item ${mono ? 'mono' : ''} ${accent ? 'accent' : ''}`}><span>{label}</span><strong>{value}</strong></div>;
-const PayloadDetails: React.FC<{ payload: string; label: string }> = ({ payload, label }) => {
-  let formatted = payload || '{}';
-  try { formatted = JSON.stringify(JSON.parse(formatted), null, 2); } catch { /* Preserve non-JSON gateway responses. */ }
-  return <details className="admin-payload-details"><summary>{label}</summary><pre>{formatted}</pre></details>;
-};
-const PlanSnapshotDetails: React.FC<{ order: Order }> = ({ order }) => {
-  const snapshot = parsePlanSnapshot(order);
-  return <div className="admin-detail-grid"><DetailItem label="套餐名称" value={String(snapshot.name || '套餐快照')} /><DetailItem label="套餐说明" value={String(snapshot.description || '无')} /><DetailItem label="面板额度" value={snapshot.panelMode === 'unlimited' ? '不限次数' : snapshot.panelMode === 'none' ? '不包含' : `${Number(snapshot.panelLimit || 0)} 次`} /><DetailItem label="节点额度" value={snapshot.nodeMode === 'unlimited' ? '不限次数' : snapshot.nodeMode === 'none' ? '不包含' : `${Number(snapshot.nodeLimit || 0)} 次`} /><DetailItem label="每日面板上限" value={Number(snapshot.dailyPanelLimit || 0) || '不限'} /><DetailItem label="每日节点上限" value={Number(snapshot.dailyNodeLimit || 0) || '不限'} /><DetailItem label="并发任务上限" value={Number(snapshot.concurrencyLimit || 1)} /><DetailItem label="有效期" value={snapshot.durationUnit === 'lifetime' ? '永久有效' : `${Number(snapshot.durationValue || 0)} ${snapshot.durationUnit === 'years' ? '年' : snapshot.durationUnit === 'quarters' ? '个季度' : snapshot.durationUnit === 'months' ? '个月' : '天'}`} /></div>;
-};
-
-const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
-  const labels: Record<string, string> = { created: '已创建', pending: '待确认', paid: '已付款', failed: '失败', closed: '已关闭', accepted: '已验收', rejected: '已拒绝', refunded: '已退款', cancelled: '已取消', expired: '已过期', active: '正常', redeemed: '已兑换', disabled: '已禁用', admin: '管理员', user: '普通用户', enabled: '已上架', revoked: '已撤销', reserved: '已预约', running: '执行中', succeeded: '成功', uncertain: '待核对', grant: '发放', reserve: '冻结', consume: '核销', release: '返还', adjust: '调额', panel: '面板', node: '节点', plan: '套餐', order: '订单', entitlement: '权益', deployment: '交付任务', redeem_code: '卡密', settings: '系统设置' };
-  return <span className={`admin-status ${status}`}>{labels[status] || status}</span>;
-};
-
-const SettingSwitch: React.FC<{ label: string; description: string; checked: boolean; onChange: (value: boolean) => void }> = ({ label, description, checked, onChange }) => <div className="admin-setting-row"><div><strong>{label}</strong><p>{description}</p></div><button type="button" role="switch" aria-checked={checked} className={`admin-switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}><span /></button></div>;
-
-const PlanDialog: React.FC<{ plan: (Omit<Plan, 'id'> & { id?: string }) | null; busy: boolean; onChange: (plan: (Omit<Plan, 'id'> & { id?: string }) | null) => void; onClose: () => void; onSave: () => void }> = ({ plan, busy, onChange, onClose, onSave }) => <AdminDialog open={Boolean(plan)} title={plan?.id ? '编辑套餐' : '新增套餐'} description="套餐会在用户端用于创建订单，已创建订单继续使用下单时保存的套餐快照。" confirmLabel="保存套餐" busy={busy} confirmDisabled={!plan?.name.trim()} onClose={onClose} onConfirm={onSave}>{plan && <div className="admin-form-grid">
-  <label className="admin-field"><span>套餐名称</span><input value={plan.name} onChange={event => onChange({ ...plan, name: event.target.value })} maxLength={80} /></label>
-  <label className="admin-field"><span>价格（元）</span><NumberInput min="0" step="0.01" value={plan.priceCents / 100} onValueChange={price => onChange({ ...plan, priceCents: Math.round(price * 100) })} /></label>
-  <label className="admin-field span-2"><span>套餐说明</span><input value={plan.description} onChange={event => onChange({ ...plan, description: event.target.value })} maxLength={300} /></label>
-  <label className="admin-field"><span>有效期单位</span><select value={plan.durationUnit} onChange={event => onChange({ ...plan, durationUnit: event.target.value as Plan['durationUnit'] })}><option value="days">天</option><option value="months">月</option><option value="quarters">季度</option><option value="years">年</option><option value="lifetime">永久</option></select></label>
-  <label className="admin-field"><span>有效期数值</span><NumberInput min="0" disabled={plan.durationUnit === 'lifetime'} value={plan.durationValue} onValueChange={durationValue => onChange({ ...plan, durationValue })} /></label>
-  <label className="admin-field"><span>面板权益</span><select value={plan.panelMode} onChange={event => onChange({ ...plan, panelMode: event.target.value as Plan['panelMode'] })}><option value="none">不包含</option><option value="limited">限制次数</option><option value="unlimited">不限次数</option></select></label>
-  <label className="admin-field"><span>面板总次数</span><NumberInput min="0" disabled={plan.panelMode !== 'limited'} value={plan.panelLimit} onValueChange={panelLimit => onChange({ ...plan, panelLimit })} /></label>
-  <label className="admin-field"><span>节点权益</span><select value={plan.nodeMode} onChange={event => onChange({ ...plan, nodeMode: event.target.value as Plan['nodeMode'] })}><option value="none">不包含</option><option value="limited">限制次数</option><option value="unlimited">不限次数</option></select></label>
-  <label className="admin-field"><span>节点总次数</span><NumberInput min="0" disabled={plan.nodeMode !== 'limited'} value={plan.nodeLimit} onValueChange={nodeLimit => onChange({ ...plan, nodeLimit })} /></label>
-  <label className="admin-field"><span>每日面板上限</span><NumberInput min="0" value={plan.dailyPanelLimit} onValueChange={dailyPanelLimit => onChange({ ...plan, dailyPanelLimit })} /><small>0 表示不限制</small></label>
-  <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={plan.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...plan, dailyNodeLimit })} /><small>0 表示不限制</small></label>
-  <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={plan.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...plan, concurrencyLimit })} /></label>
-  <label className="admin-field"><span>显示排序</span><NumberInput value={plan.sortOrder} onValueChange={sortOrder => onChange({ ...plan, sortOrder })} /></label>
-  <label className="admin-checkbox span-2"><input type="checkbox" checked={plan.homepageVisible} onChange={event => onChange({ ...plan, homepageVisible: event.target.checked })} /><span><strong>在官网首页展示此套餐</strong><small>此开关只控制官网套餐区域；套餐仍需上架后才会显示并可购买。</small></span></label>
-  <label className="admin-checkbox span-2"><input type="checkbox" checked={plan.enabled} onChange={event => onChange({ ...plan, enabled: event.target.checked })} /><span><strong>在用户端上架此套餐</strong><small>下架后不能新建订单，已有订单和权益不受影响。</small></span></label>
-</div>}</AdminDialog>;
-
-const GrantDialog: React.FC<{ open: boolean; busy: boolean; users: AdminUser[]; value: typeof emptyGrant; onChange: (value: typeof emptyGrant) => void; onClose: () => void; onSave: () => void }> = ({ open, busy, users, value, onChange, onClose, onSave }) => <AdminDialog open={open} title="手工发放权益" description="直接为指定用户创建一条真实权益记录，不会创建订单或收入记录。" confirmLabel="确认发放权益" tone="success" busy={busy} confirmDisabled={!value.userId || !value.name.trim()} onClose={onClose} onConfirm={onSave}><div className="admin-form-grid">
-  <label className="admin-field"><span>用户</span><select value={value.userId} onChange={event => onChange({ ...value, userId: event.target.value })}>{users.map(user => <option key={user.id} value={user.id}>{user.username}</option>)}</select></label>
-  <label className="admin-field"><span>权益名称</span><input value={value.name} onChange={event => onChange({ ...value, name: event.target.value })} maxLength={80} /></label>
-  <label className="admin-field"><span>有效期单位</span><select value={value.durationUnit} onChange={event => onChange({ ...value, durationUnit: event.target.value })}><option value="days">天</option><option value="months">月</option><option value="quarters">季度</option><option value="years">年</option><option value="lifetime">永久</option></select></label>
-  <label className="admin-field"><span>有效期数值</span><NumberInput min="0" disabled={value.durationUnit === 'lifetime'} value={value.durationValue} onValueChange={durationValue => onChange({ ...value, durationValue })} /></label>
-  <label className="admin-field"><span>面板权益</span><select value={value.panelMode} onChange={event => onChange({ ...value, panelMode: event.target.value })}><option value="none">不包含</option><option value="limited">限制次数</option><option value="unlimited">不限次数</option></select></label>
-  <label className="admin-field"><span>面板次数</span><NumberInput min="0" disabled={value.panelMode !== 'limited'} value={value.panelLimit} onValueChange={panelLimit => onChange({ ...value, panelLimit })} /></label>
-  <label className="admin-field"><span>节点权益</span><select value={value.nodeMode} onChange={event => onChange({ ...value, nodeMode: event.target.value })}><option value="none">不包含</option><option value="limited">限制次数</option><option value="unlimited">不限次数</option></select></label>
-  <label className="admin-field"><span>节点次数</span><NumberInput min="0" disabled={value.nodeMode !== 'limited'} value={value.nodeLimit} onValueChange={nodeLimit => onChange({ ...value, nodeLimit })} /></label>
-  <label className="admin-field"><span>每日面板上限</span><NumberInput min="0" value={value.dailyPanelLimit} onValueChange={dailyPanelLimit => onChange({ ...value, dailyPanelLimit })} /></label>
-  <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={value.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...value, dailyNodeLimit })} /></label>
-  <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={value.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...value, concurrencyLimit })} /></label>
-</div></AdminDialog>;
-
-const QuotaDialog: React.FC<{ value: Entitlement | null; busy: boolean; onChange: (value: Entitlement | null) => void; onClose: () => void; onSave: () => void }> = ({ value, busy, onChange, onClose, onSave }) => <AdminDialog open={Boolean(value)} title="调整权益额度" description="修改剩余额度时，系统会保留已使用和已冻结数量，并重新计算总额度。" confirmLabel="保存额度调整" busy={busy} onClose={onClose} onConfirm={onSave}>{value && <div className="admin-form-grid">
-  <div className="admin-form-context span-2"><strong>{value.username}</strong><span>{value.planName}</span></div>
-  <label className="admin-field"><span>面板剩余次数</span><NumberInput min="0" disabled={value.panelMode !== 'limited'} value={value.panelRemaining} onValueChange={panelRemaining => onChange({ ...value, panelRemaining })} /><small>{value.panelMode === 'limited' ? `已用 ${value.panelUsed}，冻结 ${value.panelReserved}` : '该权益不是限次模式'}</small></label>
-  <label className="admin-field"><span>节点剩余次数</span><NumberInput min="0" disabled={value.nodeMode !== 'limited'} value={value.nodeRemaining} onValueChange={nodeRemaining => onChange({ ...value, nodeRemaining })} /><small>{value.nodeMode === 'limited' ? `已用 ${value.nodeUsed}，冻结 ${value.nodeReserved}` : '该权益不是限次模式'}</small></label>
-  <label className="admin-field"><span>每日面板上限</span><NumberInput min="0" value={value.dailyPanelLimit} onValueChange={dailyPanelLimit => onChange({ ...value, dailyPanelLimit })} /></label>
-  <label className="admin-field"><span>每日节点上限</span><NumberInput min="0" value={value.dailyNodeLimit} onValueChange={dailyNodeLimit => onChange({ ...value, dailyNodeLimit })} /></label>
-  <label className="admin-field"><span>并发任务上限</span><NumberInput min="1" value={value.concurrencyLimit} onValueChange={concurrencyLimit => onChange({ ...value, concurrencyLimit })} /></label>
-</div>}</AdminDialog>;
-
-const ContactMethodEditor: React.FC<{ method: ContactMethod; idLocked: boolean; onChange: (method: ContactMethod) => void }> = ({ method, idLocked, onChange }) => {
-  const patch = (value: Partial<ContactMethod>) => onChange({ ...method, ...value });
-  return <div className="admin-form-grid">
-    <label className="admin-field"><span>联系方式类型</span><select value={method.type} onChange={event => { const type = event.target.value as ContactMethod['type']; patch({ type, name: method.name === contactTypeLabels[method.type] ? contactTypeLabels[type] : method.name }); }}>{Object.entries(contactTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-    <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={40} disabled={idLocked} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>{idLocked ? '已用于绑定二维码，创建后不可修改。' : '用于独立保存二维码，创建后不可修改。'}</small></label>
-    <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={80} onChange={event => patch({ name: event.target.value })} placeholder={contactTypeLabels[method.type]} /></label>
-    <label className="admin-field"><span>显示排序</span><NumberInput min="-9999" max="9999" value={method.sortOrder} onValueChange={sortOrder => patch({ sortOrder })} /></label>
-    <label className="admin-field span-2"><span>账号或联系信息</span><textarea value={method.value} maxLength={1000} onChange={event => patch({ value: event.target.value })} placeholder="例如：example、@example、support@example.com" /><small>这里填写的内容会和本条二维码一起显示。</small></label>
-    <label className="admin-field span-2"><span>联系链接</span><input value={method.contactUrl} maxLength={1000} onChange={event => patch({ contactUrl: event.target.value })} placeholder="https://t.me/example、mailto:support@example.com 或 tel:+8613800000000" /><small>可选，支持 HTTP、HTTPS、mailto 和 tel。</small></label>
-    <label className="admin-field span-2"><span>二维码图片地址</span><input type="url" value={method.qrCodeUrl} maxLength={1000} onChange={event => patch({ qrCodeUrl: event.target.value })} placeholder="https://example.com/contact.png" /><small>可选。保存更改后也可在列表中上传图片，上传图片优先显示。</small></label>
-    <label className="admin-checkbox span-2"><input type="checkbox" checked={method.enabled} onChange={event => patch({ enabled: event.target.checked })} /><span><strong>启用此联系方式</strong><small>关闭后该方式从用户咨询弹窗隐藏，配置和二维码仍然保留。</small></span></label>
-  </div>;
-};
-
-const ResourceRecommendationEditor: React.FC<{ item: ResourceRecommendation; idLocked: boolean; onChange: (item: ResourceRecommendation) => void }> = ({ item, idLocked, onChange }) => {
-  const patch = (value: Partial<ResourceRecommendation>) => onChange({ ...item, ...value });
-  return <div className="admin-form-grid">
-    <label className="admin-field"><span>推荐分类</span><select value={item.category} onChange={event => patch({ category: event.target.value as ResourceRecommendation['category'] })}><option value="server">服务器厂商</option><option value="residential_ip">住宅 IP 厂商</option></select></label>
-    <label className="admin-field"><span>唯一标识</span><input value={item.id} maxLength={40} disabled={idLocked} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>{idLocked ? '已用于绑定 Logo，创建后不可修改。' : '用于 Logo 存储，创建后不可修改。'}</small></label>
-    <label className="admin-field"><span>厂商名称</span><input value={item.name} maxLength={80} onChange={event => patch({ name: event.target.value })} /></label>
-    <label className="admin-field"><span>推荐标签</span><input value={item.badge} maxLength={30} onChange={event => patch({ badge: event.target.value })} placeholder="例如：新手推荐" /></label>
-    <label className="admin-field span-2"><span>简短介绍</span><textarea value={item.description} maxLength={500} onChange={event => patch({ description: event.target.value })} placeholder="简要说明厂商特点和适用场景" /><small>{item.description.length} / 500</small></label>
-    <label className="admin-field span-2"><span>跳转链接</span><input type="url" value={item.purchaseUrl} maxLength={1000} onChange={event => patch({ purchaseUrl: event.target.value })} placeholder="https://example.com" /><small>保存后可在推荐列表中点击自动获取 Logo。</small></label>
-    <label className="admin-field"><span>按钮名称</span><input value={item.buttonLabel} maxLength={30} onChange={event => patch({ buttonLabel: event.target.value })} placeholder="了解详情" /></label>
-    <label className="admin-field"><span>显示排序</span><NumberInput min="-9999" max="9999" value={item.sortOrder} onValueChange={sortOrder => patch({ sortOrder })} /></label>
-    <label className="admin-field span-2"><span>Logo 图片地址</span><input type="url" value={item.logoUrl} maxLength={1000} onChange={event => patch({ logoUrl: event.target.value })} placeholder="https://example.com/logo.png" /><small>可选。也可保存推荐项后自动获取或上传图片，本站保存的图片优先显示。</small></label>
-    <label className="admin-checkbox"><input type="checkbox" checked={item.enabled} onChange={event => patch({ enabled: event.target.checked })} /><span><strong>启用此推荐项</strong><small>还需开启对应分类才会在用户端显示。</small></span></label>
-    <label className="admin-checkbox"><input type="checkbox" checked={item.openInNewTab} onChange={event => patch({ openInNewTab: event.target.checked })} /><span><strong>在新窗口打开跳转链接</strong><small>建议外部厂商页面保持开启。</small></span></label>
-  </div>;
-};
-
-const PaymentMethodEditor: React.FC<{ method: PaymentMethod; idLocked: boolean; onChange: (method: PaymentMethod) => void }> = ({ method, idLocked, onChange }) => {
-  const provider = paymentProvider(method);
-  const patch = (value: Partial<PaymentMethod>) => onChange({ ...method, ...value });
-  const secretPlaceholder = method.merchantSecretConfigured ? '已配置，留空保持不变' : '请输入密钥';
-  const privateKeyPlaceholder = method.privateKeyConfigured ? '已配置，留空保持不变' : '粘贴完整私钥内容';
-  const apiV3Placeholder = method.apiV3KeyConfigured ? '已配置，留空保持不变' : '输入 32 位 API v3 密钥';
-  return <div className="admin-form-grid">
-    <label className="admin-field"><span>显示名称</span><input value={method.name} maxLength={40} onChange={event => patch({ name: event.target.value })} /></label>
-    <label className="admin-field"><span>唯一标识</span><input value={method.id} maxLength={32} disabled={idLocked} onChange={event => patch({ id: event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') })} /><small>{idLocked ? '已用于订单和回调匹配，创建后不可修改。' : '用于订单和回调匹配，创建后不可修改。'}</small></label>
-    <label className="admin-field"><span>支付驱动</span><select value={provider} onChange={event => { const next = event.target.value as PaymentProvider; patch({ provider: next, type: legacyPaymentType(next), channel: next === 'epay' ? method.channel || 'alipay' : method.channel, enabledChannels: next === 'epay' ? method.enabledChannels || [method.channel || 'alipay'] : method.enabledChannels, currency: defaultPaymentCurrency(next, method) }); }}>
-      {provider === 'manual' && <option value="manual">人工收款（历史配置）</option>}
-      {provider === 'mgate' && <option value="mgate">MGate（历史配置）</option>}
-      <option value="epay">易支付聚合</option>
-      <option value="tokenpay">USDT - TokenPay</option>
-      <option value="epusdt">USDT - Epusdt</option>
-      <option value="paypal">PayPal 官方</option>
-      <option value="alipay_official">支付宝官方</option>
-      <option value="wechat_official">微信支付官方</option>
-    </select></label>
-    <label className="admin-field"><span>显示排序</span><NumberInput value={method.sortOrder} onValueChange={sortOrder => patch({ sortOrder })} /></label>
-
-    {provider === 'manual' && <>
-      <label className="admin-field span-2"><span>付款地址</span><input type="url" value={method.paymentUrl} maxLength={1000} placeholder="可选，例如付款码页面或联系客服页面" onChange={event => patch({ paymentUrl: event.target.value })} /></label>
-      <label className="admin-field span-2"><span>人工付款说明</span><textarea value={method.instructions} maxLength={1000} placeholder="填写收款账号、付款备注和联系管理员方式" onChange={event => patch({ instructions: event.target.value })} /></label>
-    </>}
-
-    {provider !== 'manual' && <>
-      <label className="admin-field span-2"><span>前台付款说明</span><input value={method.instructions} maxLength={1000} placeholder="例如：支付完成后系统自动到账" onChange={event => patch({ instructions: event.target.value })} /></label>
-      <label className="admin-field span-2"><span>自定义回调域名</span><input type="url" value={method.callbackBaseUrl || ''} onChange={event => patch({ callbackBaseUrl: event.target.value })} placeholder="可选，留空使用系统公网访问地址" /><small>必须是支付平台能够通过公网访问的 HTTP 或 HTTPS 地址。</small></label>
-    </>}
-
-    {provider === 'epay' && <>
-      <label className="admin-field span-2"><span>支付平台网关地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://pay.example.com/submit.php" /></label>
-      <label className="admin-field"><span>商户 PID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
-      <div className="admin-field span-2"><span>用户可选支付方式</span><div className="admin-payment-channel-options">
-        {EPAY_CHANNEL_OPTIONS.map(option => <label key={option.value} className="admin-checkbox"><input type="checkbox" checked={(method.enabledChannels || [method.channel || 'alipay']).includes(option.value)} onChange={event => {
-          const current = method.enabledChannels || [method.channel || 'alipay'];
-          const next = event.target.checked ? [...new Set([...current, option.value])] : current.filter(item => item !== option.value);
-          patch({ enabledChannels: next, channel: next[0] || method.channel || 'alipay' });
-        }} /><span><strong>{option.label}</strong><small>允许用户在下单时选择</small></span></label>)}
-      </div><small>可同时启用多种方式。启用此易支付渠道时至少选择一种；如果只使用卡密，可停用整个支付渠道。</small></div>
-      <SecretField label="商户密钥" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
-      <div className="admin-form-context span-2"><strong>异步通知地址</strong><span>保存后在支付列表中复制，填写到支付平台后台的异步通知地址。同步返回地址由系统按当前站点自动生成。</span></div>
-    </>}
-
-    {provider === 'mgate' && <>
-      <label className="admin-field span-2"><span>MGate API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://gateway.example.com" /></label>
-      <label className="admin-field"><span>APP ID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
-      <label className="admin-field"><span>源货币</span><select value={method.currency || 'CNY'} onChange={event => patch({ currency: event.target.value })}>{MGATE_CURRENCIES.map(currency => <option key={currency} value={currency}>{currency}</option>)}</select></label>
-      <SecretField label="App Secret" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
-    </>}
-
-    {provider === 'tokenpay' && <>
-      <label className="admin-field span-2"><span>TokenPay API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://tokenpay.example.com" /></label>
-      <label className="admin-field span-2"><span>USDT 网络</span><select value={tokenPayCurrency(method)} onChange={event => patch({ currency: event.target.value })}>{isLegacyTokenPayCurrency(method) && <option value={tokenPayCurrency(method)}>{tokenPayCurrency(method).replaceAll('_', '-')}（历史配置）</option>}{TOKENPAY_CURRENCIES.map(currency => <option key={currency.value} value={currency.value}>{currency.label}</option>)}</select><small>新通道仅提供 USDT 网络；历史 TRX、ETH、USDC 配置仍可读取并迁移。</small></label>
-      <SecretField label="API 密钥" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
-    </>}
-
-    {provider === 'epusdt' && <>
-      <label className="admin-field span-2"><span>Epusdt API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="https://epusdt.example.com/api/v1/order/create-transaction" /></label>
-      <label className="admin-field span-2"><span>币种</span><select value="USDT-TRC20" onChange={() => patch({ currency: 'USDT-TRC20' })}><option value="USDT-TRC20">USDT-TRC20</option></select><small>Epusdt 当前驱动固定使用 USDT-TRC20。</small></label>
-      <SecretField label="签名 Token" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
-    </>}
-
-    {provider === 'paypal' && <>
-      <label className="admin-field span-2"><span>PayPal API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="留空使用 PayPal 官方 API 地址" /><small>正式环境默认使用 api-m.paypal.com，沙箱环境默认使用 api-m.sandbox.paypal.com。</small></label>
-      <label className="admin-field span-2"><span>Client ID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} autoComplete="off" /></label>
-      <SecretField label="Client Secret" value={method.merchantSecret || ''} placeholder={secretPlaceholder} onChange={merchantSecret => patch({ merchantSecret })} />
-      <label className="admin-field span-2"><span>Webhook ID</span><input value={method.appId || ''} onChange={event => patch({ appId: event.target.value })} /><small>在 PayPal 开发者后台创建 Webhook 后填写其 ID，用于校验异步通知。</small></label>
-      <label className="admin-field span-2"><span>订单币种</span><select value="CNY" onChange={() => patch({ currency: 'CNY' })}><option value="CNY">CNY - 人民币</option></select><small>当前套餐金额按人民币分存储，固定使用 CNY 可避免未换汇直接扣款。</small></label>
-      <label className="admin-checkbox span-2"><input type="checkbox" checked={method.sandbox === true} onChange={event => patch({ sandbox: event.target.checked })} /><span><strong>使用 PayPal 沙箱</strong><small>测试时启用并填写沙箱应用的 Client ID、Client Secret 与 Webhook ID。</small></span></label>
-    </>}
-
-    {provider === 'alipay_official' && <>
-      <label className="admin-field span-2"><span>支付宝网关</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="留空使用 https://openapi.alipay.com/gateway.do" /></label>
-      <label className="admin-field span-2"><span>应用 APPID</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
-      <label className="admin-field span-2"><span>订单币种</span><select value="CNY" onChange={() => patch({ currency: 'CNY' })}><option value="CNY">CNY - 人民币</option></select></label>
-      <label className="admin-field span-2"><span>应用私钥</span><textarea value={method.privateKey || ''} onChange={event => patch({ privateKey: event.target.value })} placeholder={privateKeyPlaceholder} /><small>支持 PEM 或未带头尾的 PKCS8 私钥，保存后不回传明文。</small></label>
-      <label className="admin-field span-2"><span>支付宝公钥</span><textarea value={method.publicKey || ''} onChange={event => patch({ publicKey: event.target.value })} placeholder="粘贴支付宝开放平台提供的支付宝公钥" /></label>
-      <label className="admin-checkbox span-2"><input type="checkbox" checked={method.sandbox === true} onChange={event => patch({ sandbox: event.target.checked })} /><span><strong>标记为沙箱通道</strong><small>启用后请同时填写支付宝沙箱网关地址与沙箱应用资料。</small></span></label>
-    </>}
-
-    {provider === 'wechat_official' && <>
-      <label className="admin-field span-2"><span>微信支付 API 地址</span><input type="url" value={method.gatewayUrl || ''} onChange={event => patch({ gatewayUrl: event.target.value })} placeholder="留空使用 https://api.mch.weixin.qq.com" /></label>
-      <label className="admin-field"><span>应用 AppID</span><input value={method.appId || ''} onChange={event => patch({ appId: event.target.value })} /></label>
-      <label className="admin-field"><span>商户号</span><input value={method.merchantId || ''} onChange={event => patch({ merchantId: event.target.value })} /></label>
-      <label className="admin-field"><span>商户证书序列号</span><input value={method.certificateSerial || ''} onChange={event => patch({ certificateSerial: event.target.value })} /></label>
-      <label className="admin-field"><span>结算货币</span><select value="CNY" onChange={() => patch({ currency: 'CNY' })}><option value="CNY">CNY - 人民币</option></select></label>
-      <label className="admin-field span-2"><span>商户 API 私钥</span><textarea value={method.privateKey || ''} onChange={event => patch({ privateKey: event.target.value })} placeholder={privateKeyPlaceholder} /><small>填写商户 API 证书对应私钥，保存后不回传明文。</small></label>
-      <label className="admin-field span-2"><span>微信支付平台证书或公钥</span><textarea value={method.publicKey || ''} onChange={event => patch({ publicKey: event.target.value })} placeholder="粘贴平台证书 PEM 或平台公钥" /></label>
-      <SecretField label="API v3 密钥" value={method.apiV3Key || ''} placeholder={apiV3Placeholder} onChange={apiV3Key => patch({ apiV3Key })} help="必须为 32 字节，用于解密支付通知。" />
-    </>}
-
-    <label className="admin-checkbox span-2"><input type="checkbox" checked={method.enabled} onChange={event => patch({ enabled: event.target.checked })} /><span><strong>启用此支付方式</strong><small>启用前必须填写该驱动要求的全部资料。</small></span></label>
-  </div>;
-};
-
-const SecretField: React.FC<{ label: string; value: string; placeholder: string; help?: string; onChange: (value: string) => void }> = ({ label, value, placeholder, help, onChange }) => <label className="admin-field span-2"><span>{label}</span><input type="password" value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} autoComplete="new-password" /><small>{help || '保存后不会再向前端回传明文。'}</small></label>;
-
-function entitlementStatus(item: Entitlement) {
-  if (item.status === 'revoked') return 'revoked';
-  if (!item.lifetime && item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) return 'expired';
-  return 'active';
-}
-
-function paymentCheckLabel(status: PaymentCheckResult['status']) {
-  return {
-    ready: '检测通过',
-    disabled: '渠道已停用',
-    incomplete: '配置不完整',
-    unreachable: '网关不可达',
-    invalid: '配置无效',
-  }[status];
-}
-
-function durationText(plan: Plan) {
-  if (plan.durationUnit === 'lifetime') return '永久有效';
-  const units = { days: '天', months: '个月', quarters: '个季度', years: '年' };
-  return `${plan.durationValue} ${units[plan.durationUnit]}`;
-}
-
-function paymentProviderText(method: PaymentMethod) {
-  return paymentProviderName(paymentProvider(method));
-}
-
-function paymentChannelText(method: PaymentMethod) {
-  const provider = paymentProvider(method);
-  if (provider === 'manual') return '线下确认';
-  if (provider === 'epay') {
-    const channels: Record<string, string> = { alipay: '支付宝', wxpay: '微信支付', qqpay: 'QQ 钱包', paypal: 'PayPal', 'usdt.trc20': 'USDT' };
-    const enabled = method.enabledChannels || [method.channel || 'alipay'];
-    return enabled.map(channel => channels[channel] || channel).join('、') || '未启用支付方式';
-  }
-  if (provider === 'tokenpay') return tokenPayCurrency(method).replace('_', '-').replace('_', '-');
-  if (provider === 'epusdt') return 'USDT-TRC20';
-  if (provider === 'paypal') return method.sandbox ? 'PayPal 沙箱' : 'PayPal Orders v2';
-  if (provider === 'alipay_official') return '当面付二维码';
-  if (provider === 'wechat_official') return 'Native 二维码';
-  return method.currency || 'CNY';
-}
-
-function tokenPayCurrency(method: PaymentMethod) {
-  const values = [...TOKENPAY_CURRENCIES.map(item => item.value), ...LEGACY_TOKENPAY_CURRENCIES] as readonly string[];
-  const configured = String(method.currency || '').toUpperCase().replace(/-/g, '_');
-  if (values.includes(configured)) return configured;
-  const legacy = String(method.merchantId || '').toUpperCase().replace(/-/g, '_');
-  return values.includes(legacy) ? legacy : 'USDT_TRC20';
-}
-
-function isLegacyTokenPayCurrency(method: PaymentMethod) {
-  return (LEGACY_TOKENPAY_CURRENCIES as readonly string[]).includes(tokenPayCurrency(method));
-}
-
-function defaultPaymentCurrency(provider: PaymentProvider, method: PaymentMethod) {
-  if (provider === 'tokenpay') return tokenPayCurrency(method);
-  if (provider === 'epusdt') return 'USDT-TRC20';
-  if (provider === 'paypal') return 'CNY';
-  return 'CNY';
-}
-
-function paymentProvider(method: PaymentMethod): PaymentProvider {
-  if (method.provider) return method.provider;
-  if (method.type === 'alipay') return 'alipay_official';
-  if (method.type === 'wechat') return 'wechat_official';
-  if (method.type === 'epay' || method.type === 'mgate' || method.type === 'tokenpay' || method.type === 'epusdt' || method.type === 'paypal') return method.type;
-  return 'manual';
-}
-
-function legacyPaymentType(provider: PaymentProvider): PaymentMethod['type'] {
-  if (provider === 'alipay_official') return 'alipay';
-  if (provider === 'wechat_official') return 'wechat';
-  return provider;
-}
-
-const EPAY_CHANNEL_OPTIONS = [
-  { value: 'alipay', label: '支付宝' },
-  { value: 'wxpay', label: '微信支付' },
-  { value: 'qqpay', label: 'QQ 钱包' },
-  { value: 'paypal', label: 'PayPal' },
-  { value: 'usdt.trc20', label: 'USDT' },
-] as const;
-
-function paymentProviderName(provider: string) {
-  const labels: Record<string, string> = { manual: '人工收款', redeem_code: '卡密兑换', epay: '易支付聚合', mgate: 'MGate', tokenpay: 'USDT / TokenPay', epusdt: 'USDT / Epusdt', paypal: 'PayPal 官方', alipay_official: '支付宝官方', wechat_official: '微信支付官方' };
-  return labels[provider] || provider;
-}
-
-function paymentChannelName(channelId: string, methods: PaymentMethod[]) {
-  return methods.find(method => method.id === channelId)?.name || channelId;
-}
-
-function planSnapshotName(order: Order) {
-  return String(parsePlanSnapshot(order).name || '套餐快照');
-}
-
-function parsePlanSnapshot(order: Order): Record<string, unknown> {
-  try {
-    const value = JSON.parse(order.planSnapshot);
-    return value && typeof value === 'object' ? value : {};
-  } catch {
-    return {};
-  }
-}
-
-function auditDetail(value: string) {
-  if (!value) return '-';
-  try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
-    return Object.entries(parsed).map(([key, item]) => `${key}: ${String(item ?? '-')}`).join('，');
-  } catch {
-    return value;
-  }
-}
-
-function downloadCsv(filename: string, rows: Array<Record<string, unknown>>) {
-  const columns = Array.from(new Set(rows.flatMap(row => Object.keys(row))));
-  const escapeCell = (value: unknown) => {
-    const normalized = value && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
-    return `"${normalized.replace(/"/g, '""')}"`;
-  };
-  const content = [columns.map(escapeCell).join(','), ...rows.map(row => columns.map(column => escapeCell(row[column])).join(','))].join('\r\n');
-  const blob = new Blob([`\uFEFF${content}`], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function userActionTitle(action: typeof undefined | { user: AdminUser; kind: 'status' | 'role' | 'password'; nextValue?: string } | null) {
-  if (!action) return '';
-  if (action.kind === 'password') return `重置 ${action.user.username} 的密码`;
-  if (action.kind === 'status') return action.nextValue === 'disabled' ? `禁用用户 ${action.user.username}` : `启用用户 ${action.user.username}`;
-  return action.nextValue === 'admin' ? `授予 ${action.user.username} 管理员权限` : `移除 ${action.user.username} 的管理员权限`;
-}
-
-function userActionDescription(action: typeof undefined | { user: AdminUser; kind: 'status' | 'role' | 'password'; nextValue?: string } | null) {
-  if (!action) return '';
-  if (action.kind === 'password') return '重置后，该用户的所有现有登录会话会立即失效。';
-  if (action.kind === 'status' && action.nextValue === 'disabled') return '禁用后该用户会立即退出登录，且不能继续使用用户端接口。';
-  if (action.kind === 'status') return '启用后该用户可以重新登录并使用其有效权益。';
-  if (action.nextValue === 'admin') return '管理员账号可以登录管理后台并执行收款、退款、调额等高权限操作。';
-  return '移除后该账号只能作为普通用户登录，不能再访问管理后台。';
-}

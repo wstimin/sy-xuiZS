@@ -5,6 +5,7 @@ import { isIP } from "node:net";
 import { CommercialStore, DurationUnit, EntitlementGrantInput, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
 import { sendSmtpMail } from "./email-service.js";
 import { getPaymentDriver, PaymentChannelConfig, PaymentProvider } from "./payment-service.js";
+import { redeemExternalCard } from "./external-redeem-service.js";
 
 const USER_COOKIE_NAME = "xui_user_session";
 const ADMIN_COOKIE_NAME = "xui_admin_session";
@@ -20,6 +21,8 @@ const RESOURCE_RECOMMENDATION_LIMIT = 20;
 const RESOURCE_ID_PATTERN = /^[a-z0-9_-]{1,40}$/;
 const DATABASE_BACKUP_MAX_BYTES = 64 * 1024 * 1024;
 const DATABASE_CONTENT_TYPE = "application/vnd.sqlite3";
+const PORTABLE_BACKUP_MAX_BYTES = 96 * 1024 * 1024;
+const PORTABLE_BACKUP_CONTENT_TYPE = "application/vnd.xui-portable-backup";
 
 type ContactMethodType = "wechat" | "qq" | "telegram" | "whatsapp" | "wecom" | "email" | "phone" | "discord" | "line" | "custom";
 type ContactMethod = {
@@ -60,6 +63,12 @@ type ResourceRecommendationSettings = {
   serverEnabled: boolean;
   residentialIpEnabled: boolean;
   items: ResourceRecommendationItem[];
+};
+
+type UpdateServiceLike = {
+  status: () => unknown;
+  check: (force?: boolean) => Promise<unknown>;
+  startUpdate: () => Promise<unknown>;
 };
 
 function cookieValue(req: Request, name: string) {
@@ -110,8 +119,9 @@ function quotaMode(value: unknown): QuotaMode {
   return value === "limited" || value === "unlimited" ? value : "none";
 }
 
-function durationUnit(value: unknown): DurationUnit {
-  return value === "months" || value === "quarters" || value === "years" || value === "lifetime" ? value : "days";
+function permanentDuration(value: unknown): DurationUnit {
+  if (value === undefined || value === null || value === "" || value === "lifetime") return "lifetime";
+  throw new Error("当前仅支持永久次数套餐");
 }
 
 function optionalHttpUrl(value: unknown, label: string) {
@@ -357,7 +367,7 @@ type PaymentCheckStatus = "ready" | "disabled" | "incomplete" | "unreachable" | 
 async function checkPaymentMethod(store: CommercialStore, methodId: string) {
   const method = store.getPaymentMethods(true, true).find(item => item.id === methodId);
   if (!method) throw new Error("支付方式不存在，请先保存支付设置");
-  const provider = method.provider || "manual";
+  const provider = method.provider;
   const result = (status: PaymentCheckStatus, messageText: string, details: string[] = []) => ({
     methodId: method.id,
     provider,
@@ -367,7 +377,6 @@ async function checkPaymentMethod(store: CommercialStore, methodId: string) {
     checkedAt: new Date().toISOString(),
   });
   if (!method.enabled) return result("disabled", "支付方式当前已停用，配置未进行联网检测");
-  if (provider === "manual") return result("ready", "人工收款方式已启用，无需检测支付网关");
 
   const missing: string[] = [];
   const requireValue = (value: unknown, label: string) => { if (!String(value || "").trim()) missing.push(label); };
@@ -619,8 +628,8 @@ function planInput(body: Record<string, unknown>): PlanInput {
     name: String(body.name || ""),
     description: String(body.description || ""),
     priceCents: intValue(body.priceCents),
-    durationUnit: durationUnit(body.durationUnit),
-    durationValue: intValue(body.durationValue, 1),
+    durationUnit: permanentDuration(body.durationUnit),
+    durationValue: 0,
     panelMode: quotaMode(body.panelMode),
     panelLimit: intValue(body.panelLimit),
     nodeMode: quotaMode(body.nodeMode),
@@ -637,8 +646,8 @@ function planInput(body: Record<string, unknown>): PlanInput {
 function grantInput(body: Record<string, unknown>): EntitlementGrantInput {
   return {
     name: String(body.name || "管理员发放权益"),
-    durationUnit: durationUnit(body.durationUnit),
-    durationValue: intValue(body.durationValue, 1),
+    durationUnit: permanentDuration(body.durationUnit),
+    durationValue: 0,
     panelMode: quotaMode(body.panelMode),
     panelLimit: intValue(body.panelLimit),
     nodeMode: quotaMode(body.nodeMode),
@@ -755,7 +764,7 @@ function paymentBaseUrl(req: Request, store: CommercialStore, callbackBaseUrl = 
 async function createCheckout(req: Request, store: CommercialStore, order: any) {
   const method = store.getPaymentMethods(true, true).find(item => item.id === order.paymentProvider);
   if (!method?.enabled) throw new Error("订单所选支付方式已停用，请取消订单后重新下单");
-  if (!method.provider || method.provider === "manual") return null;
+  if (!method.provider) throw new Error("支付方式未配置支付驱动");
   const provider = method.provider as PaymentProvider;
   const driver = getPaymentDriver(provider);
   const baseUrl = paymentBaseUrl(req, store, method.callbackBaseUrl);
@@ -785,10 +794,16 @@ async function createCheckout(req: Request, store: CommercialStore, order: any) 
   }
 }
 
-export function createCommercialRouter(store: CommercialStore) {
+export function createCommercialRouter(store: CommercialStore, options: { updateService?: UpdateServiceLike; appVersion?: string } = {}) {
   const router = Router();
+  const updateService = options.updateService;
+  const appVersion = options.appVersion
+    || String((updateService?.status() as { currentVersion?: unknown } | undefined)?.currentVersion || "")
+    || process.env.APP_VERSION
+    || "unknown";
 
   router.use(["/admin/database/validate", "/admin/database/restore"], raw({ type: DATABASE_CONTENT_TYPE, limit: DATABASE_BACKUP_MAX_BYTES }));
+  router.use(["/admin/system-backup/validate", "/admin/system-backup/restore"], raw({ type: PORTABLE_BACKUP_CONTENT_TYPE, limit: PORTABLE_BACKUP_MAX_BYTES }));
 
   router.get("/runtime-config", (_req, res) => {
     res.json({ adminPath: store.getAdminPath() });
@@ -938,6 +953,7 @@ export function createCommercialRouter(store: CommercialStore) {
   router.get("/payment-methods", (_req, res) => res.json({
     paymentMethods: store.getPaymentMethods(),
     redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
+    redeemCodeEnabled: true,
   }));
 
   router.get("/payment/paypal/:channelId/return", async (req, res) => {
@@ -998,27 +1014,67 @@ export function createCommercialRouter(store: CommercialStore) {
       entitlements: store.listEntitlements(user.id),
       orders: store.listOrders(user.id),
       deployments: store.listDeployments(user.id),
-      paymentInstructions: store.getSetting("payment_instructions", "下单后请联系管理员完成支付确认。"),
+      paymentInstructions: store.getSetting("payment_instructions", "请选择在线支付方式完成付款。"),
       paymentMethods: store.getPaymentMethods(),
       redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
+      redeemCodeEnabled: true,
     });
   });
 
-  router.post("/redeem-codes/redeem", requireCommercialUser, route((req, res) => {
-    const result = store.redeemCode(
-      commercialUser(res).id,
-      String(req.body?.code || ""),
-      String(req.body?.planId || ""),
-    );
+  router.get("/deployment-history", requireCommercialUser, route((req, res) => {
+    res.json({ items: store.listDeploymentHistory(commercialUser(res).id) || [] });
+  }));
+  router.get("/deployment-history/:id", requireCommercialUser, route((req, res) => {
+    const item = store.getDeploymentHistoryDetail(commercialUser(res).id, req.params.id);
+    if (!item) return res.status(404).json({ success: false, error: "搭建历史不存在" });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ item });
+  }));
+  router.delete("/deployment-history", requireCommercialUser, route((req, res) => {
+    res.json({ success: true, cleared: store.clearDeploymentHistory(commercialUser(res).id) });
+  }));
+
+  router.post("/redeem-codes/redeem", requireCommercialUser, route(async (req, res) => {
+    const user = commercialUser(res);
+    const code = String(req.body?.code || "");
+    const planId = String(req.body?.planId || "");
+    const external = store.getExternalRedeemSettings(true);
+    let result;
+    if (store.hasLocalRedeemCode(code) || !external.enabled) {
+      result = store.redeemCode(user.id, code, planId);
+    } else {
+      const verified = await redeemExternalCard(external, { code, userId: user.id, username: user.username, planId });
+      result = store.redeemExternalCode(user.id, code, planId, {
+        amountCents: verified.amountCents,
+        providerName: external.name,
+        tradeNo: verified.tradeNo,
+      });
+    }
     res.json({ success: true, ...result });
   }));
 
+  router.post("/wallet/topups", requireCommercialUser, route(async (req, res) => {
+    const userId = commercialUser(res).id;
+    const amountCents = Math.round(Number(req.body?.amountCents));
+    const paymentProvider = String(req.body?.paymentProvider || "");
+    const order = store.createWalletTopupOrder(userId, amountCents, paymentProvider);
+    try {
+      const payment = await createCheckout(req, store, order);
+      res.status(201).json({ success: true, order, payment });
+    } catch (error) {
+      res.status(201).json({ success: true, order, payment: null, paymentError: message(error) });
+    }
+  }));
+
   router.post("/orders", requireCommercialUser, route(async (req, res) => {
-    const order = store.createOrder(
-      commercialUser(res).id,
-      String(req.body?.planId || ""),
-      String(req.body?.paymentProvider || "manual"),
-    );
+    const userId = commercialUser(res).id;
+    const planId = String(req.body?.planId || "");
+    const paymentProvider = String(req.body?.paymentProvider || "");
+    if (paymentProvider === "balance") {
+      const result = store.purchasePlanWithBalance(userId, planId);
+      return res.status(201).json({ success: true, order: result.order, payment: null, balanceCents: result.balanceCents });
+    }
+    const order = store.createOrder(userId, planId, paymentProvider);
     try {
       const payment = await createCheckout(req, store, order);
       res.status(201).json({ success: true, order, payment });
@@ -1049,6 +1105,19 @@ export function createCommercialRouter(store: CommercialStore) {
 
   router.get("/admin/stats", requireAdmin, (_req, res) => res.json({ stats: store.getDashboardStats() }));
   router.get("/admin/exceptions", requireAdmin, (_req, res) => res.json(store.listAdminExceptions()));
+  router.get("/admin/system/version", requireAdmin, route(async (_req, res) => {
+    if (!updateService) return res.json({ status: null });
+    res.json({ status: updateService.status() });
+  }));
+  router.post("/admin/system/update/check", requireAdmin, route(async (_req, res) => {
+    if (!updateService) throw new Error("当前环境不支持在线检查更新");
+    res.json({ status: await updateService.check(true) });
+  }));
+  router.post("/admin/system/update", requireAdmin, route(async (req, res) => {
+    if (String(req.body?.confirmation || "") !== "UPDATE") throw new Error("请输入 UPDATE 确认升级");
+    if (!updateService) throw new Error("当前环境不支持自动更新");
+    res.json({ status: await updateService.startUpdate() });
+  }));
   router.get("/admin/users", requireAdmin, (_req, res) => res.json({ users: store.listUsers() }));
   router.get("/admin/plans", requireAdmin, (_req, res) => res.json({ plans: store.listPlans(true) }));
   router.get("/admin/orders", requireAdmin, (_req, res) => res.json({ orders: store.listOrders(undefined, true) }));
@@ -1095,15 +1164,39 @@ export function createCommercialRouter(store: CommercialStore) {
     clearSessionCookie(req, res, USER_COOKIE_NAME);
     res.json(result);
   }));
+  router.post("/admin/system-backup", requireAdmin, route((req, res) => {
+    const password = String(req.body?.password || "");
+    const backup = store.createPortableBackup(password, appVersion);
+    const filename = `xui-complete-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.xuibak`;
+    store.recordAdminAction(adminUser(res).id, "下载完整系统备份", "database", "portable-backup", `${backup.data.length} bytes`);
+    res.setHeader("Content-Type", PORTABLE_BACKUP_CONTENT_TYPE);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", String(backup.data.length));
+    res.send(backup.data);
+  }));
+  router.post("/admin/system-backup/validate", requireAdmin, route((req, res) => {
+    if (!Buffer.isBuffer(req.body)) throw new Error(`请使用 ${PORTABLE_BACKUP_CONTENT_TYPE} 上传完整系统备份`);
+    const password = String(req.header("x-backup-password") || "");
+    res.json({ success: true, validation: store.validatePortableBackup(req.body, password) });
+  }));
+  router.post("/admin/system-backup/restore", requireAdmin, route((req, res) => {
+    if (req.header("x-restore-confirmation") !== "RESTORE") throw new Error("恢复确认词不正确，请输入 RESTORE");
+    if (!Buffer.isBuffer(req.body)) throw new Error(`请使用 ${PORTABLE_BACKUP_CONTENT_TYPE} 上传完整系统备份`);
+    const password = String(req.header("x-backup-password") || "");
+    const result = store.restorePortableBackup(req.body, password, adminUser(res).username);
+    clearSessionCookie(req, res, ADMIN_COOKIE_NAME);
+    clearSessionCookie(req, res, USER_COOKIE_NAME);
+    res.json(result);
+  }));
   router.get("/admin/settings", requireAdmin, (_req, res) => res.json({
     settings: {
       registrationEnabled: store.getSetting("registration_enabled", "true") === "true",
       panelDeployEnabled: store.getSetting("panel_deploy_enabled", "true") === "true",
       nodeDeployEnabled: store.getSetting("node_deploy_enabled", "true") === "true",
-      paymentInstructions: store.getSetting("payment_instructions", "下单后请联系管理员完成支付确认。"),
+      paymentInstructions: store.getSetting("payment_instructions", "请选择在线支付方式完成付款。"),
       paymentMethods: store.getPaymentMethods(true).map(method => ({
         ...method,
-        callbackUrl: method.provider && method.provider !== "manual"
+        callbackUrl: method.provider
           ? `${paymentBaseUrl(_req, store, method.callbackBaseUrl)}/api/payment/${method.provider}/${encodeURIComponent(method.id)}/notify`
           : "",
       })),
@@ -1111,6 +1204,7 @@ export function createCommercialRouter(store: CommercialStore) {
       orderExpiryMinutes: Number(store.getSetting("order_expiry_minutes", "30")) || 30,
       adminPath: store.getAdminPath(),
       redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
+      externalRedeem: store.getExternalRedeemSettings(),
       contact: contactSettings(store, true),
       recommendations: resourceRecommendationResponse(store, true),
     },
@@ -1129,13 +1223,13 @@ export function createCommercialRouter(store: CommercialStore) {
   }));
   router.post("/admin/redeem-codes", requireAdmin, route((req, res) => {
     const redeemCodes = store.createRedeemCodes({
-      planId: String(req.body?.planId || ""),
+      amountCents: intValue(req.body?.amountCents),
       quantity: intValue(req.body?.quantity),
       note: String(req.body?.note || ""),
       expiresAt: req.body?.expiresAt ? String(req.body.expiresAt) : null,
     });
     store.recordAdminAction(adminUser(res).id, "生成卡密", "redeem_code", "batch", JSON.stringify({
-      planId: req.body?.planId,
+      amountCents: req.body?.amountCents,
       quantity: redeemCodes.length,
       note: String(req.body?.note || "").slice(0, 300),
     }));
@@ -1194,14 +1288,6 @@ export function createCommercialRouter(store: CommercialStore) {
     }));
     res.json({ success: true, deleted });
   }));
-  router.post("/admin/orders/:id/mark-paid", requireAdmin, route((req, res) => {
-    const tradeNo = String(req.body?.tradeNo || `manual-${Date.now()}`);
-    const pendingOrder = store.getOrder(req.params.id);
-    if (!pendingOrder) throw new Error("订单不存在");
-    const order = store.markOrderPaid(req.params.id, pendingOrder.paymentProvider || "manual", tradeNo);
-    store.recordAdminAction(adminUser(res).id, "确认订单收款", "order", req.params.id, tradeNo);
-    res.json({ success: true, order });
-  }));
   router.post("/admin/orders/:id/cancel", requireAdmin, route((req, res) => {
     const order = store.cancelOrder(req.params.id);
     store.recordAdminAction(adminUser(res).id, "取消订单", "order", req.params.id, order.orderNo);
@@ -1256,39 +1342,69 @@ export function createCommercialRouter(store: CommercialStore) {
   router.put("/admin/settings", requireAdmin, route((req, res) => {
     const nextContact = req.body?.contact === undefined ? null : contactSettingsInput(req.body.contact, contactSettings(store, true));
     const nextRecommendations = req.body?.recommendations === undefined ? null : resourceRecommendationSettingsInput(req.body.recommendations);
-    if (typeof req.body?.registrationEnabled === "boolean") store.setSetting("registration_enabled", String(req.body.registrationEnabled));
-    if (typeof req.body?.panelDeployEnabled === "boolean") store.setSetting("panel_deploy_enabled", String(req.body.panelDeployEnabled));
-    if (typeof req.body?.nodeDeployEnabled === "boolean") store.setSetting("node_deploy_enabled", String(req.body.nodeDeployEnabled));
-    if (typeof req.body?.paymentInstructions === "string") store.setSetting("payment_instructions", req.body.paymentInstructions.slice(0, 2000));
-    if (req.body?.paymentMethods !== undefined) store.setPaymentMethods(req.body.paymentMethods);
-    if (req.body?.email !== undefined) store.setEmailSettings(req.body.email);
-    if (req.body?.orderExpiryMinutes !== undefined) {
-      const minutes = intValue(req.body.orderExpiryMinutes);
-      if (minutes < 5 || minutes > 1440) throw new Error("订单有效期必须为 5 到 1440 分钟");
-      store.setSetting("order_expiry_minutes", String(minutes));
-    }
-    if (req.body?.redeemCodePurchaseUrl !== undefined) {
-      store.setSetting("redeem_code_purchase_url", optionalHttpUrl(req.body.redeemCodePurchaseUrl, "卡密购买链接"));
-    }
-    if (nextContact) {
-      store.setSetting("contact_enabled", String(nextContact.enabled));
-      store.setSetting("contact_button_label", nextContact.buttonLabel);
-      store.setSetting("contact_title", nextContact.title);
-      store.setSetting("contact_description", nextContact.description);
-      store.setSetting("contact_methods", JSON.stringify(nextContact.methods));
-    }
-    if (nextRecommendations) store.setSetting("resource_recommendations", JSON.stringify(nextRecommendations));
-    let adminPath: string | undefined;
-    if (req.body?.adminPath !== undefined) adminPath = store.setAdminPath(String(req.body.adminPath));
-    store.recordAdminAction(adminUser(res).id, "更新系统设置", "settings", "commercial", JSON.stringify({
-      registrationEnabled: req.body?.registrationEnabled,
-      panelDeployEnabled: req.body?.panelDeployEnabled,
-      nodeDeployEnabled: req.body?.nodeDeployEnabled,
-      redeemCodePurchaseUrl: req.body?.redeemCodePurchaseUrl === undefined ? undefined : "[updated]",
-      contact: nextContact ? { enabled: nextContact.enabled, count: nextContact.methods.length } : undefined,
-      recommendations: nextRecommendations ? { count: nextRecommendations.items.length } : undefined,
-      adminPath,
-    }));
+    const { adminPath } = store.db.transaction(() => {
+      if (typeof req.body?.registrationEnabled === "boolean") store.setSetting("registration_enabled", String(req.body.registrationEnabled));
+      if (typeof req.body?.panelDeployEnabled === "boolean") store.setSetting("panel_deploy_enabled", String(req.body.panelDeployEnabled));
+      if (typeof req.body?.nodeDeployEnabled === "boolean") store.setSetting("node_deploy_enabled", String(req.body.nodeDeployEnabled));
+      if (typeof req.body?.paymentInstructions === "string") store.setSetting("payment_instructions", req.body.paymentInstructions.slice(0, 2000));
+      if (req.body?.paymentMethods !== undefined) store.setPaymentMethods(req.body.paymentMethods);
+      if (req.body?.email !== undefined) store.setEmailSettings(req.body.email);
+      if (req.body?.orderExpiryMinutes !== undefined) {
+        const minutes = intValue(req.body.orderExpiryMinutes);
+        if (minutes < 5 || minutes > 1440) throw new Error("订单有效期必须为 5 到 1440 分钟");
+        store.setSetting("order_expiry_minutes", String(minutes));
+      }
+      if (req.body?.redeemCodePurchaseUrl !== undefined) {
+        store.setSetting("redeem_code_purchase_url", optionalHttpUrl(req.body.redeemCodePurchaseUrl, "卡密购买链接"));
+      }
+      let nextExternalRedeem: ReturnType<CommercialStore["getExternalRedeemSettings"]> | undefined;
+      if (req.body?.externalRedeem !== undefined) {
+        const input = req.body.externalRedeem || {};
+        const current = store.getExternalRedeemSettings();
+        const provider = input.provider === "shiyeka" ? "shiyeka" : "generic_json";
+        const enabled = input.enabled === true;
+        const name = limitedText(input.name, "第三方卡密系统名称", 40, "第三方卡密");
+        const apiUrl = optionalHttpUrl(input.apiUrl, "第三方卡密接口地址");
+        const appKey = String(input.appKey || "").trim();
+        const authMode = input.authMode === "x-api-key" || input.authMode === "none" ? input.authMode : "bearer";
+        const amountUnit = input.amountUnit === "yuan" ? "yuan" : "cents";
+        const timeoutSeconds = intValue(input.timeoutSeconds, 10);
+        const apiKey = String(input.apiKey || "").trim();
+        const existingCredentialMatchesProvider = current.apiKeyConfigured && current.provider === provider;
+        if (appKey.length > 200 || /\s/.test(appKey)) throw new Error("十夜卡密 App Key 格式不正确");
+        if (apiKey.length > 500) throw new Error("第三方卡密 API 密钥不能超过 500 个字符");
+        if (timeoutSeconds < 3 || timeoutSeconds > 30) throw new Error("第三方卡密接口超时必须为 3 到 30 秒");
+        if (enabled && !apiUrl) throw new Error("启用第三方卡密前必须填写接口地址");
+        if (enabled && provider === "shiyeka" && !appKey) throw new Error("启用十夜卡密前必须填写 App Key");
+        if (enabled && provider === "shiyeka" && !apiKey && !existingCredentialMatchesProvider) throw new Error("启用十夜卡密前必须填写 App Secret");
+        if (enabled && provider === "generic_json" && authMode !== "none" && !apiKey && !existingCredentialMatchesProvider) throw new Error("启用第三方卡密前必须填写 API 密钥");
+        nextExternalRedeem = store.setExternalRedeemSettings({
+          provider, enabled, name, apiUrl, appKey, apiKey, authMode, amountUnit, timeoutSeconds,
+          allowPrivateNetwork: input.allowPrivateNetwork === true,
+        });
+      }
+      if (nextContact) {
+        store.setSetting("contact_enabled", String(nextContact.enabled));
+        store.setSetting("contact_button_label", nextContact.buttonLabel);
+        store.setSetting("contact_title", nextContact.title);
+        store.setSetting("contact_description", nextContact.description);
+        store.setSetting("contact_methods", JSON.stringify(nextContact.methods));
+      }
+      if (nextRecommendations) store.setSetting("resource_recommendations", JSON.stringify(nextRecommendations));
+      let adminPath: string | undefined;
+      if (req.body?.adminPath !== undefined) adminPath = store.setAdminPath(String(req.body.adminPath));
+      store.recordAdminAction(adminUser(res).id, "更新系统设置", "settings", "commercial", JSON.stringify({
+        registrationEnabled: req.body?.registrationEnabled,
+        panelDeployEnabled: req.body?.panelDeployEnabled,
+        nodeDeployEnabled: req.body?.nodeDeployEnabled,
+        redeemCodePurchaseUrl: req.body?.redeemCodePurchaseUrl === undefined ? undefined : "[updated]",
+        externalRedeem: nextExternalRedeem ? { enabled: nextExternalRedeem.enabled, name: nextExternalRedeem.name, apiUrl: nextExternalRedeem.apiUrl ? "[configured]" : "" } : undefined,
+        contact: nextContact ? { enabled: nextContact.enabled, count: nextContact.methods.length } : undefined,
+        recommendations: nextRecommendations ? { count: nextRecommendations.items.length } : undefined,
+        adminPath,
+      }));
+      return { adminPath };
+    })();
     res.json({ success: true, adminPath: adminPath || store.getAdminPath() });
   }));
 

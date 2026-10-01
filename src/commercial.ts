@@ -1,8 +1,8 @@
 export type UserRole = 'user' | 'admin';
 export type QuotaMode = 'none' | 'limited' | 'unlimited';
 export type DurationUnit = 'days' | 'months' | 'quarters' | 'years' | 'lifetime';
-export type PaymentProvider = 'manual' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'paypal' | 'alipay_official' | 'wechat_official';
-export type PaymentMethodType = 'manual' | 'alipay' | 'wechat' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'paypal';
+export type PaymentProvider = 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'paypal' | 'alipay_official' | 'wechat_official';
+export type PaymentMethodType = 'alipay' | 'wechat' | 'epay' | 'mgate' | 'tokenpay' | 'epusdt' | 'paypal';
 
 export interface CurrentUser {
   id: string;
@@ -11,6 +11,7 @@ export interface CurrentUser {
   emailVerified: boolean;
   role: UserRole;
   status: 'active' | 'disabled';
+  balanceCents: number;
 }
 
 export interface PaymentMethod {
@@ -99,6 +100,20 @@ export interface EmailSettings {
   verificationResendSeconds: number;
   siteName: string;
   publicBaseUrl: string;
+}
+
+export interface ExternalRedeemSettings {
+  provider: 'generic_json' | 'shiyeka';
+  enabled: boolean;
+  name: string;
+  apiUrl: string;
+  appKey?: string;
+  apiKey?: string;
+  apiKeyConfigured: boolean;
+  authMode: 'bearer' | 'x-api-key' | 'none';
+  amountUnit: 'cents' | 'yuan';
+  timeoutSeconds: number;
+  allowPrivateNetwork: boolean;
 }
 
 export type ContactMethodType = 'wechat' | 'qq' | 'telegram' | 'whatsapp' | 'wecom' | 'email' | 'phone' | 'discord' | 'line' | 'custom';
@@ -223,6 +238,8 @@ export interface OrderDetail {
   redeemCode: null | {
     id: string;
     codeMasked: string;
+    amountCents: number;
+    redemptionKind: 'balance' | 'purchase' | null;
     note: string;
     redeemedAt: string;
   };
@@ -270,6 +287,14 @@ export interface DatabaseBackupValidation {
   counts: Record<string, number>;
 }
 
+export interface PortableBackupValidation extends DatabaseBackupValidation {
+  formatVersion: number;
+  createdAt: string;
+  appVersion: string;
+  databaseSchemaVersion: number;
+  encrypted: true;
+}
+
 export interface DeploymentRecord {
   id: string;
   requestId: string;
@@ -294,19 +319,19 @@ export interface AccountData {
   paymentInstructions: string;
   paymentMethods: PaymentMethod[];
   redeemCodePurchaseUrl: string;
+  redeemCodeEnabled?: boolean;
 }
 
 export interface RedeemCode {
   id: string;
   codeMasked: string;
-  planId: string;
-  planName: string;
+  amountCents: number;
   status: 'active' | 'redeemed' | 'disabled' | 'expired';
   note: string;
   redeemedByUserId?: string;
   redeemedByUsername?: string;
   orderId?: string;
-  entitlementId?: string;
+  redemptionKind?: 'balance' | 'purchase';
   redeemedAt?: string;
   expiresAt?: string;
   createdAt: string;

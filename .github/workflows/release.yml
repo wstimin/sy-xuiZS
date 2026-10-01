@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -50,12 +52,46 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
+      - name: Enforce monotonically increasing release version
+        shell: bash
+        run: |
+          package_version="${{ steps.release.outputs.version }}"
+          current_ref="${GITHUB_REF_NAME}"
+          previous_tag=""
+          while IFS= read -r tag; do
+            if [ "$tag" != "$current_ref" ]; then
+              previous_tag="$tag"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-v:refname)
+
+          if [ -z "$previous_tag" ]; then
+            echo "No previous version tag found; accepting v$package_version as the first release."
+            exit 0
+          fi
+
+          previous_version="${previous_tag#v}"
+          node -e '
+            const [current, previous] = process.argv.slice(1);
+            const parse = value => value.replace(/^v/, "").split("-")[0].split(".").map(Number);
+            const left = parse(current);
+            const right = parse(previous);
+            const newer = left[0] > right[0]
+              || (left[0] === right[0] && left[1] > right[1])
+              || (left[0] === right[0] && left[1] === right[1] && left[2] > right[2]);
+            if (!newer) {
+              console.error(`Version v${current} must be greater than previous tag v${previous}.`);
+              process.exit(1);
+            }
+          ' "$package_version" "$previous_version"
+
       - name: Verify release package
         shell: bash
         run: |
           test -s release/package/VERSION
           test -s release/package/dist/server.cjs
           test -s release/package/dist/admin-cli.cjs
+          test -s release/package/dist/update-runner.cjs
           test -s release/package/dist/index.html
           test -s release/package/install.sh
           test -s release/package/package-lock.json

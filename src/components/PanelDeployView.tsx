@@ -272,6 +272,12 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       return;
     }
 
+    const verifiedSshSessionId = sshSessionIdRef.current || form.sshSessionId || '';
+    if (!verifiedSshSessionId || !sshTestResult) {
+      showToast('请先完成 SSH 快速检测', '正式部署会绑定检测时的服务器主机密钥，防止连接到被替换的服务器', 'warning');
+      return;
+    }
+
     const customPanelUsername = form.panelUsername?.trim() || '';
     const customPanelPassword = form.panelPassword?.trim() || '';
     if (customPanelUsername && !/^[A-Za-z0-9_.@-]{3,64}$/.test(customPanelUsername)) {
@@ -294,7 +300,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     try {
       await ensureAssistantConnection(controller.signal);
       firstResponseTimeout = window.setTimeout(() => controller.abort(), 35_000);
-      const sshSessionId = sshSessionIdRef.current || form.sshSessionId || '';
+      const sshSessionId = verifiedSshSessionId;
       const requestId = crypto.randomUUID();
       const res = await fetch('/api/deploy-panel', {
         method: 'POST',
@@ -510,16 +516,16 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               type="button"
               onClick={handleTestSSH}
               disabled={isTestingSSH || isDeploying}
-              className="px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-medium flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50"
+              className="console-ssh-check-button"
             >
               {isTestingSSH ? (
                 <>
-                  <div className="w-3.5 h-3.5 border-2 border-indigo-400/30 border-t-indigo-400 rounded-full animate-spin" />
+                  <div className="console-ssh-check-spinner w-3.5 h-3.5 border-2 rounded-full animate-spin" />
                   <span>正在快速检测...</span>
                 </>
               ) : (
                 <>
-                  <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                  <Activity className="w-3.5 h-3.5" />
                   <span>快速检测 SSH 与必要环境</span>
                 </>
               )}
@@ -997,7 +1003,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
       {/* Result Modal Popup */}
       {resultModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="console-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="relative w-full max-w-xl bg-[#0d0d12] border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
             <div className="flex items-start justify-between pb-4 border-b border-white/10">
@@ -1076,18 +1082,18 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
               <div className="space-y-1 pt-1">
                 <div className="flex items-center justify-between gap-3">
-                  <label className="text-[11px] font-mono text-zinc-400">API Token 访问令牌</label>
+                  <label className="text-[11px] font-mono text-zinc-400">接口令牌</label>
                   <span className={resultModal.apiToken ? 'text-[10px] text-emerald-400' : 'text-[10px] text-amber-400'}>
-                    {resultModal.apiToken ? '跳转搭建节点时自动填写' : '缺少 Token，无法创建节点'}
+                    {resultModal.apiToken ? '跳转搭建节点时自动填写' : '缺少令牌，无法创建节点'}
                   </span>
                 </div>
                 <div className="flex items-start justify-between gap-2 p-2.5 rounded-xl bg-black/40 border border-white/10 text-zinc-200 font-mono text-xs">
                   <span className="break-all leading-relaxed">{resultModal.apiToken || '未获取到 Token'}</span>
                   <button
-                    onClick={() => handleCopy(resultModal.apiToken || '', 'apiToken')}
+                    onClick={() => handleCopy(resultModal.apiToken || '', '接口令牌')}
                     disabled={!resultModal.apiToken}
                     className="p-1 rounded hover:bg-white/10 text-zinc-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-                    title="复制 API Token"
+                    title="复制接口令牌"
                   >
                     {copiedField === 'apiToken' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                   </button>
@@ -1103,7 +1109,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] font-mono text-zinc-400">路径后缀 (Path)</label>
+                  <label className="text-[11px] font-mono text-zinc-400">路径后缀</label>
                   <div className="p-2 rounded-xl bg-black/40 border border-white/10 text-zinc-200 font-mono text-xs">
                     {resultModal.path}
                   </div>

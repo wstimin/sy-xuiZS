@@ -28,6 +28,14 @@ export interface ExecResult {
   code: number;
 }
 
+export function sshHostKeyFingerprint(key: Buffer) {
+  return `SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/, "")}`;
+}
+
+export function matchesSshHostKey(key: Buffer, expectedFingerprint: string) {
+  return sshHostKeyFingerprint(key) === expectedFingerprint.trim();
+}
+
 export function formatSshConnectionError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const code = typeof error === "object" && error && "code" in error
@@ -35,6 +43,11 @@ export function formatSshConnectionError(error: unknown): string {
     : "";
   if (/authentication|all configured authentication methods failed/i.test(message)) {
     return "SSH 认证失败，请检查用户名、密码或私钥";
+  }
+  if (/主机密钥指纹不匹配|host denied|host key verification failed/i.test(message)) {
+    return message.includes("主机密钥指纹不匹配")
+      ? message
+      : "SSH 主机密钥校验失败，服务器身份可能已经变化，请重新检测并确认目标服务器";
   }
   if (code === "ECONNREFUSED" || /connection refused/i.test(message)) {
     return "SSH 端口拒绝连接，请确认 SSH 服务和端口配置";
@@ -123,7 +136,7 @@ export function buildInstallCommand(params: {
 
 export async function connectSsh(
   input: SshInput,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; expectedFingerprint?: string } = {},
 ): Promise<SshSession> {
   const host = cleanHostInput(input.ipOrDomain);
   if (!host) throw new Error("请输入有效的服务器 IP 或域名");
@@ -150,8 +163,8 @@ export async function connectSsh(
 
   let fingerprint = "";
   config.hostVerifier = (key) => {
-    fingerprint = `SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/, "")}`;
-    return true;
+    fingerprint = sshHostKeyFingerprint(key);
+    return !options.expectedFingerprint || matchesSshHostKey(key, options.expectedFingerprint);
   };
 
   const client = new Client();
@@ -164,7 +177,10 @@ export async function connectSsh(
       settled = true;
       clearTimeout(timer);
       client.destroy();
-      reject(new Error(formatSshConnectionError(error)));
+      const fingerprintError = options.expectedFingerprint && fingerprint && fingerprint !== options.expectedFingerprint
+        ? new Error(`SSH 主机密钥指纹不匹配：检测时为 ${options.expectedFingerprint}，当前为 ${fingerprint}`)
+        : error;
+      reject(new Error(formatSshConnectionError(fingerprintError)));
     };
     const timer = setTimeout(() => {
       finishError(Object.assign(new Error("Timed out while waiting for SSH handshake"), { code: "ETIMEDOUT" }));

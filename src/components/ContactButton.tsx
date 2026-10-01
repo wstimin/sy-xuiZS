@@ -60,7 +60,7 @@ export const ContactButton: React.FC = () => {
       <section className={`contact-dialog ${selectedMethod ? 'contact-method-detail-dialog' : ''}`} role="dialog" aria-modal="true" aria-labelledby="contact-dialog-title">
         <header>
           <span className="contact-dialog-icon">{selectedMethod ? <QrCode /> : <Headphones />}</span>
-          <div><small>{selectedMethod ? contactTypeLabels[selectedMethod.type] : 'SUPPORT'}</small><h2 id="contact-dialog-title">{selectedMethod?.name || contact.title || '联系站长'}</h2></div>
+          <div><small>{selectedMethod ? contactTypeLabels[selectedMethod.type] : '在线联系'}</small><h2 id="contact-dialog-title">{selectedMethod?.name || contact.title || '联系站长'}</h2></div>
           <button type="button" onClick={closeDialog} title="关闭"><X /></button>
         </header>
         {selectedMethod ? <div className="contact-dialog-body contact-method-detail">

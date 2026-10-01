@@ -1,0 +1,816 @@
+.console-shell { min-height: 100vh; color: var(--ink); background: linear-gradient(135deg, #f0f4ff, #fdf2f8 44%, #ecfeff 73%, #f0fdf4); }
+.console-shell::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; background: radial-gradient(circle at 8% 16%, rgba(167, 139, 250, .2), transparent 26%), radial-gradient(circle at 88% 22%, rgba(103, 232, 249, .17), transparent 24%); }
+.console-shell > main, .console-shell > footer, .console-shell > header { position: relative; z-index: 1; }
+.app-header { position: sticky; top: 0; z-index: 20; border-bottom: 1px solid rgba(255, 255, 255, .75); background: rgba(255, 255, 255, .68); box-shadow: 0 10px 28px rgba(99, 102, 241, .08); backdrop-filter: blur(22px) saturate(1.2); }.app-header::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: linear-gradient(90deg, transparent, #c084fc, #60a5fa, #34d399, transparent); opacity: .7; }.app-header-inner { width: min(100% - 40px, 1440px); min-height: 76px; margin: 0 auto; display: flex; align-items: center; gap: 18px; }.app-header-brand { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 10px; border: 0; color: var(--ink); background: transparent; text-align: left; }.app-header-brand-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 13px; color: #fff; background: var(--gradient); box-shadow: 0 10px 22px rgba(99, 102, 241, .2); }.app-header-brand-copy { display: grid; gap: 3px; }.app-header-brand-copy strong { color: var(--ink); font-size: 14px; font-weight: 800; }.app-header-brand-copy strong em { color: #8b5cf6; font-style: normal; }.app-header-brand-copy small { color: var(--muted); font-size: 10px; }.app-header-primary-nav { display: flex; align-items: center; gap: 3px; padding: 4px; border: 1px solid rgba(148, 163, 184, .16); border-radius: 14px; background: rgba(255, 255, 255, .5); }.app-header-nav-button { min-height: 38px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border: 1px solid transparent; border-radius: 10px; color: #64748b; background: transparent; font-size: 12px; font-weight: 700; transition: transform 160ms var(--ease-out), color 160ms ease, background-color 160ms ease, border-color 160ms ease; }.app-header-nav-button:hover { color: #6d28d9; border-color: rgba(139, 92, 246, .13); background: rgba(255, 255, 255, .78); transform: translateY(-2px); }.app-header-nav-button.is-active { color: #fff; background: var(--gradient); box-shadow: 0 8px 18px rgba(99, 102, 241, .19); }.app-header-tools, .app-header-session { display: flex; align-items: center; gap: 7px; margin-left: auto; }.app-header-session { margin-left: 0; }.app-header-tool-button, .app-header-account, .app-header-logout { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid rgba(148, 163, 184, .19); border-radius: 11px; color: #64748b; background: rgba(255, 255, 255, .56); font-size: 11px; font-weight: 700; transition: transform 160ms var(--ease-out), color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }.app-header-tool-button:hover, .app-header-account:hover, .app-header-logout:hover { color: #6d28d9; border-color: rgba(139, 92, 246, .28); background: #fff; box-shadow: 0 8px 18px rgba(99, 102, 241, .12); transform: translateY(-2px); }.app-header-avatar { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 10px; color: #fff; background: var(--gradient-soft); font-size: 12px; font-weight: 800; }.app-header-account-label { display: inline-flex; align-items: center; gap: 4px; }.app-header-account-label strong { max-width: 86px; overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }.app-header-account-label i { color: #cbd5e1; font-style: normal; }.app-header-account-label > span { color: var(--muted); }.app-header-logout { padding: 0 9px; }.app-header-history-count { min-width: 17px; height: 17px; display: grid; place-items: center; border-radius: 99px; color: #fff; background: #ec4899; font-size: 10px; }
+
+.console-shell main > .max-w-6xl, .console-shell main > .max-w-4xl { width: min(100% - 48px, 1240px); max-width: 1240px; margin-inline: auto; padding-top: 54px; padding-bottom: 72px; }.console-shell main > .max-w-6xl > .text-center { max-width: 780px; margin-inline: auto; }.console-shell main h1, .console-shell main h2, .console-shell main h3 { color: var(--ink) !important; }.console-shell main p, .console-shell main label, .console-shell main li { color: var(--body); }.console-shell [class*="bg-white\/5"], .console-shell [class*="bg-black\/"], .console-shell [class*="bg-\[#"] { background: rgba(255, 255, 255, .7) !important; }.console-shell [class*="border-white"] { border-color: rgba(148, 163, 184, .18) !important; }.console-shell [class*="text-zinc-"] { color: var(--body) !important; }.console-shell [class*="text-white"] { color: var(--ink) !important; }.console-shell input, .console-shell select, .console-shell textarea { border-color: rgba(148, 163, 184, .26) !important; border-radius: 13px !important; color: var(--ink) !important; background: rgba(255, 255, 255, .78) !important; }.console-shell input::placeholder, .console-shell textarea::placeholder { color: #94a3b8 !important; }.console-shell input:focus, .console-shell select:focus, .console-shell textarea:focus { border-color: rgba(139, 92, 246, .65) !important; box-shadow: 0 0 0 4px rgba(139, 92, 246, .1); outline: 0; }
+.home-action-card, .console-shell main form > div[class*="rounded-2xl"], .console-shell main form > div[class*="rounded-md"] { border: 1px solid transparent !important; border-radius: 24px !important; background: linear-gradient(145deg, rgba(255, 255, 255, .86), rgba(255, 255, 255, .68)) padding-box, linear-gradient(135deg, rgba(167, 139, 250, .5), rgba(96, 165, 250, .3), rgba(52, 211, 153, .42)) border-box !important; box-shadow: var(--shadow-card); transition: transform 350ms var(--ease-ui), box-shadow 350ms ease, background-position 350ms ease; }.home-action-card:hover, .console-shell main form > div[class*="rounded-2xl"]:hover { transform: translateY(-8px) scale(1.02); box-shadow: var(--shadow-float); }.home-action-card:active, .console-shell button:active:not(:disabled) { transform: scale(.985); }
+
+/* 用户端填写区是工作面，不是展示卡片：固定层级、禁止上浮。 */
+.console-shell .home-action-card,
+.console-shell main form > div[class*="rounded-2xl"],
+.console-shell main form > div[class*="rounded-md"] { transition: box-shadow 180ms ease, border-color 180ms ease !important; }
+.console-shell .home-action-card:hover,
+.console-shell main form > div[class*="rounded-2xl"]:hover,
+.console-shell main form > div[class*="rounded-md"]:hover { transform: none !important; box-shadow: var(--shadow-card) !important; }
+.console-shell .bg-indigo-600, .console-shell .bg-emerald-600 { color: #fff !important; background: var(--gradient) !important; }.console-shell [class*="hover\\:bg-indigo"]:hover, .console-shell [class*="hover\\:bg-emerald"]:hover { filter: saturate(1.12) brightness(1.05); }.console-shell .console-footer { border-color: rgba(255, 255, 255, .78) !important; background: rgba(255, 255, 255, .52) !important; color: var(--muted) !important; }
+
+.account-shell, .resource-page { width: min(100% - 48px, 1240px); margin: 0 auto; padding: 54px 0 72px; }.account-hero { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 28px; border: 1px solid transparent; border-radius: 26px; background: linear-gradient(145deg, rgba(255, 255, 255, .86), rgba(255, 255, 255, .68)) padding-box, linear-gradient(135deg, rgba(167, 139, 250, .56), rgba(96, 165, 250, .32), rgba(52, 211, 153, .44)) border-box; box-shadow: var(--shadow-card); }.account-identity { display: flex; align-items: center; gap: 15px; }.account-avatar { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 20px; color: #fff; background: var(--gradient); box-shadow: 0 13px 25px rgba(99, 102, 241, .2); font-size: 24px; font-weight: 800; }.account-eyebrow { color: #7c3aed; font-size: 12px; font-weight: 800; }.account-identity h1 { margin: 5px 0; color: var(--ink); font-size: 26px; font-weight: 800; }.account-identity p { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 12px; }.account-identity p em { display: inline-flex; align-items: center; gap: 4px; color: #059669; font-style: normal; }.account-hero-actions { display: flex; gap: 9px; }.account-refresh, .account-logout-button { min-height: 42px; display: inline-flex; align-items: center; gap: 7px; padding: 0 13px; border: 1px solid rgba(139, 92, 246, .2); border-radius: 12px; color: #6d28d9; background: rgba(255, 255, 255, .68); font-size: 12px; font-weight: 700; }.account-logout-button { color: #be123c; border-color: rgba(236, 72, 153, .22); }
+.account-summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 22px; }.account-summary-grid article { display: flex; align-items: flex-start; gap: 12px; padding: 21px; border: 1px solid transparent; border-radius: 20px; background: linear-gradient(145deg, rgba(255, 255, 255, .82), rgba(255, 255, 255, .66)) padding-box, linear-gradient(135deg, rgba(167, 139, 250, .5), rgba(96, 165, 250, .28), rgba(52, 211, 153, .36)) border-box; box-shadow: var(--shadow-card); transition: transform 350ms var(--ease-ui), box-shadow 350ms ease; }.account-summary-grid article:hover { transform: translateY(-8px) scale(1.02); box-shadow: var(--shadow-float); }.account-summary-grid article > span { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 14px; color: #fff; background: var(--gradient); }.account-summary-grid article.violet > span { background: var(--gradient-soft); }.account-summary-grid article.emerald > span { background: linear-gradient(135deg, #34d399, #22d3ee); }.account-summary-grid article.amber > span { background: linear-gradient(135deg, #fbbf24, #f472b6); }.account-summary-grid small { color: var(--muted); font-size: 11px; }.account-summary-grid strong { display: block; margin-top: 4px; color: var(--ink); font-size: 26px; }.account-summary-grid p { margin: 3px 0 0; color: var(--soft); font-size: 11px; }.account-payment-notice { display: flex; gap: 12px; margin-top: 20px; padding: 16px 18px; border: 1px solid rgba(245, 158, 11, .24); border-radius: 18px; color: #a16207; background: rgba(254, 243, 199, .66); }.account-payment-notice strong { display: block; color: #854d0e; font-size: 13px; }.account-payment-notice p { margin: 4px 0 0; color: #a16207; font-size: 12px; }
+.account-tabs { display: flex; gap: 5px; margin-top: 28px; padding: 5px; overflow-x: auto; border: 1px solid rgba(148, 163, 184, .18); border-radius: 15px; background: rgba(255, 255, 255, .56); }.account-tabs button { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; padding: 0 14px; border: 0; border-radius: 10px; color: var(--muted); background: transparent; font-size: 12px; font-weight: 700; }.account-tabs button.active { color: #fff; background: var(--gradient); box-shadow: 0 8px 18px rgba(99, 102, 241, .17); }.account-section { margin-top: 20px; padding: 26px; border: 1px solid transparent; border-radius: 24px; background: linear-gradient(145deg, rgba(255, 255, 255, .84), rgba(255, 255, 255, .7)) padding-box, linear-gradient(135deg, rgba(167, 139, 250, .48), rgba(96, 165, 250, .24), rgba(52, 211, 153, .4)) border-box; box-shadow: var(--shadow-card); }.account-section > header { padding-bottom: 19px; border-bottom: 1px solid rgba(148, 163, 184, .14); }.account-section header > div > span { color: #7c3aed; font-size: 11px; font-weight: 800; }.account-section h2 { margin: 6px 0; font-size: 22px; font-weight: 800; }.account-section header p { margin: 0; color: var(--muted); font-size: 12px; }.account-entitlement-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 22px; }.account-entitlement-card { padding: 21px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 20px; background: rgba(255, 255, 255, .66); transition: transform 350ms var(--ease-ui), box-shadow 350ms ease; }.account-entitlement-card:hover { transform: translateY(-8px) scale(1.02); box-shadow: var(--shadow-float); }.account-entitlement-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }.account-entitlement-head h3 { margin: 0; font-size: 16px; }.account-entitlement-head p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }.account-status { display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border: 1px solid currentColor; border-radius: 99px; color: #059669; background: rgba(16, 185, 129, .08); font-size: 10px; font-weight: 700; }.account-status.expired, .account-status.revoked { color: #be123c; background: rgba(236, 72, 153, .08); }.account-quota-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px; margin-top: 20px; }.account-quota-grid > div { padding: 14px; border-radius: 15px; background: rgba(239, 246, 255, .7); }.account-quota-grid span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 10px; color: #fff; background: var(--gradient); }.account-quota-grid small { display: block; margin-top: 11px; color: var(--muted); font-size: 10px; }.account-quota-grid strong { display: block; margin-top: 3px; color: var(--ink); font-size: 19px; }.account-quota-grid p { margin: 4px 0 0; color: var(--soft); font-size: 10px; }
+.account-table-wrap { margin-top: 20px; overflow-x: auto; border: 1px solid rgba(148, 163, 184, .18); border-radius: 18px; background: rgba(255, 255, 255, .58); }.account-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px; }.account-table th { height: 46px; padding: 0 15px; color: var(--muted); background: rgba(239, 246, 255, .72); font-size: 10px; text-align: left; }.account-table td { padding: 14px 15px; border-top: 1px solid rgba(148, 163, 184, .13); color: var(--body); }.account-table td strong { display: block; color: var(--ink); }.account-table td small { display: block; margin-top: 4px; color: var(--muted); }.account-money { color: #7c3aed !important; font-weight: 800; }.account-order-actions { display: flex; gap: 7px; }.account-continue-payment, .account-cancel-order { min-height: 32px; padding: 0 10px; border: 1px solid rgba(139, 92, 246, .25); border-radius: 9px; color: #fff; background: var(--gradient); font-size: 10px; font-weight: 700; }.account-cancel-order { color: #be123c; background: rgba(255, 255, 255, .72); }.account-deployment-list { display: grid; gap: 10px; margin-top: 20px; }.account-deployment-list article { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 13px; padding: 16px; border: 1px solid rgba(148, 163, 184, .16); border-radius: 16px; background: rgba(255, 255, 255, .58); }.account-deployment-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; color: #fff; background: var(--gradient); }.account-deployment-list h3 { margin: 0; font-size: 13px; }.account-deployment-list h3 small { margin-left: 6px; color: var(--muted); font-weight: 500; }.account-deployment-list p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }.account-deployment-list article > div:last-child { display: grid; justify-items: end; gap: 4px; color: #059669; font-size: 11px; }.account-security-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 20px; }.account-security-card { padding: 24px; border: 1px solid transparent; border-radius: 22px; background: linear-gradient(145deg, rgba(255, 255, 255, .84), rgba(255, 255, 255, .68)) padding-box, linear-gradient(135deg, rgba(167, 139, 250, .48), rgba(96, 165, 250, .28), rgba(52, 211, 153, .4)) border-box; box-shadow: var(--shadow-card); }.account-security-card header { display: flex; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid rgba(148, 163, 184, .14); }.account-security-card header > span { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: #7c3aed; background: rgba(167, 139, 250, .17); }.account-security-card h2 { margin: 0; font-size: 16px; }.account-security-card header p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }.account-session { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; padding: 14px; border-radius: 14px; background: rgba(254, 226, 226, .44); }.account-session small { display: block; color: var(--muted); font-size: 10px; }.account-session strong { display: block; margin-top: 4px; color: var(--ink); font-size: 12px; }.account-session button { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid rgba(236, 72, 153, .25); border-radius: 9px; color: #be123c; background: #fff; font-size: 11px; font-weight: 700; }.account-empty { display: grid; place-items: center; gap: 8px; padding: 48px 20px; color: var(--muted); text-align: center; }.account-empty svg { width: 30px; height: 30px; color: #a78bfa; }.account-empty strong { color: var(--ink); font-size: 14px; }.account-empty p { margin: 0; font-size: 12px; }
+
+.resource-page-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; }.resource-page-eyebrow { display: inline-flex; align-items: center; gap: 7px; color: #7c3aed; font-size: 12px; font-weight: 800; }.resource-page-head h1 { margin: 10px 0 8px; font-size: 34px; font-weight: 800; letter-spacing: -.04em; }.resource-page-head p { max-width: 650px; margin: 0; color: var(--body); line-height: 1.7; }.resource-page-summary { display: flex; gap: 10px; }.resource-page-summary span { min-width: 104px; padding: 13px; border: 1px solid rgba(255, 255, 255, .8); border-radius: 15px; background: rgba(255, 255, 255, .6); }.resource-page-summary strong { display: block; color: var(--ink); font-size: 22px; }.resource-page-summary small { color: var(--muted); font-size: 10px; }.resource-section { margin-top: 34px; }.resource-section > header { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; }.resource-section > header > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; color: #fff; background: var(--gradient); }.resource-section h2 { margin: 0; font-size: 20px; }.resource-section header p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }.resource-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }.resource-card { min-height: 220px; display: flex; flex-direction: column; padding: 22px; border: 1px solid transparent; border-radius: 22px; background: linear-gradient(145deg, rgba(255, 255, 255, .84), rgba(255, 255, 255, .66)) padding-box, linear-gradient(135deg, rgba(167, 139, 250, .48), rgba(96, 165, 250, .3), rgba(52, 211, 153, .4)) border-box; box-shadow: var(--shadow-card); transition: transform 350ms var(--ease-ui), box-shadow 350ms ease; }.resource-card:hover { transform: translateY(-8px) scale(1.02); box-shadow: var(--shadow-float); }.resource-card-top { display: flex; align-items: flex-start; gap: 12px; }.resource-logo { width: 44px; height: 44px; display: grid; place-items: center; flex: 0 0 auto; overflow: hidden; border-radius: 13px; color: #7c3aed; background: rgba(167, 139, 250, .14); }.resource-logo img { width: 100%; height: 100%; object-fit: contain; }.resource-card h3 { margin: 3px 0 0; font-size: 16px; }.resource-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; color: #059669; font-size: 10px; }.resource-description { margin: 16px 0; color: var(--body); font-size: 12px; line-height: 1.7; }.resource-purchase-button { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; color: #7c3aed; font-size: 12px; font-weight: 800; text-decoration: none; }
+
+.payment-dialog-backdrop, .history-modal-backdrop, .contact-dialog-backdrop, .customer-notice-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(148, 163, 184, .36); backdrop-filter: blur(16px) saturate(1.15); }.payment-dialog, .payment-checkout-dialog, .history-modal, .contact-dialog, .customer-notice-dialog { width: min(100%, 700px); max-height: min(820px, calc(100vh - 40px)); overflow: auto; border: 1px solid transparent; border-radius: 26px; background: linear-gradient(145deg, rgba(255, 255, 255, .96), rgba(239, 246, 255, .94)) padding-box, linear-gradient(135deg, rgba(167, 139, 250, .68), rgba(96, 165, 250, .42), rgba(52, 211, 153, .5)) border-box; box-shadow: 0 30px 90px -26px rgba(99, 102, 241, .36); animation: modal-in 220ms var(--ease-out) both; }.payment-dialog > header, .payment-checkout-dialog > header, .history-modal-header, .contact-dialog-header, .customer-notice-dialog { padding: 22px; }.payment-dialog > header, .payment-checkout-dialog > header, .history-modal-header, .contact-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid rgba(148, 163, 184, .14); }.payment-dialog h2, .payment-checkout-dialog h2, .history-modal h3, .contact-dialog h2, .customer-notice-dialog h2 { margin: 5px 0 0; color: var(--ink); font-size: 21px; font-weight: 800; }.payment-dialog > header span, .payment-checkout-dialog > header span { color: #7c3aed; font-size: 11px; font-weight: 800; }.payment-dialog > header button, .payment-checkout-dialog > header button, .history-modal-close, .contact-dialog-close, .customer-notice-close { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid rgba(148, 163, 184, .2); border-radius: 11px; color: var(--muted); background: rgba(255, 255, 255, .7); }.payment-order-summary, .payment-checkout-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 18px 22px; }.payment-order-summary > div, .payment-checkout-summary > div { padding: 13px; border-radius: 14px; background: rgba(239, 246, 255, .72); }.payment-order-summary span, .payment-checkout-summary span { display: block; color: var(--muted); font-size: 10px; }.payment-order-summary strong, .payment-checkout-summary strong { display: block; margin-top: 5px; color: var(--ink); font-size: 15px; }.payment-mode-tabs { display: flex; gap: 6px; padding: 0 22px 16px; }.payment-mode-tabs button { flex: 1; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid rgba(139, 92, 246, .18); border-radius: 12px; color: #7c3aed; background: rgba(255, 255, 255, .64); font-size: 12px; font-weight: 700; }.payment-mode-tabs button.active { color: #fff; background: var(--gradient); }.payment-method-list { display: grid; gap: 9px; padding: 0 22px 18px; }.payment-method-list > label { display: grid; grid-template-columns: 20px 38px minmax(0, 1fr) 20px; align-items: center; gap: 10px; padding: 13px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 14px; background: rgba(255, 255, 255, .62); }.payment-method-list > label.selected { border-color: rgba(139, 92, 246, .48); background: rgba(237, 233, 254, .72); }.payment-method-list input { accent-color: #8b5cf6; }.payment-method-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: #7c3aed; background: rgba(167, 139, 250, .16); }.payment-method-list strong { display: block; color: var(--ink); font-size: 12px; }.payment-method-list small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }.payment-confirm, .payment-redeem-actions button { width: calc(100% - 44px); min-height: 48px; margin: 0 22px 22px; border: 0; border-radius: 13px; color: #fff; background: var(--gradient); box-shadow: 0 10px 22px rgba(99, 102, 241, .2); font-weight: 800; }.payment-redeem-panel { padding: 0 22px 22px; }.payment-redeem-purchase { display: flex; align-items: center; gap: 10px; padding: 14px; border-radius: 14px; color: #7c3aed; background: rgba(237, 233, 254, .7); text-decoration: none; }.payment-redeem-purchase span { display: grid; gap: 3px; }.payment-redeem-purchase strong { font-size: 12px; }.payment-redeem-purchase small { color: var(--muted); font-size: 10px; }.payment-redeem-panel > label { display: grid; gap: 8px; margin-top: 16px; color: var(--body); font-size: 12px; font-weight: 700; }.payment-redeem-panel > label > div { display: flex; align-items: center; gap: 9px; min-height: 46px; padding: 0 12px; border: 1px solid rgba(148, 163, 184, .24); border-radius: 13px; background: rgba(255, 255, 255, .7); }.payment-redeem-panel input { width: 100%; border: 0; outline: 0; color: var(--ink); background: transparent; }.payment-redeem-panel small { color: var(--muted); font-size: 10px; font-weight: 500; line-height: 1.5; }.payment-checkout-dialog { width: min(100%, 780px); }.payment-qr-stage { display: grid; grid-template-columns: 230px minmax(0, 1fr); align-items: center; gap: 26px; padding: 24px; }.payment-qr-frame { width: 230px; height: 230px; display: grid; place-items: center; border: 8px solid #fff; border-radius: 17px; background: #fff; box-shadow: 0 14px 30px rgba(99, 102, 241, .12); }.payment-qr-frame canvas { width: 214px !important; height: 214px !important; }.payment-qr-stage strong { color: var(--ink); font-size: 15px; }.payment-qr-stage p { color: var(--muted); font-size: 12px; line-height: 1.7; }.payment-live-status { display: flex; align-items: center; gap: 8px; margin: 0 24px 14px; padding: 12px; border-radius: 13px; color: #a16207; background: rgba(254, 243, 199, .75); font-size: 12px; }.payment-live-status.paid { color: #047857; background: rgba(209, 250, 229, .76); }.payment-open-link { min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 7px; margin: 0 24px 24px; border: 1px solid rgba(139, 92, 246, .22); border-radius: 13px; color: #7c3aed; background: rgba(237, 233, 254, .62); font-size: 12px; font-weight: 700; text-decoration: none; }
+
+.admin-toast-stack { position: fixed; right: 22px; bottom: 22px; z-index: 120; width: min(380px, calc(100vw - 32px)); display: grid; gap: 10px; pointer-events: none; }.admin-toast { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px; gap: 10px; align-items: start; padding: 14px; border: 1px solid rgba(139, 92, 246, .25); border-radius: 16px; color: var(--ink); background: rgba(255, 255, 255, .92); box-shadow: var(--shadow-float); pointer-events: auto; animation: fade-up 220ms var(--ease-out) both; }.admin-toast > svg { color: #8b5cf6; }.admin-toast-content { display: grid; gap: 3px; }.admin-toast-content strong { font-size: 12px; }.admin-toast-content p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }.admin-toast-close { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 9px; color: var(--muted); background: transparent; }
+.customer-notice-dialog { position: relative; padding-top: 58px; text-align: center; }.customer-notice-icon { position: absolute; top: 22px; left: 50%; width: 46px; height: 46px; display: grid; place-items: center; transform: translateX(-50%); border-radius: 15px; color: #fff; background: var(--gradient); }.customer-notice-dialog p { margin: 10px 0 0; color: var(--body); font-size: 13px; line-height: 1.7; }.customer-notice-actions { display: flex; justify-content: center; gap: 9px; margin-top: 22px; }.customer-notice-actions button { min-height: 42px; padding: 0 15px; border: 1px solid rgba(139, 92, 246, .23); border-radius: 12px; color: #7c3aed; background: rgba(255, 255, 255, .68); font-size: 12px; font-weight: 700; }.customer-notice-actions button.primary { color: #fff; border-color: transparent; background: var(--gradient); }
+.contact-floating-button { position: fixed; right: 22px; bottom: 22px; z-index: 60; min-height: 46px; display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; border: 0; border-radius: 99px; color: #fff; background: var(--gradient-soft); box-shadow: 0 14px 28px rgba(99, 102, 241, .25); font-size: 12px; font-weight: 800; transition: transform 180ms var(--ease-out), box-shadow 180ms ease; }.contact-floating-button:hover { transform: translateY(-4px) scale(1.02); box-shadow: var(--shadow-float); }.contact-dialog { width: min(100%, 560px); }.contact-dialog-header { display: flex; align-items: center; gap: 11px; }.contact-dialog-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; color: #fff; background: var(--gradient); }.contact-dialog-header h2 { margin: 0; }.contact-dialog-body { padding: 22px; }.contact-dialog-description { margin: 0 0 16px; color: var(--body); font-size: 13px; line-height: 1.7; }.contact-method-list { display: grid; gap: 10px; }.contact-method { border: 1px solid rgba(148, 163, 184, .18); border-radius: 16px; background: rgba(255, 255, 255, .65); overflow: hidden; }.contact-method-preview { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px; border: 0; color: var(--ink); background: transparent; text-align: left; }.contact-method-main { display: flex; align-items: center; gap: 11px; }.contact-method-main > div { display: grid; gap: 3px; }.contact-method-type { color: #7c3aed; font-size: 10px; font-weight: 800; }.contact-method h3 { margin: 0; font-size: 13px; }.contact-method p { margin: 0; color: var(--muted); font-size: 11px; }.contact-method-open-hint { display: flex; align-items: center; gap: 4px; color: #7c3aed; font-size: 10px; }.contact-method-qr { width: 50px; height: 50px; overflow: hidden; border-radius: 10px; background: #fff; }.contact-method-qr img { width: 100%; height: 100%; object-fit: cover; }.contact-method-back { display: inline-flex; align-items: center; gap: 6px; border: 0; color: #7c3aed; background: transparent; font-size: 12px; font-weight: 700; }.contact-method-detail-main { display: grid; gap: 8px; }.contact-method-detail-qr { width: 220px; height: 220px; margin: 20px auto 0; padding: 8px; border-radius: 16px; background: #fff; box-shadow: var(--shadow-card); }.contact-method-detail-qr img { width: 100%; height: 100%; object-fit: contain; }.contact-method-detail-hint { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; color: var(--muted); font-size: 11px; }.contact-method-detail-link { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 18px; min-height: 42px; border-radius: 12px; color: #fff; background: var(--gradient); font-size: 12px; font-weight: 700; text-decoration: none; }
+
+@media (max-width: 900px) { .app-header-inner { width: min(100% - 28px, 1440px); flex-wrap: wrap; padding: 10px 0; }.app-header-primary-nav { order: 3; width: 100%; overflow-x: auto; }.app-header-tools { margin-left: auto; }.account-summary-grid { grid-template-columns: repeat(2, 1fr); }.resource-page-head { align-items: flex-start; flex-direction: column; }.resource-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 650px) { .console-shell main > .max-w-6xl, .console-shell main > .max-w-4xl, .account-shell, .resource-page { width: min(100% - 32px, 1240px); padding-top: 34px; padding-bottom: 48px; }.app-header-brand-copy small, .app-header-tool-button span, .app-header-account-label { display: none; }.app-header-nav-button { padding-inline: 10px; }.account-hero { align-items: flex-start; flex-direction: column; padding: 21px; }.account-hero-actions { width: 100%; }.account-hero-actions button { flex: 1; justify-content: center; }.account-summary-grid, .account-entitlement-grid, .account-security-grid, .resource-grid { grid-template-columns: 1fr; }.account-section { padding: 19px; }.account-quota-grid { grid-template-columns: 1fr; }.account-deployment-list article { grid-template-columns: 38px minmax(0, 1fr); }.account-deployment-list article > div:last-child { grid-column: 2; justify-items: start; }.payment-qr-stage { grid-template-columns: 1fr; }.payment-qr-frame { margin: 0 auto; }.payment-dialog-backdrop, .history-modal-backdrop, .contact-dialog-backdrop, .customer-notice-backdrop { padding: 10px; }.payment-dialog, .payment-checkout-dialog, .history-modal, .contact-dialog, .customer-notice-dialog { max-height: calc(100vh - 20px); border-radius: 21px; }.contact-floating-button { right: 14px; bottom: 14px; } }
+
+/* 用户工作台新版首页 */
+.workspace-home { width: min(100% - 48px,1240px); margin: 0 auto; padding: 58px 0 74px; }
+.workspace-welcome { min-height: 320px; display: grid; grid-template-columns: minmax(0,1fr) 260px; align-items: center; gap: 35px; padding: 34px 38px; border: 1px solid transparent; border-radius: 28px; background: linear-gradient(145deg,rgba(255,255,255,.88),rgba(239,246,255,.76)) padding-box,linear-gradient(135deg,rgba(167,139,250,.6),rgba(96,165,250,.28),rgba(52,211,153,.42)) border-box; box-shadow: var(--shadow-card); }
+.workspace-kicker { display: inline-flex; align-items: center; gap: 6px; color: #7c3aed; font-size: 10px; font-weight: 850; letter-spacing: .1em; }.workspace-kicker svg { width: 14px; }.workspace-welcome h1 { max-width: 650px; margin: 16px 0 0; color: var(--ink); font-size: clamp(30px,4.1vw,52px); font-weight: 850; letter-spacing: -.06em; line-height: 1.14; }.workspace-welcome p { max-width: 625px; margin: 15px 0 0; color: var(--body); font-size: 13px; line-height: 1.75; }.workspace-welcome-actions { display: flex; gap: 10px; margin-top: 25px; }.workspace-primary,.workspace-secondary { min-height: 41px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border-radius: 12px; font-size: 11px; font-weight: 800; cursor: pointer; }.workspace-primary { color: #fff; border: 0; background: var(--gradient); box-shadow: 0 10px 22px rgba(99,102,241,.2); }.workspace-secondary { color: #6d28d9; border: 1px solid rgba(139,92,246,.22); background: rgba(255,255,255,.68); }.workspace-primary:hover,.workspace-secondary:hover { transform: translateY(-3px); box-shadow: var(--shadow-float); }.workspace-primary svg,.workspace-secondary svg { width: 14px; }.workspace-welcome-orbit { width: 230px; height: 230px; position: relative; display: grid; place-items: center; justify-self: center; }.workspace-orbit-ring { position: absolute; border: 1px solid rgba(139,92,246,.23); border-radius: 50%; transform: rotate(-22deg); }.workspace-orbit-ring.ring-one { width: 205px; height: 105px; }.workspace-orbit-ring.ring-two { width: 150px; height: 190px; transform: rotate(46deg); border-color: rgba(52,211,153,.25); }.workspace-welcome-orbit > span { width: 76px; height: 76px; display: grid; place-items: center; color: #fff; border-radius: 25px; background: var(--gradient); box-shadow: 0 20px 38px rgba(99,102,241,.26); }.workspace-welcome-orbit > span svg { width: 34px; }.workspace-welcome-orbit small { position: absolute; bottom: 27px; padding: 4px 9px; color: #6d28d9; border-radius: 999px; background: rgba(255,255,255,.78); font-size: 10px; font-weight: 800; }
+.workspace-summary { min-height: 73px; display: flex; align-items: center; gap: 13px; margin-top: 18px; padding: 13px 17px; border: 1px solid rgba(255,255,255,.85); border-radius: 17px; background: rgba(255,255,255,.68); box-shadow: 0 10px 28px rgba(99,102,241,.07); }.workspace-summary > div { display: flex; align-items: center; gap: 10px; }.workspace-summary > div > span { width: 34px; height: 34px; display: grid; place-items: center; color: #fff; border-radius: 11px; background: var(--gradient-soft); }.workspace-summary svg { width: 16px; }.workspace-summary small,.workspace-summary strong { display: block; }.workspace-summary small { color: var(--muted); font-size: 10px; }.workspace-summary strong { margin-top: 3px; color: var(--ink); font-size: 12px; }.workspace-summary p { margin: 0 auto 0 0; color: var(--muted); font-size: 11px; }.workspace-summary button { display: inline-flex; align-items: center; gap: 5px; color: #6d28d9; border: 0; background: transparent; font-size: 11px; font-weight: 800; }.workspace-summary button svg { width: 14px; }
+.workspace-workflows { margin-top: 72px; }.workspace-workflows > header { display: flex; justify-content: space-between; align-items: flex-end; gap: 15px; }.workspace-workflows h2,.workspace-guidance h2 { margin: 8px 0 0; color: var(--ink); font-size: 26px; font-weight: 850; letter-spacing: -.045em; }.workspace-workflows > header button { display: inline-flex; align-items: center; gap: 4px; color: #6d28d9; border: 0; background: transparent; font-size: 11px; font-weight: 800; }.workspace-workflows > header button svg { width: 14px; }.workspace-workflow-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin-top: 23px; }.workspace-workflow-card { min-height: 315px; display: flex; flex-direction: column; padding: 26px; border: 1px solid transparent; border-radius: 22px; background: linear-gradient(145deg,rgba(255,255,255,.86),rgba(255,255,255,.64)) padding-box,linear-gradient(135deg,rgba(167,139,250,.48),rgba(96,165,250,.25),rgba(52,211,153,.4)) border-box; box-shadow: var(--shadow-card); text-align: left; cursor: pointer; transition: transform .32s var(--ease-out),box-shadow .32s ease,border-color .32s ease; }.workspace-workflow-card:hover { transform: translateY(-8px) scale(1.015); box-shadow: var(--shadow-float); }.workspace-workflow-top { display: flex; align-items: center; gap: 10px; }.workspace-workflow-icon { width: 46px; height: 46px; display: grid; place-items: center; color: #fff; border-radius: 15px; background: var(--gradient); }.workspace-workflow-card.mint .workspace-workflow-icon { background: linear-gradient(135deg,#34d399,#22d3ee); }.workspace-workflow-icon svg { width: 21px; }.workspace-workflow-top small { color: #7c3aed; font-size: 10px; font-weight: 850; }.workspace-workflow-top > svg { width: 17px; margin-left: auto; color: #a78bfa; }.workspace-workflow-card h3 { margin: 22px 0 0; color: var(--ink); font-size: 23px; }.workspace-workflow-card > p { margin: 9px 0 0; color: var(--body); font-size: 12px; line-height: 1.7; }.workspace-workflow-card ul { display: grid; gap: 7px; margin: 18px 0 0; padding: 0; list-style: none; }.workspace-workflow-card li { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }.workspace-workflow-card li svg { width: 13px; color: #059669; }.workspace-workflow-card footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 19px; border-top: 1px solid rgba(148,163,184,.16); color: var(--muted); font-size: 10px; }.workspace-workflow-card footer strong { display: inline-flex; align-items: center; gap: 5px; color: #6d28d9; }.workspace-workflow-card footer svg { width: 14px; }
+.workspace-guidance { margin-top: 72px; padding: 26px; border: 1px solid rgba(139,92,246,.16); border-radius: 22px; background: linear-gradient(135deg,rgba(245,243,255,.76),rgba(236,254,255,.65)); }.workspace-guidance-head { display: flex; align-items: center; gap: 13px; }.workspace-guidance-icon { width: 43px; height: 43px; display: grid; place-items: center; color: #fff; border-radius: 14px; background: var(--gradient-soft); }.workspace-guidance-icon svg { width: 19px; }.workspace-guidance-head > div { flex: 1; }.workspace-guidance-head h2 { font-size: 21px; }.workspace-guidance-head p { margin: 6px 0 0; color: var(--muted); font-size: 11px; }.workspace-guide-steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-top: 24px; }.workspace-guide-steps article { display: flex; gap: 10px; padding: 15px; border: 1px solid rgba(255,255,255,.85); border-radius: 14px; background: rgba(255,255,255,.68); }.workspace-guide-steps article > span { width: 27px; height: 27px; display: grid; place-items: center; flex: 0 0 auto; color: #fff; border-radius: 9px; background: var(--gradient); font-size: 9px; font-weight: 850; }.workspace-guide-steps h3 { margin: 2px 0 0; color: var(--ink); font-size: 12px; }.workspace-guide-steps p { margin: 5px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.workspace-assurance-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 13px; margin-top: 17px; }.workspace-assurance-grid article { display: flex; gap: 10px; padding: 17px; border: 1px solid rgba(255,255,255,.82); border-radius: 16px; background: rgba(255,255,255,.62); }.workspace-assurance-grid article > span { width: 31px; height: 31px; display: grid; place-items: center; flex: 0 0 auto; color: #6d28d9; border-radius: 10px; background: #ede9fe; }.workspace-assurance-grid svg { width: 15px; }.workspace-assurance-grid h3 { margin: 2px 0 0; color: var(--ink); font-size: 12px; }.workspace-assurance-grid p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+@media (max-width: 800px) { .workspace-home { width: min(100% - 32px,1240px); padding-top: 36px; }.workspace-welcome { grid-template-columns: 1fr; padding: 26px; }.workspace-welcome-orbit { width: 180px; height: 160px; }.workspace-orbit-ring.ring-one { width: 170px; height: 85px; }.workspace-orbit-ring.ring-two { width: 125px; height: 150px; }.workspace-workflow-grid { grid-template-columns: 1fr; }.workspace-assurance-grid { grid-template-columns: 1fr; }.workspace-guidance-head { align-items: flex-start; flex-wrap: wrap; }.workspace-guidance-head .workspace-secondary { margin-left: 56px; }.workspace-guide-steps { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .workspace-home { width: min(100% - 24px,1240px); }.workspace-welcome { padding: 21px; }.workspace-welcome h1 { font-size: 31px; }.workspace-welcome-actions { align-items: stretch; flex-direction: column; }.workspace-summary { align-items: flex-start; flex-wrap: wrap; }.workspace-summary p { flex-basis: 100%; margin-left: 44px; }.workspace-guidance { padding: 19px; }.workspace-guidance-head .workspace-secondary { margin-left: 0; }.workspace-workflows > header { align-items: flex-start; flex-direction: column; } }
+
+html[data-theme="dark"] .console-shell { color: var(--ink); background: linear-gradient(135deg,#172554 0%,#312e81 42%,#164e63 74%,#14532d 100%); }
+html[data-theme="dark"] .console-shell::before { background: radial-gradient(circle at 8% 16%,rgba(167,139,250,.2),transparent 26%),radial-gradient(circle at 88% 22%,rgba(103,232,249,.18),transparent 24%); }
+html[data-theme="dark"] .app-header { border-color: rgba(147,197,253,.2); background: rgba(23,37,84,.76); box-shadow: 0 12px 30px rgba(7,20,49,.26); }
+html[data-theme="dark"] .app-header-brand,html[data-theme="dark"] .app-header-brand-copy strong,html[data-theme="dark"] .app-header-account-label strong,html[data-theme="dark"] .console-shell main h1,html[data-theme="dark"] .console-shell main h2,html[data-theme="dark"] .console-shell main h3 { color: #eef6ff !important; }
+html[data-theme="dark"] .app-header-primary-nav,html[data-theme="dark"] .app-header-tool-button,html[data-theme="dark"] .app-header-account,html[data-theme="dark"] .app-header-logout { border-color: rgba(147,197,253,.2); background: rgba(30,58,95,.7); color: #b8c9e1; }
+html[data-theme="dark"] .console-shell main p,html[data-theme="dark"] .console-shell main label,html[data-theme="dark"] .console-shell main li { color: #b8c9e1; }
+html[data-theme="dark"] .console-shell [class*="bg-white/5"],html[data-theme="dark"] .console-shell [class*="bg-white/[0.07"] { background: rgba(147,197,253,.1) !important; }
+html[data-theme="dark"] .console-shell input,html[data-theme="dark"] .console-shell select,html[data-theme="dark"] .console-shell textarea { color: #eef6ff !important; border-color: rgba(147,197,253,.28) !important; background: rgba(15,23,42,.38) !important; }
+html[data-theme="dark"] .console-footer { border-color: rgba(147,197,253,.2) !important; background: rgba(23,37,84,.72) !important; color: #a9bdd8 !important; }
+html[data-theme="dark"] .workspace-welcome,html[data-theme="dark"] .workspace-summary,html[data-theme="dark"] .workspace-workflow-card,html[data-theme="dark"] .workspace-guidance,html[data-theme="dark"] .workspace-assurance-grid article { border-color: rgba(147,197,253,.22); background: linear-gradient(145deg,rgba(30,58,95,.9),rgba(49,46,129,.7)); }
+html[data-theme="dark"] .workspace-welcome h1,html[data-theme="dark"] .workspace-workflows h2,html[data-theme="dark"] .workspace-guidance h2,html[data-theme="dark"] .workspace-workflow-card h3,html[data-theme="dark"] .workspace-guide-steps h3,html[data-theme="dark"] .workspace-assurance-grid h3,html[data-theme="dark"] .workspace-summary strong { color: #eef6ff; }
+html[data-theme="dark"] .workspace-welcome p,html[data-theme="dark"] .workspace-summary p,html[data-theme="dark"] .workspace-workflow-card > p,html[data-theme="dark"] .workspace-workflow-card li,html[data-theme="dark"] .workspace-guide-steps p,html[data-theme="dark"] .workspace-assurance-grid p { color: #b8c9e1; }
+html[data-theme="dark"] .workspace-kicker,
+html[data-theme="dark"] .workspace-workflow-top small,
+html[data-theme="dark"] .workspace-workflows > header button,
+html[data-theme="dark"] .workspace-workflow-card footer strong,
+html[data-theme="dark"] .resource-page-eyebrow,
+html[data-theme="dark"] .resource-purchase-button { color: #c4b5fd !important; }
+html[data-theme="dark"] .workspace-workflow-card footer { border-color: rgba(147,197,253,.2); }
+html[data-theme="dark"] .account-hero,html[data-theme="dark"] .account-section,html[data-theme="dark"] .account-summary-grid article,html[data-theme="dark"] .account-security-card,html[data-theme="dark"] .resource-card { border-color: rgba(147,197,253,.22); background: linear-gradient(145deg,rgba(30,58,95,.88),rgba(49,46,129,.68)); }
+html[data-theme="dark"] .account-identity h1,html[data-theme="dark"] .account-section h2,html[data-theme="dark"] .account-summary-grid strong,html[data-theme="dark"] .account-security-card h2,html[data-theme="dark"] .resource-card h3 { color: #eef6ff; }
+html[data-theme="dark"] .account-identity p,html[data-theme="dark"] .account-section header p,html[data-theme="dark"] .account-summary-grid small,html[data-theme="dark"] .account-summary-grid p,html[data-theme="dark"] .account-security-card header p,html[data-theme="dark"] .resource-description { color: #b8c9e1; }
+
+/* 夜间模式收口：登录后的业务表单保持稳定，不让输入卡片随鼠标漂浮。 */
+.console-shell .home-action-card:hover,
+.console-shell main form > div[class*="rounded-2xl"]:hover,
+.console-shell main form > div[class*="rounded-md"]:hover {
+  transform: none !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+/* 旧页面仍可能使用 Tailwind 拼接类名，统一覆写为深色层次，避免白色面板残留。 */
+html[data-theme="dark"] .console-shell .account-entitlement-card,
+html[data-theme="dark"] .console-shell .account-table-wrap,
+html[data-theme="dark"] .console-shell .account-deployment-list article,
+html[data-theme="dark"] .console-shell .account-quota-grid > div,
+html[data-theme="dark"] .console-shell .account-tabs,
+html[data-theme="dark"] .console-shell .account-payment-notice,
+html[data-theme="dark"] .console-shell .resource-page-summary span,
+html[data-theme="dark"] .console-shell .resource-logo,
+html[data-theme="dark"] .console-shell .account-session,
+html[data-theme="dark"] .console-shell .account-session button,
+html[data-theme="dark"] .console-shell .account-cancel-order {
+  border-color: rgba(147,197,253,.24) !important;
+  background: rgba(30,58,95,.68) !important;
+}
+html[data-theme="dark"] .console-shell .account-entitlement-card h3,
+html[data-theme="dark"] .console-shell .account-entitlement-card strong,
+html[data-theme="dark"] .console-shell .account-table td strong,
+html[data-theme="dark"] .console-shell .account-table th,
+html[data-theme="dark"] .console-shell .account-deployment-list h3,
+html[data-theme="dark"] .console-shell .account-session strong,
+html[data-theme="dark"] .console-shell .resource-page-summary strong {
+  color: #f3f8ff !important;
+}
+html[data-theme="dark"] .console-shell .account-entitlement-card p,
+html[data-theme="dark"] .console-shell .account-entitlement-card small,
+html[data-theme="dark"] .console-shell .account-table td,
+html[data-theme="dark"] .console-shell .account-table td small,
+html[data-theme="dark"] .console-shell .account-table th,
+html[data-theme="dark"] .console-shell .account-deployment-list p,
+html[data-theme="dark"] .console-shell .account-session small,
+html[data-theme="dark"] .console-shell .resource-page-summary small {
+  color: #c7d8ef !important;
+}
+html[data-theme="dark"] .console-shell .account-table th {
+  background: rgba(49,46,129,.58) !important;
+}
+
+/* 修复旧表单规则的 !important 优先级，暗色输入区不再被白色渐变压住。 */
+html[data-theme="dark"] .console-shell .home-action-card,
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-2xl"],
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-md"] {
+  border-color: rgba(147,197,253,.24) !important;
+  background: linear-gradient(145deg,rgba(30,58,95,.9),rgba(49,46,129,.7)) padding-box, linear-gradient(135deg,rgba(129,140,248,.38),rgba(34,211,238,.2),rgba(52,211,153,.3)) border-box !important;
+}
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-2xl"] h2,
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-2xl"] h3,
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-md"] h2,
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-md"] h3 { color: #f3f8ff !important; }
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-2xl"] label,
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-2xl"] small,
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-md"] label,
+html[data-theme="dark"] .console-shell main form > div[class*="rounded-md"] small { color: #c7d8ef !important; }
+
+/* 面板/节点结果、指南、协议矩阵共用同一套清晰遮罩。 */
+.console-modal-backdrop {
+  background: rgba(79,70,130,.16) !important;
+  backdrop-filter: blur(5px) saturate(1.05) !important;
+}
+html[data-theme="dark"] .console-modal-backdrop { background: rgba(15,23,42,.28) !important; }
+
+/* 弹窗后保留清晰的页面轮廓：轻遮罩 + 轻模糊，而不是整屏灰雾。 */
+html[data-theme="dark"] .payment-dialog-backdrop,
+html[data-theme="dark"] .history-modal-backdrop,
+html[data-theme="dark"] .contact-dialog-backdrop,
+html[data-theme="dark"] .customer-notice-backdrop {
+  background: rgba(15,23,42,.34) !important;
+  backdrop-filter: blur(5px) saturate(1.08) !important;
+}
+html[data-theme="dark"] .payment-dialog,
+html[data-theme="dark"] .payment-checkout-dialog,
+html[data-theme="dark"] .history-modal,
+html[data-theme="dark"] .contact-dialog,
+html[data-theme="dark"] .customer-notice-dialog {
+  color: #eef6ff;
+  background: linear-gradient(145deg, rgba(30,58,95,.98), rgba(49,46,129,.96)) !important;
+}
+html[data-theme="dark"] .payment-dialog,html[data-theme="dark"] .payment-checkout-dialog,html[data-theme="dark"] .history-modal,html[data-theme="dark"] .contact-dialog,html[data-theme="dark"] .customer-notice-dialog { border-color: rgba(147,197,253,.3); background: linear-gradient(145deg,rgba(30,58,95,.97),rgba(49,46,129,.94)); }
+html[data-theme="dark"] .payment-dialog h2,html[data-theme="dark"] .payment-checkout-dialog h2,html[data-theme="dark"] .history-modal h3,html[data-theme="dark"] .contact-dialog h2,html[data-theme="dark"] .customer-notice-dialog h2,html[data-theme="dark"] .payment-order-summary strong,html[data-theme="dark"] .payment-checkout-summary strong { color: #eef6ff; }
+html[data-theme="dark"] .payment-order-summary > div,html[data-theme="dark"] .payment-checkout-summary > div,html[data-theme="dark"] .payment-method-list > label,html[data-theme="dark"] .payment-redeem-panel > label > div,html[data-theme="dark"] .contact-method,html[data-theme="dark"] .contact-method-preview,html[data-theme="dark"] .customer-notice-actions button,html[data-theme="dark"] .history-modal-close,html[data-theme="dark"] .contact-dialog-close { border-color: rgba(147,197,253,.22); background: rgba(30,64,105,.68); color: #c7d8ef; }
+html[data-theme="dark"] .payment-order-summary span,html[data-theme="dark"] .payment-checkout-summary span,html[data-theme="dark"] .payment-method-list small,html[data-theme="dark"] .payment-qr-stage p,html[data-theme="dark"] .contact-method p,html[data-theme="dark"] .customer-notice-dialog p { color: #b8c9e1; }
+html[data-theme="dark"] .payment-method-list > label.selected { border-color: rgba(196,181,253,.55); background: rgba(129,140,248,.22); }
+html[data-theme="dark"] .payment-redeem-purchase,html[data-theme="dark"] .payment-open-link { color: #ddd6fe; background: rgba(129,140,248,.2); }
+html[data-theme="dark"] .payment-mode-tabs button {
+  border-color: rgba(147,197,253,.24);
+  color: #c4b5fd;
+  background: rgba(30,64,105,.68);
+}
+html[data-theme="dark"] .payment-mode-tabs button.active {
+  border-color: transparent;
+  color: #ffffff;
+  background: var(--gradient);
+}
+html[data-theme="dark"] .payment-dialog > header button,
+html[data-theme="dark"] .payment-checkout-dialog > header button {
+  border-color: rgba(147,197,253,.26);
+  color: #c7d8ef;
+  background: rgba(30,64,105,.72);
+}
+
+/* Payment dialog dark-theme contrast pass: secondary labels and payment
+   instructions were still too close to the indigo surface. */
+html[data-theme="dark"] .payment-dialog > header span,
+html[data-theme="dark"] .payment-dialog .payment-order-summary span,
+html[data-theme="dark"] .payment-dialog .payment-method-list small,
+html[data-theme="dark"] .payment-dialog .payment-redeem-panel small { color: #dbeafe !important; }
+html[data-theme="dark"] .payment-dialog .payment-order-summary span { font-size: 11px; }
+html[data-theme="dark"] .payment-dialog .payment-order-summary strong { color: #ffffff !important; font-size: 16px; }
+html[data-theme="dark"] .payment-dialog .payment-method-list > label { color: #f8fafc; border-color: rgba(196,181,253,.48); background: rgba(96,102,190,.36); }
+html[data-theme="dark"] .payment-dialog .payment-method-list > label.selected { background: rgba(129,140,248,.34); }
+html[data-theme="dark"] .payment-dialog .payment-method-list strong { color: #ffffff !important; font-size: 13px; }
+html[data-theme="dark"] .payment-dialog .payment-method-list small { color: #e2e8f0 !important; font-size: 11px; line-height: 1.55; }
+html[data-theme="dark"] .payment-dialog .payment-method-icon { color: #c4b5fd; background: rgba(139,92,246,.28); }
+
+/* 遮罩只压低亮度，不盖住底层页面结构。 */
+.payment-dialog-backdrop,
+.history-modal-backdrop,
+.contact-dialog-backdrop,
+.customer-notice-backdrop {
+  background: rgba(79,70,130,.16) !important;
+  backdrop-filter: blur(5px) saturate(1.05) !important;
+}
+
+/* 套餐页是登录后使用频率最高的填写入口，夜间模式不再出现浅灰大卡片。 */
+html[data-theme="dark"] .console-shell .pricing-page > .border-b,
+html[data-theme="dark"] .console-shell .pricing-page > .grid > div,
+html[data-theme="dark"] .console-shell .pricing-page > [class*="border-dashed"] {
+  border-color: rgba(147,197,253,.24) !important;
+  background: linear-gradient(145deg,rgba(30,58,95,.84),rgba(49,46,129,.68)) !important;
+}
+html[data-theme="dark"] .console-shell .pricing-page h1,
+html[data-theme="dark"] .console-shell .pricing-page h2,
+html[data-theme="dark"] .console-shell .pricing-page .text-white,
+html[data-theme="dark"] .console-shell .pricing-page .text-zinc-300 {
+  color: #f3f8ff !important;
+}
+html[data-theme="dark"] .console-shell .pricing-page .text-zinc-400,
+html[data-theme="dark"] .console-shell .pricing-page .text-zinc-500 {
+  color: #c7d8ef !important;
+}
+
+/* Light console surfaces need dark, readable semantic accents. The original Tailwind
+   palette was designed for a dark panel and became too faint after the light theme
+   conversion (especially the deployment guidance banners). */
+html:not([data-theme="dark"]) .console-shell .text-emerald-100,
+html:not([data-theme="dark"]) .console-shell .text-emerald-300 { color: #047857 !important; }
+html:not([data-theme="dark"]) .console-shell .text-emerald-400 { color: #059669 !important; }
+html:not([data-theme="dark"]) .console-shell .text-amber-300 { color: #b45309 !important; }
+html:not([data-theme="dark"]) .console-shell .text-amber-400 { color: #d97706 !important; }
+html:not([data-theme="dark"]) .console-shell .text-indigo-300 { color: #6d28d9 !important; }
+html:not([data-theme="dark"]) .console-shell .text-indigo-400 { color: #7c3aed !important; }
+/* Selected transport/security controls use indigo-200 in the component markup.
+   That shade is intentionally pale for the dark console, but fails contrast on
+   the light lavender selected surface. */
+html:not([data-theme="dark"]) .console-shell .text-indigo-200 { color: #4338ca !important; }
+html:not([data-theme="dark"]) .console-shell .text-rose-300 { color: #be123c !important; }
+html:not([data-theme="dark"]) .console-shell .text-rose-400 { color: #db2777 !important; }
+html:not([data-theme="dark"]) .console-shell .text-cyan-400 { color: #0891b2 !important; }
+html:not([data-theme="dark"]) .console-shell .text-sky-400 { color: #0284c7 !important; }
+
+/* Pricing cards are interactive choices: keep the lift subtle and consistent with
+   the other frontend cards instead of leaving them visually flat. */
+html:not([data-theme="dark"]) .console-shell .pricing-page > .grid > div {
+  border-color: rgba(139,92,246,.16) !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.84),rgba(255,255,255,.66)) !important;
+  box-shadow: var(--shadow-card);
+  transition: transform 260ms var(--ease-out), box-shadow 260ms ease, border-color 260ms ease;
+}
+html:not([data-theme="dark"]) .console-shell .pricing-page > .grid > div:hover {
+  transform: translateY(-6px);
+  border-color: rgba(139,92,246,.3) !important;
+  box-shadow: var(--shadow-float);
+}
+html[data-theme="dark"] .console-shell .pricing-page > .grid > div {
+  transition: transform 260ms var(--ease-out), box-shadow 260ms ease, border-color 260ms ease;
+}
+html[data-theme="dark"] .console-shell .pricing-page > .grid > div:hover {
+  transform: translateY(-6px);
+  box-shadow: var(--shadow-float);
+}
+
+/* Setup guide readability in dark mode: the cards are intentionally soft, but body
+   copy must remain clearly above the blue surface. */
+html[data-theme="dark"] .console-modal-backdrop [class*="text-zinc-400"],
+html[data-theme="dark"] .console-modal-backdrop [class*="text-zinc-500"] { color: #c7d8ef !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-zinc-300"] { color: #dce9fb !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-zinc-200"] { color: #eef6ff !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-indigo-200"] { color: #ddd6fe !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-indigo-300"] { color: #c4b5fd !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-emerald-200"] { color: #a7f3d0 !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-emerald-300"] { color: #6ee7b7 !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-amber-200"] { color: #fde68a !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-amber-300"] { color: #fcd34d !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="text-purple-300"] { color: #d8b4fe !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="bg-white/5"] { background: rgba(147,197,253,.12) !important; border-color: rgba(147,197,253,.24) !important; }
+html[data-theme="dark"] .console-modal-backdrop [class*="bg-black/40"] { background: rgba(15,23,42,.36) !important; border-color: rgba(147,197,253,.2) !important; }
+
+/* The guide also renders in the light console theme. Dark-background utility
+   shades such as emerald-200 become nearly invisible on the mint notice card. */
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-zinc-400"],
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-zinc-500"] { color: #64748b !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-zinc-300"] { color: #475569 !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-zinc-200"] { color: #334155 !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-indigo-200"] { color: #6d28d9 !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-indigo-300"] { color: #6d28d9 !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-emerald-200"] { color: #047857 !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-emerald-300"] { color: #047857 !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-amber-200"] { color: #a16207 !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-amber-300"] { color: #b45309 !important; }
+html:not([data-theme="dark"]) .console-modal-backdrop [class*="text-purple-300"] { color: #7e22ce !important; }
+
+/* Prevent action icons and confirm buttons from creating a narrow overflow strip. */
+.payment-dialog,.payment-checkout-dialog { overflow-x: hidden; }
+.payment-confirm,.payment-redeem-actions button {
+  max-width: calc(100% - 44px);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.payment-confirm svg,.payment-redeem-actions button svg { width: 20px; height: 20px; flex: 0 0 auto; }
+
+/* Purchase balance summary: keep the wallet state visible while switching
+   between card redemption and balance purchase. */
+.payment-balance-card {
+  margin: 0 22px 16px;
+  padding: 15px;
+  border: 1px solid rgba(99,102,241,.2);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(238,242,255,.8), rgba(236,254,255,.72));
+}
+.payment-balance-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.payment-balance-card-heading > div { display: grid; gap: 4px; }
+.payment-balance-card-heading span { color: #64748b; font-size: 10px; font-weight: 750; }
+.payment-balance-card-heading strong { color: #312e81; font-size: 23px; letter-spacing: -.03em; }
+.payment-balance-card-heading > small { color: #64748b; font-size: 10px; }
+.payment-balance-stats { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin-top: 12px; }
+.payment-balance-stats > div { padding: 10px 11px; border: 1px solid rgba(99,102,241,.13); border-radius: 11px; background: rgba(255,255,255,.52); }
+.payment-balance-stats span { display: block; color: #64748b; font-size: 10px; }
+.payment-balance-stats strong { display: block; margin-top: 4px; color: #1e293b; font-size: 14px; }
+.payment-balance-card p { margin: 10px 0 0; color: #475569; font-size: 10px; line-height: 1.55; }
+.payment-balance-panel .payment-balance-card { margin: 0 0 14px; }
+.payment-balance-card-heading > span { color: #312e81; font-size: 12px; font-weight: 800; }
+.payment-mode-tabs { flex-wrap: wrap; }
+.payment-mode-tabs button { flex: 1 1 150px; }
+html[data-theme="dark"] .payment-balance-card { border-color: rgba(147,197,253,.28); background: linear-gradient(135deg, rgba(30,64,105,.82), rgba(49,46,129,.7)); }
+html[data-theme="dark"] .payment-balance-card-heading span,
+html[data-theme="dark"] .payment-balance-card-heading > small,
+html[data-theme="dark"] .payment-balance-stats span { color: #b8c9e1; }
+html[data-theme="dark"] .payment-balance-card-heading strong,
+html[data-theme="dark"] .payment-balance-stats strong { color: #f8fafc; }
+html[data-theme="dark"] .payment-balance-card-heading > span { color: #f8fafc; }
+html[data-theme="dark"] .payment-balance-stats > div { border-color: rgba(147,197,253,.2); background: rgba(15,23,42,.24); }
+html[data-theme="dark"] .payment-balance-card p { color: #dbeafe; }
+
+/* Workspace guide cards need their own dark-theme surface.  The base card uses a
+   white glass fill, which washes out the step copy when the surrounding console
+   is dark. */
+html[data-theme="dark"] .workspace-guidance-head p { color: #c7d8ef !important; }
+html[data-theme="dark"] .workspace-guide-steps article {
+  border-color: rgba(147,197,253,.3) !important;
+  background: linear-gradient(145deg, rgba(30,58,95,.9), rgba(49,46,129,.78)) !important;
+  box-shadow: 0 10px 24px rgba(7,20,49,.2);
+}
+html[data-theme="dark"] .workspace-guide-steps article h3 {
+  color: #f8fafc !important;
+  font-size: 13px;
+}
+html[data-theme="dark"] .workspace-guide-steps article p {
+  color: #dbeafe !important;
+  font-size: 11px;
+  line-height: 1.7;
+}
+html[data-theme="dark"] .workspace-guide-steps article > span {
+  color: #ffffff !important;
+  border-color: rgba(255,255,255,.28) !important;
+  background: linear-gradient(135deg, #8b5cf6, #60a5fa 55%, #34d399) !important;
+}
+
+/* Redeem purchase panel: keep the helper copy and primary action readable in
+   the light theme instead of inheriting the low-contrast muted/dark-theme pair. */
+html:not([data-theme="dark"]) .payment-redeem-panel > label { color: #334155 !important; }
+html:not([data-theme="dark"]) .payment-redeem-panel > label > div {
+  border-color: rgba(71,85,105,.3) !important;
+  background: rgba(255,255,255,.92) !important;
+}
+html:not([data-theme="dark"]) .payment-redeem-panel > label > div svg { color: #6d28d9 !important; }
+html:not([data-theme="dark"]) .payment-redeem-panel small,
+html:not([data-theme="dark"]) .payment-redeem-purchase small {
+  color: #475569 !important;
+  font-size: 11px;
+}
+html:not([data-theme="dark"]) .payment-redeem-actions button {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #7c3aed 0%, #3b82f6 52%, #14b8a6 100%) !important;
+}
+
+/* Redeem flow spacing and sizing: the purchase entry is a full-width action
+   inside the dialog, while the helper copy stays visually separate from the
+   primary redeem action. */
+.payment-redeem-purchase {
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: flex-start;
+}
+.payment-redeem-purchase > svg:last-child { margin-left: auto; }
+.payment-redeem-actions { margin-top: 16px; }
+
+/* The dialog's global form reset also targets this nested input on focus. Keep
+   the focus treatment on the outer field so it does not look double-framed or
+   visually covered by a second rounded input background. */
+.payment-redeem-panel input,
+.payment-redeem-panel input:focus {
+  min-height: 0;
+  height: auto;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+}
+.payment-redeem-panel > label > div:focus-within {
+  border-color: rgba(139, 92, 246, .58) !important;
+  box-shadow: 0 0 0 4px rgba(139, 92, 246, .1);
+}
+.payment-redeem-panel > label > small {
+  display: block;
+  margin-top: 2px;
+}
+
+/* History configuration modal layout.  These elements are intentionally
+   component-specific so the empty state cannot collapse into an inline text
+   run or let the Lucide icon dictate the dialog height. */
+.history-modal {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  overflow: hidden;
+}
+.history-modal-header { flex: 0 0 auto; }
+.history-modal-title-wrap {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+}
+.history-modal-title-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 11px;
+  color: #6d28d9;
+  background: rgba(139,92,246,.13);
+}
+.history-modal-title-wrap p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.history-empty-state {
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 46px 24px;
+  color: var(--muted);
+  text-align: center;
+}
+.history-empty-state svg {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 3px;
+  padding: 10px;
+  border-radius: 14px;
+  color: #6d28d9;
+  background: rgba(139,92,246,.12);
+  box-sizing: content-box;
+}
+.history-empty-state strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+.history-empty-state span {
+  max-width: 360px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.history-modal-body {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.history-record-list {
+  min-width: 0;
+  padding: 16px;
+  border-right: 1px solid rgba(148,163,184,.16);
+  background: rgba(239,246,255,.38);
+}
+.history-record-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.history-record-list-heading strong {
+  min-width: 22px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: #6d28d9;
+  background: rgba(139,92,246,.12);
+  text-align: center;
+}
+.history-record-list-scroll { display: grid; gap: 8px; overflow: auto; }
+.history-record-card {
+  display: grid;
+  grid-template-columns: 30px minmax(0,1fr);
+  gap: 9px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid rgba(148,163,184,.16);
+  border-radius: 13px;
+  color: var(--body);
+  background: rgba(255,255,255,.56);
+  text-align: left;
+}
+.history-record-card.is-active {
+  border-color: rgba(139,92,246,.42);
+  background: rgba(237,233,254,.72);
+  box-shadow: 0 8px 18px rgba(99,102,241,.1);
+}
+.history-record-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #6d28d9;
+  background: rgba(139,92,246,.13);
+}
+.history-record-icon.is-node { color: #047857; background: rgba(16,185,129,.13); }
+.history-record-copy { min-width: 0; display: grid; gap: 3px; }
+.history-record-copy strong { overflow: hidden; color: var(--ink); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.history-record-copy small, .history-record-copy > span { overflow: hidden; color: var(--muted); font-size: 10px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.history-record-detail { min-width: 0; overflow: auto; padding: 20px; }
+.history-modal-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 22px;
+  border-top: 1px solid rgba(148,163,184,.14);
+  color: var(--muted);
+  font-size: 10px;
+}
+.history-clear-button { display: inline-flex; align-items: center; gap: 6px; color: #be123c; font-size: 11px; font-weight: 700; }
+
+html[data-theme="dark"] .history-record-list { border-color: rgba(147,197,253,.18); background: rgba(15,23,42,.2); }
+html[data-theme="dark"] .history-record-card { border-color: rgba(147,197,253,.2); background: rgba(30,64,105,.62); }
+html[data-theme="dark"] .history-record-card.is-active { border-color: rgba(196,181,253,.55); background: rgba(129,140,248,.24); }
+html[data-theme="dark"] .history-modal-title-icon,
+html[data-theme="dark"] .history-empty-state svg { color: #c4b5fd; background: rgba(139,92,246,.24); }
+
+@media (max-width: 650px) {
+  .history-modal { min-height: 280px; }
+  .history-modal-body { grid-template-columns: 1fr; overflow: auto; }
+  .history-record-list { border-right: 0; border-bottom: 1px solid rgba(148,163,184,.16); }
+  .history-record-list-scroll { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .history-record-detail { min-height: 280px; }
+  .history-modal-footer { align-items: flex-start; flex-direction: column; }
+}
+
+/* Account security form: the component intentionally keeps semantic labels
+   simple, so the account page owns the grid, field sizing and action treatment. */
+.account-password-form { display: grid; gap: 14px; margin-top: 20px; }
+.account-password-form label { display: grid; align-content: start; gap: 7px; color: var(--body); font-size: 11px; font-weight: 700; }
+.account-password-form input {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid rgba(148,163,184,.28) !important;
+  border-radius: 12px !important;
+  color: var(--ink) !important;
+  background: rgba(255,255,255,.78) !important;
+  outline: 0;
+}
+.account-password-form input:focus {
+  border-color: rgba(139,92,246,.65) !important;
+  box-shadow: 0 0 0 4px rgba(139,92,246,.11);
+}
+.account-password-row { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); align-items: start; gap: 12px; }
+.account-password-row > label { grid-template-rows: auto 44px minmax(0, auto); }
+.account-password-row > label > input { grid-row: 2; }
+.account-password-row > label > small { grid-row: 3; }
+.account-password-form label small { color: var(--muted); font-size: 10px; font-weight: 500; }
+.account-password-form > button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 12px;
+  color: #fff;
+  background: var(--gradient);
+  box-shadow: 0 10px 22px rgba(99,102,241,.2);
+  font-size: 12px;
+  font-weight: 800;
+  transition: transform 160ms var(--ease-out), opacity 160ms ease;
+}
+.account-password-form > button:disabled { cursor: wait; opacity: .65; }
+.account-password-form > button:disabled svg { animation: account-save-spin 900ms linear infinite; }
+.account-form-error { padding: 10px 12px; border: 1px solid rgba(244,63,94,.24); border-radius: 11px; color: #be123c; background: rgba(255,228,230,.7); font-size: 11px; line-height: 1.5; }
+.account-tabs button:focus-visible { outline: 2px solid rgba(139,92,246,.72); outline-offset: 2px; }
+
+@keyframes account-save-spin { to { transform: rotate(360deg); } }
+
+@media (hover: hover) and (pointer: fine) {
+  .account-password-form > button:hover:not(:disabled) { transform: translateY(-2px); }
+}
+.account-password-form > button:active:not(:disabled) { transform: scale(.985); }
+
+html[data-theme="dark"] .account-password-form label { color: #dbeafe; }
+html[data-theme="dark"] .account-password-form input { border-color: rgba(147,197,253,.28) !important; color: #eef6ff !important; background: rgba(15,23,42,.42) !important; }
+html[data-theme="dark"] .account-password-form input:focus { border-color: rgba(196,181,253,.7) !important; box-shadow: 0 0 0 4px rgba(129,140,248,.18); }
+html[data-theme="dark"] .account-password-form label small { color: #b8c9e1; }
+html[data-theme="dark"] .account-form-error { border-color: rgba(251,113,133,.34); color: #fecdd3; background: rgba(159,18,57,.2); }
+
+/* 夜间后台中的通知不能继续使用浅色主题变量，否则浅底上会出现近乎白色的文字。 */
+html[data-theme="dark"] .admin-toast {
+  color: #f3f8ff;
+  border-color: rgba(147,197,253,.34);
+  background: rgba(23,37,84,.96);
+  box-shadow: 0 16px 36px rgba(7,20,49,.42);
+}
+html[data-theme="dark"] .admin-toast > svg { color: #c4b5fd; }
+html[data-theme="dark"] .admin-toast-content strong { color: #f3f8ff; }
+html[data-theme="dark"] .admin-toast-content p { color: #c7d8ef; }
+html[data-theme="dark"] .admin-toast-close { color: #b8c9e1; }
+html[data-theme="dark"] .admin-toast-close:hover { color: #f3f8ff; background: rgba(147,197,253,.14); }
+
+@media (max-width: 650px) {
+  .account-password-row { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-password-form > button { transition: opacity 160ms ease; }
+  .account-password-form > button:hover:not(:disabled),
+  .account-password-form > button:active:not(:disabled) { transform: none; }
+  .account-password-form > button:disabled svg { animation: none; }
+}
+
+/* Unified workbench actions: use the same gradient button language as the
+   public site and authentication screens. Destructive/close/icon-only controls
+   stay semantic and are intentionally excluded. */
+.workspace-primary,
+.workspace-secondary,
+.workspace-summary button,
+.workspace-workflows > header button,
+.resource-purchase-button,
+.payment-confirm,
+.payment-redeem-actions button,
+.payment-redeem-purchase,
+.payment-open-link,
+.contact-floating-button,
+.contact-method-detail-link,
+.history-use-panel-button,
+.deploy-resource-link,
+.deploy-resource-link.residential,
+.account-refresh,
+.account-continue-payment,
+.account-password-form > button,
+.customer-notice-actions button.primary {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--action-radius);
+  color: #fff !important;
+  background: var(--gradient) !important;
+  box-shadow: var(--action-shadow);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+/* High-signal action for the first deployment gate. It must remain legible
+   against both the light and dark workbench surfaces. */
+.console-ssh-check-button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #7c3aed 0%, #2563eb 52%, #0891b2 100%);
+  box-shadow: 0 9px 20px rgba(37, 99, 235, .24);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  transition: transform 150ms var(--ease-out), box-shadow 150ms ease, filter 150ms ease, opacity 150ms ease;
+}
+.console-ssh-check-button:focus-visible {
+  outline: 3px solid rgba(125, 211, 252, .75);
+  outline-offset: 3px;
+}
+.console-ssh-check-button:active:not(:disabled) { transform: scale(.97); }
+.console-ssh-check-button:disabled {
+  cursor: wait;
+  opacity: .62;
+  box-shadow: none;
+}
+.console-ssh-check-spinner {
+  border-color: rgba(255,255,255,.35);
+  border-top-color: #fff;
+}
+html[data-theme="dark"] .console-ssh-check-button {
+  color: #fff;
+  background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 52%, #22d3ee 100%);
+  box-shadow: 0 10px 24px rgba(34, 211, 238, .2);
+}
+@media (hover: hover) and (pointer: fine) {
+  .console-ssh-check-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    filter: saturate(1.12) brightness(1.06);
+    box-shadow: 0 14px 28px rgba(37, 99, 235, .34);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .console-ssh-check-button { transition: opacity 150ms ease, filter 150ms ease; }
+  .console-ssh-check-button:hover:not(:disabled),
+  .console-ssh-check-button:active:not(:disabled) { transform: none; }
+}
+.resource-purchase-button,
+.payment-redeem-purchase { padding: 0 13px; }
+.resource-purchase-button { align-self: stretch; }
+.payment-redeem-purchase { min-height: 58px; }
+.payment-redeem-purchase small { color: rgba(255,255,255,.82) !important; }
+.workspace-secondary,
+.workspace-summary button,
+.workspace-workflows > header button { padding: 0 13px; }
+.deploy-resource-link,
+.deploy-resource-link.residential { padding: 0 14px; }
+.workspace-primary svg,
+.workspace-secondary svg,
+.workspace-summary button svg,
+.workspace-workflows > header button svg,
+.resource-purchase-button svg,
+.payment-confirm svg,
+.payment-redeem-actions button svg,
+.payment-redeem-purchase svg,
+.payment-open-link svg,
+.contact-floating-button svg,
+.contact-method-detail-link svg,
+.history-use-panel-button svg,
+.deploy-resource-link svg,
+.account-refresh svg,
+.account-continue-payment svg,
+.account-password-form > button svg,
+.customer-notice-actions button.primary svg { flex: 0 0 auto; }
+
+@media (hover: hover) and (pointer: fine) {
+  .workspace-primary:hover,
+  .workspace-secondary:hover,
+  .workspace-summary button:hover,
+  .workspace-workflows > header button:hover,
+  .resource-purchase-button:hover,
+  .payment-confirm:hover:not(:disabled),
+  .payment-redeem-actions button:hover:not(:disabled),
+  .payment-redeem-purchase:hover,
+  .payment-open-link:hover,
+  .contact-floating-button:hover,
+  .contact-method-detail-link:hover,
+  .history-use-panel-button:hover,
+  .deploy-resource-link:hover,
+  .account-refresh:hover:not(:disabled),
+  .account-continue-payment:hover:not(:disabled),
+  .account-password-form > button:hover:not(:disabled),
+  .customer-notice-actions button.primary:hover {
+    color: #fff !important;
+    transform: translateY(-2px);
+    filter: brightness(1.04);
+    box-shadow: 0 14px 28px rgba(99,102,241,.28);
+  }
+}
+ .account-wallet-box { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-top:20px; padding:16px 18px; border:1px solid rgba(99,102,241,.2); border-radius:16px; background:rgba(238,242,255,.72); }.account-wallet-box strong,.account-wallet-box span { display:block; }.account-wallet-box strong { color:var(--ink); font-size:14px; }.account-wallet-box span { margin-top:4px; color:var(--muted); font-size:11px; }.account-wallet-actions { display:flex; gap:8px; }.account-wallet-actions input { min-width:240px; height:38px; padding:0 11px; border:1px solid rgba(148,163,184,.3); border-radius:9px; background:#fff; color:var(--ink); font-size:12px; }.account-wallet-actions button { height:38px; padding:0 14px; border:0; border-radius:9px; color:#fff; background:var(--gradient); font-size:12px; font-weight:700; }.account-wallet-actions button:disabled { opacity:.55; cursor:not-allowed; }
+.account-balance-summary { position: relative; }
+.account-balance-recharge { align-self: center; display: inline-flex; align-items: center; gap: 5px; min-height: 32px; margin-left: auto; padding: 0 10px; border: 0; border-radius: 10px; color: #fff; background: var(--gradient); font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.account-balance-recharge svg { width: 14px; height: 14px; }
+.account-balance-recharge:active { transform: scale(.97); }
+.wallet-recharge-content { padding: 20px 22px 22px; }
+.wallet-recharge-amount { display: grid; gap: 8px; color: var(--body); font-size: 12px; font-weight: 800; }
+.wallet-recharge-amount input { width: 100%; min-height: 46px; box-sizing: border-box; padding: 0 13px; border: 1px solid rgba(148,163,184,.28); border-radius: 13px; color: var(--ink); background: rgba(255,255,255,.72); outline: 0; font: inherit; }
+.wallet-recharge-amount input:focus { border-color: rgba(139,92,246,.58); box-shadow: 0 0 0 4px rgba(139,92,246,.1); }
+.wallet-recharge-section { margin-top: 18px; padding-top: 17px; border-top: 1px solid rgba(148,163,184,.16); }
+.wallet-recharge-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 11px; }
+.wallet-recharge-section-title strong { color: var(--ink); font-size: 13px; }
+.wallet-recharge-section-title small { color: var(--muted); font-size: 10px; }
+.wallet-payment-method-list { padding: 0 0 14px; }
+.wallet-payment-method-list > label { grid-template-columns: 20px 38px minmax(0,1fr) 20px; }
+.wallet-recharge-section .payment-confirm { width: 100%; margin: 0; }
+.wallet-card-recharge .payment-redeem-purchase { margin-bottom: 11px; }
+.wallet-code-input { display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 11px; border: 1px solid rgba(148,163,184,.28); border-radius: 13px; background: rgba(255,255,255,.72); }
+.wallet-code-input > svg { width: 18px; flex: 0 0 auto; color: #7c3aed; }
+.wallet-code-input input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--ink); background: transparent; font: inherit; font-size: 12px; }
+.wallet-code-input button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 9px; color: #fff; background: var(--gradient); font-size: 11px; font-weight: 800; white-space: nowrap; }
+.wallet-code-input button:disabled { cursor: not-allowed; opacity: .55; }
+.wallet-recharge-empty { display: grid; justify-items: center; gap: 7px; margin-top: 18px; padding: 25px 15px; border: 1px dashed rgba(148,163,184,.26); border-radius: 14px; color: var(--muted); text-align: center; }
+.wallet-recharge-empty svg { width: 24px; color: #8b5cf6; }
+.wallet-recharge-empty strong { color: var(--ink); font-size: 12px; }
+.wallet-recharge-empty span { font-size: 10px; }
+html[data-theme="dark"] .account-balance-recharge { color: #fff; }
+html[data-theme="dark"] .wallet-recharge-amount { color: #dbeafe; }
+html[data-theme="dark"] .wallet-recharge-amount input,
+html[data-theme="dark"] .wallet-code-input { border-color: rgba(147,197,253,.28); color: #eef6ff; background: rgba(15,23,42,.42); }
+html[data-theme="dark"] .wallet-recharge-section { border-color: rgba(147,197,253,.2); }
+html[data-theme="dark"] .wallet-recharge-section-title strong { color: #f3f8ff; }
+html[data-theme="dark"] .wallet-recharge-section-title small { color: #b8c9e1; }
+html[data-theme="dark"] .wallet-code-input > svg { color: #c4b5fd; }
+html[data-theme="dark"] .wallet-recharge-empty { border-color: rgba(147,197,253,.28); }
+html[data-theme="dark"] .wallet-recharge-empty strong { color: #f3f8ff; }
+@media (max-width: 650px) { .account-wallet-box { align-items: stretch; flex-direction: column; }.account-wallet-actions { flex-direction: column; }.account-wallet-actions input { min-width: 0; width: 100%; } }

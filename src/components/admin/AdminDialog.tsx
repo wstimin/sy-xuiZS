@@ -33,6 +33,7 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const busyRef = useRef(busy);
   const onCloseRef = useRef(onClose);
 
@@ -41,20 +42,45 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
 
   useEffect(() => {
     if (!open) return undefined;
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !busyRef.current) onCloseRef.current();
+    const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const handleDialogKeys = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busyRef.current) {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(focusableSelector) || [])
+        .filter(control => !control.hasAttribute('disabled') && control.offsetParent !== null);
+      if (!controls.length) {
+        event.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     const focusFirstControl = window.requestAnimationFrame(() => {
-      const firstControl = dialogRef.current?.querySelector<HTMLElement>('input, select, textarea, button:not([disabled])');
-      firstControl?.focus();
+      const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(focusableSelector) || []);
+      const preferredControl = controls.find(control => control.dataset.dialogClose !== 'true') || controls[0];
+      (preferredControl || dialogRef.current)?.focus();
     });
-    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('keydown', handleDialogKeys);
     return () => {
       window.cancelAnimationFrame(focusFirstControl);
-      document.removeEventListener('keydown', closeOnEscape);
+      document.removeEventListener('keydown', handleDialogKeys);
       document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => previouslyFocusedRef.current?.focus());
     };
   }, [open]);
 
@@ -62,13 +88,13 @@ export const AdminDialog: React.FC<AdminDialogProps> = ({
 
   return (
     <div className="admin-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-      <section ref={dialogRef} className={`admin-dialog ${size === 'wide' ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}>
+      <section ref={dialogRef} className={`admin-dialog ${size === 'wide' ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} tabIndex={-1}>
         <header>
           <div className="admin-dialog-heading">
             <span className={`admin-dialog-symbol ${tone}`}>{tone === 'danger' || tone === 'warning' ? <AlertTriangle /> : <PanelsTopLeft />}</span>
             <div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId}>{description}</p>}</div>
           </div>
-          <button type="button" className="admin-icon-button" onClick={onClose} disabled={busy} title="关闭"><X /></button>
+          <button type="button" className="admin-icon-button" onClick={onClose} disabled={busy} title="关闭" aria-label="关闭弹窗" data-dialog-close="true"><X /></button>
         </header>
         {children && <div className="admin-dialog-body">{children}</div>}
         <footer>

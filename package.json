@@ -1,7 +1,7 @@
 {
   "name": "xui-zhushou",
   "private": true,
-  "version": "3.0.7",
+  "version": "3.0.8",
   "description": "带用户、订单、权益和配额管理的 3x-ui 商业部署助手",
   "type": "module",
   "engines": {
@@ -9,13 +9,13 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server/admin-cli.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/admin-cli.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server/admin-cli.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/admin-cli.cjs && esbuild server/update-runner.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/update-runner.cjs",
     "start": "node dist/server.cjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "package:release": "node scripts/create-release-package.mjs",
     "package:1panel": "node scripts/create-1panel-package.mjs",
     "lint": "tsc --noEmit",
-    "test": "tsx --test server/commercial-api.test.ts server/commercial-store.test.ts server/payment-service.test.ts server/inbound-builder.test.ts server/ssh.test.ts server/validation.test.ts server/xray-template.test.ts server/xui-client.test.ts"
+    "test": "tsx --test server/commercial-api.test.ts server/commercial-store.test.ts server/network-security.test.ts server/payment-service.test.ts server/external-redeem-service.test.ts server/external-redeem-api.test.ts server/inbound-builder.test.ts server/ssh.test.ts server/update-service.test.ts server/validation.test.ts server/xray-template.test.ts server/xui-client.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

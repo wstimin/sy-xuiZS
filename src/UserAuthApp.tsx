@@ -14,6 +14,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { api, CurrentUser } from './commercial';
+import { ThemeToggle, USER_THEME_STORAGE_KEY } from './components/ThemeToggle';
 
 interface UserAuthAppProps {
   mode: 'login' | 'register';
@@ -118,14 +119,17 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
       <header className="auth-topbar">
         <a href="/" className="brand-lockup">
           <span className="brand-mark"><Terminal className="h-5 w-5" /></span>
-          <span><strong>NEXUS CLOUD</strong><small>GLOBAL NETWORK DELIVERY</small></span>
+          <span><strong><span>xui面板</span><em>一键搭建助手</em></strong><small>专注面板与节点搭建</small></span>
         </a>
-        <a href="/" className="auth-back"><ArrowLeft className="h-4 w-4" /> 返回首页</a>
+        <div className="auth-topbar-actions">
+          <ThemeToggle storageKey={USER_THEME_STORAGE_KEY} />
+          <a href="/" className="auth-back"><ArrowLeft className="h-4 w-4" /> 返回首页</a>
+        </div>
       </header>
 
       <main className="auth-layout">
         <section className="auth-story">
-          <span className="auth-eyebrow">SECURE ACCESS / NEXUS ID</span>
+          <span className="auth-eyebrow">安全账户访问</span>
           <h1>{resetMode ? '安全找回你的账户访问权' : isLogin ? '欢迎回来，继续连接全球业务' : '创建你的全球网络工作台'}</h1>
           <p>
             {isLogin
@@ -143,7 +147,7 @@ export default function UserAuthApp({ mode }: UserAuthAppProps) {
           <div className="auth-panel-head">
             <span className="auth-panel-icon">{isLogin && !resetMode ? <LockKeyhole className="h-5 w-5" /> : <UserRound className="h-5 w-5" />}</span>
             <div>
-              <span>{resetMode ? 'RESET PASSWORD' : isLogin ? 'ACCOUNT LOGIN' : 'CREATE ACCOUNT'}</span>
+              <span>{resetMode ? '重置账户密码' : isLogin ? '账户登录' : '创建新账户'}</span>
               <h2 id="auth-title">{resetMode ? '重置密码' : isLogin ? '登录账户' : '注册账户'}</h2>
             </div>
           </div>

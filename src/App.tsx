@@ -19,6 +19,8 @@ import { CustomerNoticeDialog } from './components/CustomerNoticeDialog';
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('home');
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyDetailLoadingId, setHistoryDetailLoadingId] = useState<string | null>(null);
+  const [historyDetailError, setHistoryDetailError] = useState<{ id: string; message: string } | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [guideOpen, setGuideOpen] = useState<boolean>(false);
   const [setupGuideOpen, setSetupGuideOpen] = useState<boolean>(false);
@@ -46,46 +48,11 @@ export default function App() {
     webKeyFile?: string;
   } | null>(null);
 
-  const normalizeHistoryItem = (item: HistoryItem): HistoryItem => {
-    if (item.type === 'panel' && item.panelData) {
-      return {
-        id: item.id,
-        timestamp: item.timestamp,
-        type: 'panel',
-        title: item.title,
-        summary: item.summary || item.panelData.accessUrl,
-        panelData: { ...item.panelData }
-      };
-    }
-    if (item.type === 'node' && item.nodeData) {
-      return {
-        id: item.id,
-        timestamp: item.timestamp,
-        type: 'node',
-        title: item.title,
-        summary: item.summary || `${item.nodeData.protocol} + ${item.nodeData.transport} · 入站 #${item.nodeData.inboundId}`,
-        nodeData: { ...item.nodeData }
-      };
-    }
-    return {
-      id: item.id,
-      timestamp: item.timestamp,
-      type: item.type,
-      title: item.title,
-      summary: item.summary || '旧版历史记录未保存详细信息'
-    };
-  };
-
-  // Load history from localStorage
+  // Remove legacy browser-side deployment records. They may contain passwords,
+  // API tokens and node keys, so they are deliberately not uploaded or migrated.
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('3xui_deploy_history');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const normalized = Array.isArray(parsed) ? parsed.map(normalizeHistoryItem) : [];
-        setHistoryItems(normalized);
-        localStorage.setItem('3xui_deploy_history', JSON.stringify(normalized));
-      }
+      localStorage.removeItem('3xui_deploy_history');
     } catch {
       // ignore
     }
@@ -101,17 +68,28 @@ export default function App() {
     setAccountLoading(true);
     try {
       const result = await api<AccountData>('/api/account');
-      setAccount(result);
+      setAccount({
+        ...result,
+        entitlements: Array.isArray(result.entitlements) ? result.entitlements : [],
+        orders: Array.isArray(result.orders) ? result.orders : [],
+        deployments: Array.isArray(result.deployments) ? result.deployments : [],
+        paymentMethods: Array.isArray(result.paymentMethods) ? result.paymentMethods : [],
+      });
       return result;
     } finally {
       setAccountLoading(false);
     }
   };
 
+  const refreshHistory = async () => {
+    const result = await api<{ items: HistoryItem[] }>('/api/deployment-history');
+    setHistoryItems(result.items);
+  };
+
   const hasAvailableCapability = async (capability: 'panel' | 'node') => {
     try {
       const latestAccount = await refreshAccount();
-      return Boolean(latestAccount && activeCapability(latestAccount.entitlements, capability).length);
+      return Boolean(latestAccount && activeCapability(Array.isArray(latestAccount.entitlements) ? latestAccount.entitlements : [], capability).length);
     } catch {
       // Let the deployment endpoint perform the authoritative check if account refresh is temporarily unavailable.
       return true;
@@ -135,11 +113,16 @@ export default function App() {
   useEffect(() => {
     if (user) {
       void refreshAccount();
+      void refreshHistory().catch(() => setHistoryItems([]));
       void api<{ recommendations: ResourceRecommendationSettings }>('/api/resource-recommendations')
         .then(result => setRecommendations(result.recommendations))
         .catch(() => setRecommendations({ serverEnabled: true, residentialIpEnabled: true, items: [] }));
     } else {
       setAccount(null);
+      setHistoryItems([]);
+      setHistoryDetailLoadingId(null);
+      setHistoryDetailError(null);
+      setPrefilledPanel(null);
       setRecommendations({ serverEnabled: true, residentialIpEnabled: true, items: [] });
     }
   }, [user?.id]);
@@ -163,12 +146,14 @@ export default function App() {
     let attempts = 0;
     const checkPayment = async () => {
       try {
-        const result = await api<{ order: { status: string } }>(`/api/orders/${encodeURIComponent(orderId)}/status`);
+        const result = await api<{ order: { status: string; planSnapshot?: string } }>(`/api/orders/${encodeURIComponent(orderId)}/status`);
         if (stopped) return;
         if (result.order.status === 'paid') {
           await refreshAccount();
           setCurrentView('account');
-          showPurchaseSuccess();
+          let walletTopup = false;
+          try { walletTopup = JSON.parse(result.order.planSnapshot || '{}').kind === 'wallet_topup'; } catch { /* Ignore malformed legacy snapshots. */ }
+          showPurchaseSuccess(walletTopup ? '余额充值成功' : undefined, walletTopup ? '充值金额已到账，可以继续购买永久次数套餐。' : undefined);
           window.history.replaceState({}, '', '/console');
           return;
         }
@@ -194,16 +179,8 @@ export default function App() {
     return () => { stopped = true; };
   }, [user?.id]);
 
-  const saveHistory = (newItem: HistoryItem) => {
-    setHistoryItems(prev => {
-      const updated = [newItem, ...prev].slice(0, 30);
-      try {
-        localStorage.setItem('3xui_deploy_history', JSON.stringify(updated.map(normalizeHistoryItem)));
-      } catch {
-        // ignore
-      }
-      return updated;
-    });
+  const saveHistoryInMemory = (newItem: HistoryItem) => {
+    setHistoryItems(prev => [newItem, ...prev.filter(item => item.id !== newItem.id)].slice(0, 30));
   };
 
   const showToast = (
@@ -222,14 +199,30 @@ export default function App() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const handleClearHistory = () => {
-    setHistoryItems([]);
+  const handleClearHistory = async () => {
     try {
-      localStorage.removeItem('3xui_deploy_history');
-    } catch {
-      // ignore
+      await api<{ success: true; cleared: number }>('/api/deployment-history', { method: 'DELETE' });
+      setHistoryItems([]);
+      setHistoryDetailError(null);
+      showToast('历史记录已清空', '服务器已删除保存的搭建详情', 'info');
+    } catch (error) {
+      showToast('清空失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     }
-    showToast('清空历史记录', '已清除所有本地搭建记录', 'info');
+  };
+
+  const handleRequestHistoryDetails = async (id: string) => {
+    const current = historyItems.find(item => item.id === id);
+    if (!current?.hasDetails || current.panelData || current.nodeData || historyDetailLoadingId === id) return;
+    setHistoryDetailLoadingId(id);
+    setHistoryDetailError(null);
+    try {
+      const result = await api<{ item: HistoryItem }>(`/api/deployment-history/${encodeURIComponent(id)}`);
+      setHistoryItems(prev => prev.map(item => item.id === id ? result.item : item));
+    } catch (error) {
+      setHistoryDetailError({ id, message: error instanceof Error ? error.message : '无法读取搭建历史详情' });
+    } finally {
+      setHistoryDetailLoadingId(currentId => currentId === id ? null : currentId);
+    }
   };
 
   const handlePanelCreated = (result: PanelResult) => {
@@ -239,9 +232,10 @@ export default function App() {
       type: 'panel',
       title: `xui面板 (${result.host}:${result.port})`,
       summary: result.accessUrl,
+      hasDetails: true,
       panelData: { ...result }
     };
-    saveHistory(historyItem);
+    saveHistoryInMemory(historyItem);
     void refreshAccount();
   };
 
@@ -252,9 +246,10 @@ export default function App() {
       type: 'node',
       title: `${result.nodeName} (${result.protocol} + ${result.transport})`,
       summary: `${result.protocol} + ${result.transport} · 入站 #${result.inboundId}`,
+      hasDetails: true,
       nodeData: { ...result }
     };
-    saveHistory(historyItem);
+    saveHistoryInMemory(historyItem);
     void refreshAccount();
   };
 
@@ -289,13 +284,15 @@ export default function App() {
 
   const logout = async () => {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    setHistoryItems([]);
+    setPrefilledPanel(null);
     setUser(null);
     setCurrentView('home');
     window.location.assign('/');
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0c] text-slate-200 flex flex-col font-sans selection:bg-indigo-500 selection:text-white antialiased">
+    <div className="console-shell min-h-screen bg-[#0a0a0c] text-slate-200 flex flex-col font-sans selection:bg-indigo-500 selection:text-white antialiased">
       {/* Background Glow Overlay */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-indigo-600/10 rounded-full blur-[140px]" />
@@ -356,7 +353,7 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950/80 py-6 text-center text-xs text-slate-500 relative z-10">
+      <footer className="console-footer border-t border-slate-900 bg-slate-950/80 py-6 text-center text-xs text-slate-500 relative z-10">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-400">xui面板一键搭建助手</span>
@@ -426,6 +423,9 @@ export default function App() {
         onClose={() => setHistoryOpen(false)}
         items={historyItems}
         onClearHistory={handleClearHistory}
+        onRequestDetails={handleRequestHistoryDetails}
+        detailLoadingId={historyDetailLoadingId}
+        detailError={historyDetailError}
         onCopyText={async (text, title) => {
           const success = await copyToClipboard(text);
           if (success) {

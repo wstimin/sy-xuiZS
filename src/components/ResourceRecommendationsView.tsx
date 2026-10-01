@@ -13,7 +13,7 @@ export const ResourceRecommendationsView: React.FC<ResourceRecommendationsViewPr
   return <div className="resource-page">
     <header className="resource-page-head">
       <div>
-        <span className="resource-page-eyebrow"><Globe2 /> RESOURCE DIRECTORY</span>
+        <span className="resource-page-eyebrow"><Globe2 /> 资源推荐专区</span>
         <h1>资源推荐</h1>
         <p>这里整理了适合面板搭建、节点部署和网络需求的第三方服务商，点击即可前往了解。</p>
       </div>

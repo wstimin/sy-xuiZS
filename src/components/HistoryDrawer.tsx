@@ -22,6 +22,9 @@ interface HistoryDrawerProps {
   onClose: () => void;
   items: HistoryItem[];
   onClearHistory: () => void;
+  onRequestDetails: (id: string) => void;
+  detailLoadingId: string | null;
+  detailError: { id: string; message: string } | null;
   onCopyText: (text: string, title: string) => void;
   onSelectPanelToNode: (panelData: PanelResult) => void;
 }
@@ -106,10 +109,10 @@ const PanelHistoryDetail: React.FC<{
       <DetailField label="主机" value={data.host} copyTitle="主机" onCopyText={onCopyText} />
       <DetailField label="端口" value={data.port} copyTitle="端口" onCopyText={onCopyText} />
       <DetailField label="访问路径" value={data.path} copyTitle="访问路径" onCopyText={onCopyText} />
-      <DetailField label="协议 / SSL" value={`${data.protocol.toUpperCase()} / ${data.sslEnabled ? '已启用' : '未启用'}`} onCopyText={onCopyText} />
+      <DetailField label="协议 / 加密" value={`${data.protocol.toUpperCase()} / ${data.sslEnabled ? '已启用' : '未启用'}`} onCopyText={onCopyText} />
       <DetailField label="登录账号" value={data.username} copyTitle="登录账号" onCopyText={onCopyText} />
       <DetailField label="登录密码" value={data.password} copyTitle="登录密码" onCopyText={onCopyText} />
-      <DetailField label="API Token" value={data.apiToken} copyTitle="API Token" onCopyText={onCopyText} wide />
+      <DetailField label="接口令牌" value={data.apiToken} copyTitle="接口令牌" onCopyText={onCopyText} wide />
       <DetailField label="面板类型" value="官方脚本" onCopyText={onCopyText} />
       <DetailField label="证书文件" value={data.webCertFile} copyTitle="证书文件路径" onCopyText={onCopyText} />
       <DetailField label="私钥文件" value={data.webKeyFile} copyTitle="私钥文件路径" onCopyText={onCopyText} wide />
@@ -212,11 +215,11 @@ const NodeHistoryDetail: React.FC<{
           <div className="history-config-title"><Server className="h-4 w-4" />SOCKS 链式代理</div>
           <p className="history-config-description">{data.socksExplanation || `已配置 ${data.socksList.length} 个 SOCKS 代理。`}</p>
           <div className="history-config-actions">
-            <button type="button" onClick={() => onCopyText(data.xrayOutboundsJson, 'Outbounds JSON')}>
-              <Copy className="h-3.5 w-3.5" />复制 Outbounds JSON
+            <button type="button" onClick={() => onCopyText(data.xrayOutboundsJson, '出站配置')}>
+              <Copy className="h-3.5 w-3.5" />复制出站配置
             </button>
-            <button type="button" onClick={() => onCopyText(data.xrayRoutingJson, 'Routing JSON')}>
-              <Copy className="h-3.5 w-3.5" />复制 Routing JSON
+            <button type="button" onClick={() => onCopyText(data.xrayRoutingJson, '路由配置')}>
+              <Copy className="h-3.5 w-3.5" />复制路由配置
             </button>
           </div>
         </section>
@@ -230,6 +233,9 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   onClose,
   items,
   onClearHistory,
+  onRequestDetails,
+  detailLoadingId,
+  detailError,
   onCopyText,
   onSelectPanelToNode
 }) => {
@@ -255,6 +261,11 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
     };
   }, [isOpen, items, onClose]);
 
+  useEffect(() => {
+    if (!isOpen || !selectedItem?.hasDetails || selectedItem.panelData || selectedItem.nodeData) return;
+    onRequestDetails(selectedItem.id);
+  }, [isOpen, selectedItem?.id]);
+
   if (!isOpen) return null;
 
   return (
@@ -271,7 +282,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
             <div className="history-modal-title-icon"><ShieldCheck className="h-5 w-5" /></div>
             <div>
               <h3 id="history-modal-title">历史配置</h3>
-              <p>完整配置仅保存在当前浏览器中，不会上传到服务器。</p>
+              <p>配置由服务器按当前账号加密保存，详情仅在查看时读取。</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="history-modal-close" title="关闭历史配置">
@@ -294,7 +305,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
               </div>
               <div className="history-record-list-scroll">
                 {items.map(item => {
-                  const hasDetails = item.type === 'panel' ? Boolean(item.panelData) : Boolean(item.nodeData);
+                  const hasDetails = item.hasDetails || (item.type === 'panel' ? Boolean(item.panelData) : Boolean(item.nodeData));
                   return (
                     <button
                       type="button"
@@ -308,7 +319,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                       <span className="history-record-copy">
                         <strong>{item.title}</strong>
                         <small>{formatTimestamp(item.timestamp)}</small>
-                        <span>{hasDetails ? item.summary : '旧记录仅保留摘要，无法复现完整信息'}</span>
+                        <span>{hasDetails ? item.summary : '该记录仅保留摘要，无法读取完整信息'}</span>
                       </span>
                     </button>
                   );
@@ -317,7 +328,21 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
             </aside>
 
             <main className="history-record-detail">
-              {selectedItem?.type === 'panel' && selectedItem.panelData && (
+              {selectedItem && detailLoadingId === selectedItem.id && (
+                <div className="history-legacy-state">
+                  <CalendarClock className="h-8 w-8" />
+                  <strong>正在安全读取详情</strong>
+                  <p>服务器正在验证当前账号并解密这条搭建记录。</p>
+                </div>
+              )}
+              {selectedItem && detailLoadingId !== selectedItem.id && detailError?.id === selectedItem.id && !selectedItem.panelData && !selectedItem.nodeData && (
+                <div className="history-legacy-state">
+                  <ShieldCheck className="h-8 w-8" />
+                  <strong>无法读取详情</strong>
+                  <p>{detailError.message}</p>
+                </div>
+              )}
+              {detailLoadingId !== selectedItem?.id && selectedItem?.type === 'panel' && selectedItem.panelData && (
                 <PanelHistoryDetail
                   data={selectedItem.panelData}
                   onCopyText={onCopyText}
@@ -325,14 +350,14 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                   onClose={onClose}
                 />
               )}
-              {selectedItem?.type === 'node' && selectedItem.nodeData && (
+              {detailLoadingId !== selectedItem?.id && selectedItem?.type === 'node' && selectedItem.nodeData && (
                 <NodeHistoryDetail data={selectedItem.nodeData} onCopyText={onCopyText} />
               )}
-              {selectedItem && !selectedItem.panelData && !selectedItem.nodeData && (
+              {selectedItem && detailLoadingId !== selectedItem.id && detailError?.id !== selectedItem.id && !selectedItem.panelData && !selectedItem.nodeData && (
                 <div className="history-legacy-state">
                   <CalendarClock className="h-8 w-8" />
-                  <strong>这是一条旧版历史记录</strong>
-                  <p>旧版本没有保存完整结果，因此只能查看当时留下的摘要。</p>
+                  <strong>这条记录没有可用详情</strong>
+                  <p>服务器只保留了搭建摘要，无法复现密码、接口令牌或节点链接。</p>
                   <code>{selectedItem.summary}</code>
                 </div>
               )}
@@ -341,7 +366,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
         )}
 
         <footer className="history-modal-footer">
-          <span>清空后无法恢复，请先复制仍需使用的信息。</span>
+          <span>清空会删除服务器中的加密详情，操作后无法恢复。</span>
           {items.length > 0 && (
             <button type="button" onClick={onClearHistory} className="history-clear-button">
               <Trash2 className="h-3.5 w-3.5" />清空记录

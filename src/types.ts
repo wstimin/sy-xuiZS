@@ -134,6 +134,7 @@ export interface HistoryItem {
   type: 'panel' | 'node';
   title: string;
   summary: string;
+  hasDetails?: boolean;
   panelData?: PanelResult;
   nodeData?: NodeResult;
 }
