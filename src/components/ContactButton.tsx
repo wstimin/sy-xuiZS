@@ -58,10 +58,10 @@ export const ContactButton: React.FC = () => {
     </button>
     {open && <div className="contact-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeDialog(); }}>
       <section className={`contact-dialog ${selectedMethod ? 'contact-method-detail-dialog' : ''}`} role="dialog" aria-modal="true" aria-labelledby="contact-dialog-title">
-        <header>
+        <header className="contact-dialog-header">
           <span className="contact-dialog-icon">{selectedMethod ? <QrCode /> : <Headphones />}</span>
           <div><small>{selectedMethod ? contactTypeLabels[selectedMethod.type] : '在线联系'}</small><h2 id="contact-dialog-title">{selectedMethod?.name || contact.title || '联系站长'}</h2></div>
-          <button type="button" onClick={closeDialog} title="关闭"><X /></button>
+          <button type="button" className="contact-dialog-close" onClick={closeDialog} title="关闭" aria-label="关闭咨询弹窗"><X /></button>
         </header>
         {selectedMethod ? <div className="contact-dialog-body contact-method-detail">
           <button type="button" className="contact-method-back" onClick={() => setSelectedMethod(null)} title="返回联系方式列表"><ArrowLeft /> 返回</button>

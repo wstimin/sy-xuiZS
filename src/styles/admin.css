@@ -310,7 +310,7 @@ html[data-theme="dark"] .admin-database-file-copy small { color: #c7d8ef; }
 .admin-database-note { display: flex; align-items: flex-start; gap: 11px; margin: 18px 0 0; padding: 12px 14px; color: #991b1b; border: 1px solid rgba(248,113,113,.3); border-radius: 12px; background: rgba(254,226,226,.72); font-size: 11px; line-height: 1.65; }
 .admin-database-note svg { width: 18px; height: 18px; flex: none; margin-top: 1px; color: #dc2626; }
 .admin-checkbox { display: flex; align-items: flex-start; gap: 9px; color: var(--body); font-size: 12px; line-height: 1.5; }
-.admin-checkbox input { margin-top: 2px; accent-color: var(--admin-indigo); }
+.admin-checkbox input { width: 18px; height: 18px; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--admin-indigo); }
 .admin-form-context { padding: 12px; color: var(--muted); border: 1px solid rgba(96,165,250,.16); border-radius: 11px; background: #eff6ff; font-size: 11px; line-height: 1.6; }
 .admin-dialog-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 22px; background: rgba(79,70,130,.22); backdrop-filter: blur(12px); }
 .admin-dialog { width: min(630px,100%); max-height: min(88vh,820px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(124,110,239,.22); border-radius: 24px; background: rgba(255,255,255,.96); box-shadow: 0 32px 90px rgba(79,70,130,.25); animation: modal-in .28s cubic-bezier(.2,.8,.2,1) both; }
@@ -361,9 +361,22 @@ html[data-theme="dark"] .admin-update-content > p { color: #c7d8ef; border-left-
 .admin-security-card svg { width: 20px; color: var(--admin-indigo); }
 .admin-security-card strong { display: block; margin-top: 11px; color: var(--ink); font-size: 13px; }
 .admin-security-card p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
-.admin-payment-channel-options { display: flex; gap: 10px; flex-wrap: wrap; }
+.admin-payment-channel-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 2px; }
+.admin-payment-channel-options .admin-checkbox { min-width: 0; display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px; border: 1px solid rgba(148,163,184,.22); border-radius: 12px; background: rgba(255,255,255,.58); cursor: pointer; transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
+.admin-payment-channel-options .admin-checkbox:hover { border-color: rgba(139,92,246,.38); background: rgba(237,233,254,.56); transform: translateY(-1px); }
+.admin-payment-channel-options .admin-checkbox:has(input:checked) { border-color: rgba(139,92,246,.58); background: rgba(237,233,254,.76); box-shadow: 0 6px 16px rgba(99,102,241,.1); }
+.admin-payment-channel-options .admin-checkbox span { min-width: 0; }
+.admin-payment-channel-options .admin-checkbox strong { display: block; color: var(--ink); font-size: 11px; line-height: 1.35; }
+.admin-payment-channel-options .admin-checkbox small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .admin-contact-methods,.admin-resource-list { display: grid; gap: 12px; }
 .admin-contact-method,.admin-resource-card { padding: 15px; border: 1px solid var(--admin-line); border-radius: 14px; background: rgba(255,255,255,.7); }
+
+.admin-dialog-subsection-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--admin-line); }
+.admin-dialog-subsection-head > div:first-child { min-width: 220px; flex: 1 1 280px; }
+.admin-dialog-subsection-head strong { display: block; color: var(--ink); font-size: 13px; }
+.admin-dialog-subsection-head small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.admin-resource-logo-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; }
+.admin-resource-logo-actions .admin-button { white-space: nowrap; }
 
 @media (hover:hover) and (pointer:fine) {
   .admin-stat:hover,.admin-dashboard-panel:hover,.admin-section:hover,.admin-security-card:hover { transform: translateY(-7px) scale(1.01); border-color: rgba(117,87,238,.27); box-shadow: 0 22px 46px rgba(87,75,176,.14); }
@@ -1076,6 +1089,7 @@ html[data-theme="dark"] .ops-attention-icon.cyan { color: #a5f3fc; background: r
 /* Settings uses a two-pane workspace on desktop: the category rail stays in
    place while the selected settings panel gets its own scroll context. */
 .admin-settings-shell {
+  grid-template-rows: minmax(0, 1fr);
   height: clamp(360px, calc(100dvh - 190px), 760px);
   min-height: 0;
   border: 1px solid var(--admin-line);
@@ -1083,16 +1097,22 @@ html[data-theme="dark"] .ops-attention-icon.cyan { color: #a5f3fc; background: r
 }
 .admin-settings-nav {
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 .admin-settings-content {
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  padding-bottom: 34px;
 }
 html[data-theme="dark"] .admin-settings-shell {
   border-color: rgba(147,197,253,.22);
@@ -1105,6 +1125,8 @@ html[data-theme="dark"] .admin-settings-shell {
   }
   .admin-settings-nav,
   .admin-settings-content {
+    height: auto;
+    max-height: none;
     overflow: visible;
   }
 }
@@ -1196,4 +1218,28 @@ html[data-theme="dark"] .admin-profile-records p { color: #c7d8ef; }
 @media (max-width: 700px) {
   .admin-app-shell { height: auto; min-height: 100dvh; overflow: visible; }
   .pro-admin { position: relative; inset: auto; width: auto; height: auto; min-height: 100dvh; overflow: visible; }
+}
+
+html[data-theme="dark"] .ops-page-number { color: #dbeafe; border-color: rgba(147,197,253,.3); background: rgba(30,64,105,.78); }
+html[data-theme="dark"] .ops-page-number:hover { color: #fff; border-color: rgba(129,140,248,.72); background: rgba(79,70,229,.7); }
+html[data-theme="dark"] .ops-page-number.active { color: #fff; border-color: transparent; background: linear-gradient(135deg,#8b5cf6,#2563eb 55%,#14b8a6); box-shadow: 0 7px 16px rgba(37,99,235,.25); }
+html[data-theme="dark"] .ops-page-gap { color: #9fb5d2; }
+html[data-theme="dark"] .admin-payment-channel-options .admin-checkbox { border-color: rgba(147,197,253,.24); background: rgba(15,23,42,.34); }
+html[data-theme="dark"] .admin-payment-channel-options .admin-checkbox:hover { border-color: rgba(167,139,250,.62); background: rgba(76,29,149,.28); }
+html[data-theme="dark"] .admin-payment-channel-options .admin-checkbox:has(input:checked) { border-color: rgba(167,139,250,.78); background: rgba(76,29,149,.42); box-shadow: 0 7px 18px rgba(76,29,149,.2); }
+html[data-theme="dark"] .admin-payment-channel-options .admin-checkbox strong { color: #eef6ff; }
+html[data-theme="dark"] .admin-payment-channel-options .admin-checkbox small { color: #a9bdd8; }
+html[data-theme="dark"] .admin-dialog-subsection-head { border-color: rgba(147,197,253,.2); }
+html[data-theme="dark"] .admin-dialog-subsection-head strong { color: #eef6ff; }
+html[data-theme="dark"] .admin-dialog-subsection-head small { color: #a9bdd8; }
+
+@media (max-width: 760px) {
+  .admin-payment-channel-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-dialog-subsection-head { flex-direction: column; }
+  .admin-resource-logo-actions { width: 100%; justify-content: flex-start; }
+}
+
+@media (max-width: 480px) {
+  .admin-payment-channel-options { grid-template-columns: 1fr; }
+  .admin-resource-logo-actions .admin-button { flex: 1 1 auto; }
 }

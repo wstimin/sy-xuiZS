@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   BadgeCheck,
@@ -33,6 +33,7 @@ interface AccountViewProps {
 }
 
 type AccountTab = 'overview' | 'orders' | 'deployments' | 'security';
+const entitlementPageSize = 4;
 
 const orderLabels: Record<string, string> = { pending: '待付款确认', paid: '已付款', expired: '已过期', cancelled: '已取消', refunded: '已退款' };
 const deploymentLabels: Record<string, string> = { reserved: '已预占', running: '执行中', succeeded: '成功', failed: '失败已返还', uncertain: '结果待确认' };
@@ -52,6 +53,20 @@ function orderPaymentName(order: Order, methodName?: string) {
   return methodName || order.paymentProvider || '-';
 }
 
+function entitlementIsActive(item: AccountData['entitlements'][number], now = Date.now()) {
+  return item.status === 'active' && (!item.expiresAt || new Date(item.expiresAt).getTime() > now);
+}
+
+function entitlementDisplayStatus(item: AccountData['entitlements'][number]) {
+  if (item.status === 'revoked') return 'revoked';
+  if (item.status === 'expired' || (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now())) return 'expired';
+  return 'active';
+}
+
+function entitlementStatusLabel(status: ReturnType<typeof entitlementDisplayStatus>) {
+  return status === 'active' ? '有效' : status === 'expired' ? '已过期' : '已停用';
+}
+
 export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRefresh, onPurchaseSuccess, onLoggedOut, onLogout, showToast }) => {
   const [tab, setTab] = useState<AccountTab>('overview');
   const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
@@ -62,15 +77,25 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
   const [walletAmount, setWalletAmount] = useState('');
   const [walletPaymentProvider, setWalletPaymentProvider] = useState('');
   const [walletPaymentBusy, setWalletPaymentBusy] = useState(false);
+  const [entitlementPage, setEntitlementPage] = useState(0);
   const entitlements = account?.entitlements || [];
   const orders = account?.orders || [];
   const deployments = account?.deployments || [];
-  const activeEntitlements = useMemo(() => entitlements.filter(item => item.status === 'active' && (!item.expiresAt || new Date(item.expiresAt).getTime() > Date.now())), [entitlements]);
-  const panelQuota = activeEntitlements.some(item => item.panelMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.panelMode === 'limited' ? item.panelRemaining : 0), 0)} 次`;
-  const nodeQuota = activeEntitlements.some(item => item.nodeMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.nodeMode === 'limited' ? item.nodeRemaining : 0), 0)} 次`;
+  const activeEntitlements = useMemo(() => entitlements.filter(item => entitlementIsActive(item)), [entitlements]);
+  const entitlementPageCount = Math.max(1, Math.ceil(entitlements.length / entitlementPageSize));
+  const visibleEntitlements = useMemo(
+    () => entitlements.slice(entitlementPage * entitlementPageSize, (entitlementPage + 1) * entitlementPageSize),
+    [entitlements, entitlementPage],
+  );
+  const panelQuota = activeEntitlements.some(item => item.panelMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.panelMode === 'limited' ? Math.max(0, item.panelRemaining) : 0), 0)} 次`;
+  const nodeQuota = activeEntitlements.some(item => item.nodeMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.nodeMode === 'limited' ? Math.max(0, item.nodeRemaining) : 0), 0)} 次`;
   const paymentMethod = (provider: string, optionId?: string) => account?.paymentMethods.find(method => method.id === (optionId || provider));
   const walletPaymentMethods = (account?.paymentMethods || []).filter(method => method.enabled);
   const cardRechargeEnabled = Boolean(account?.redeemCodeEnabled || account?.redeemCodePurchaseUrl?.trim());
+
+  useEffect(() => {
+    setEntitlementPage(page => Math.min(page, entitlementPageCount - 1));
+  }, [entitlementPageCount]);
 
   const openWalletRecharge = () => {
     setWalletAmount('');
@@ -171,9 +196,9 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       </section>
 
       <div className="account-summary-grid">
-        <article className="cyan"><span><BadgeCheck /></span><div><small>有效权益</small><strong>{activeEntitlements.length}</strong><p>当前可用于提交任务</p></div></article>
-        <article className="violet"><span><Terminal /></span><div><small>面板可用</small><strong>{panelQuota}</strong><p>所有有效权益合计</p></div></article>
-        <article className="emerald"><span><Network /></span><div><small>节点可用</small><strong>{nodeQuota}</strong><p>与面板次数独立计算</p></div></article>
+        <article className="cyan"><span><BadgeCheck /></span><div><small>有效权益</small><strong>{activeEntitlements.length}</strong><p>未过期且未撤销的权益</p></div></article>
+        <article className="violet"><span><Terminal /></span><div><small>面板可用</small><strong>{panelQuota}</strong><p>有效权益剩余次数合计</p></div></article>
+        <article className="emerald"><span><Network /></span><div><small>节点可用</small><strong>{nodeQuota}</strong><p>有效权益剩余次数合计</p></div></article>
         <article className="amber account-balance-summary"><span><ReceiptText /></span><div><small>账户余额</small><strong>{formatMoney(account?.user.balanceCents || 0)}</strong><p>可直接购买永久次数套餐</p></div>{(walletPaymentMethods.length > 0 || cardRechargeEnabled) && <button type="button" className="account-balance-recharge" onClick={openWalletRecharge}><CreditCard /> 充值</button>}</article>
       </div>
 
@@ -194,15 +219,22 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       {tab === 'overview' && <section className="account-section">
         <header><div><span>权益与额度</span><h2>当前可用套餐</h2><p>面板搭建和节点配置分别计次，额度数据来自当前账户的真实权益记录。</p></div></header>
         <div className="account-entitlement-grid">
-          {account?.entitlements.map(item => <article key={item.id} className="account-entitlement-card">
-            <div className="account-entitlement-head"><div><h3>{item.planName}</h3><p>永久有效 · 按剩余次数使用</p></div><span className={`account-status ${item.status}`}>{item.status === 'active' ? '有效' : item.status === 'expired' ? '已过期' : '已停用'}</span></div>
+          {visibleEntitlements.map(item => { const displayStatus = entitlementDisplayStatus(item); return <article key={item.id} className="account-entitlement-card">
+            <div className="account-entitlement-head"><div><h3>{item.planName}</h3><p>{item.lifetime || !item.expiresAt ? '永久有效' : `有效期至 ${formatDate(item.expiresAt)}`} · 按剩余次数使用</p></div><span className={`account-status ${displayStatus}`}>{entitlementStatusLabel(displayStatus)}</span></div>
             <div className="account-quota-grid">
               <div><span className="violet"><Terminal /></span><small>面板可用</small><strong>{quotaText(item.panelMode, item.panelRemaining, item.panelTotal)}</strong><p>已用 {item.panelUsed}，冻结 {item.panelReserved}</p></div>
               <div><span className="emerald"><Network /></span><small>节点可用</small><strong>{quotaText(item.nodeMode, item.nodeRemaining, item.nodeTotal)}</strong><p>已用 {item.nodeUsed}，冻结 {item.nodeReserved}</p></div>
             </div>
-          </article>)}
+          </article>; })}
           {!entitlements.length && <AccountEmpty icon={BadgeCheck} title="暂无可用权益" description="购买套餐后，面板和节点额度会显示在这里。" />}
         </div>
+        {entitlements.length > entitlementPageSize && <nav className="account-pagination" aria-label="已购套餐分页">
+          <span>共 {entitlements.length} 个套餐 · 第 {entitlementPage + 1} / {entitlementPageCount} 页</span>
+          <div>
+            <button type="button" disabled={entitlementPage === 0} onClick={() => setEntitlementPage(page => Math.max(0, page - 1))}>上一页</button>
+            <button type="button" disabled={entitlementPage >= entitlementPageCount - 1} onClick={() => setEntitlementPage(page => Math.min(entitlementPageCount - 1, page + 1))}>下一页</button>
+          </div>
+        </nav>}
       </section>}
 
       {tab === 'orders' && <section className="account-section">
