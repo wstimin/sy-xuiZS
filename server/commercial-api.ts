@@ -1108,6 +1108,7 @@ export function createCommercialRouter(store: CommercialStore, options: { update
     res.json({ status: await updateService.check(true) });
   }));
   router.post("/admin/system/update", requireAdmin, route(async (req, res) => {
+    if (String(req.body?.confirmation || "") !== "UPDATE") throw new Error("请输入 UPDATE 确认升级");
     if (!updateService) throw new Error("当前环境不支持自动更新");
     res.json({ status: await updateService.startUpdate() });
   }));

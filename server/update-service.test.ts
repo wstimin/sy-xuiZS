@@ -137,7 +137,7 @@ test("stale legacy update states are unlocked instead of disabling updates forev
     const status = service.status();
     assert.equal(status.state, "failed");
     assert.equal(status.stage, "interrupted");
-    assert.match(status.message || "", /结束旧更新状态|自动结束该状态/);
+    assert.match(status.message || "", /解除更新锁/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
