@@ -362,6 +362,40 @@ html[data-theme="dark"] .admin-database-file-copy small { color: #c7d8ef; }
 .admin-update-progress-meta { display: flex; justify-content: space-between; gap: 12px; color: #64748b; font-size: 10px; line-height: 1.4; }
 @keyframes admin-progress-scan { to { transform: translateX(100%); } }
 .admin-update-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 1px; }
+.admin-update-confirm-dialog { width: min(680px,100%); }
+.admin-update-confirm-dialog > header { background: linear-gradient(135deg,rgba(255,247,237,.96),rgba(255,241,242,.9)); }
+.admin-update-confirm-dialog .admin-dialog-symbol { color: #9a3412; border: 1px solid rgba(249,115,22,.2); background: linear-gradient(135deg,#fed7aa,#fda4af); }
+.admin-update-confirmation { display: grid; gap: 15px; }
+.admin-update-confirmation-intro { display: flex; align-items: flex-start; gap: 13px; padding: 16px; border: 1px solid rgba(245,158,11,.25); border-radius: 16px; background: linear-gradient(135deg,rgba(255,251,235,.96),rgba(255,247,237,.88)); }
+.admin-update-confirmation-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; color: #c2410c; border-radius: 11px; background: #ffedd5; box-shadow: 0 5px 13px rgba(234,88,12,.12); }
+.admin-update-confirmation-icon svg { width: 19px; height: 19px; }
+.admin-update-confirmation-intro > div { min-width: 0; display: grid; gap: 5px; }
+.admin-update-confirmation-eyebrow { color: #c2410c; font-size: 10px; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
+.admin-update-confirmation-intro strong { color: #7c2d12; font-size: 14px; line-height: 1.35; }
+.admin-update-confirmation-intro p { margin: 0; color: #7c5b49; font-size: 11px; line-height: 1.65; }
+.admin-update-confirmation-checklist { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+.admin-update-confirmation-checklist > div { min-width: 0; display: flex; align-items: flex-start; gap: 7px; padding: 11px 10px; color: #475569; border: 1px solid rgba(148,163,184,.2); border-radius: 11px; background: rgba(248,250,252,.78); font-size: 10px; font-weight: 700; line-height: 1.45; }
+.admin-update-confirmation-checklist svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; color: #059669; }
+.admin-update-confirmation-checklist > div:last-child svg { color: #ea580c; }
+.admin-update-confirmation-input { gap: 8px; padding: 14px; border: 1px solid rgba(99,102,241,.2); border-radius: 14px; background: rgba(238,242,255,.64); }
+.admin-update-confirmation-input > span { color: #312e81; font-size: 12px; font-weight: 800; }
+.admin-update-confirmation-input code { padding: 2px 5px; color: #4338ca; border: 1px solid rgba(99,102,241,.18); border-radius: 5px; background: rgba(224,231,255,.78); font: inherit; font-weight: 900; letter-spacing: .06em; }
+.admin-update-confirmation-input input { min-height: 46px; color: #1e1b4b; border-color: rgba(99,102,241,.34); background: rgba(255,255,255,.9); font-size: 13px; font-weight: 800; letter-spacing: .08em; }
+.admin-update-confirmation-input input::placeholder { color: #94a3b8; letter-spacing: .02em; }
+.admin-update-confirmation-input small { color: #64748b; font-size: 10px; line-height: 1.5; }
+html[data-theme="dark"] .admin-update-confirm-dialog > header { background: linear-gradient(135deg,rgba(92,52,38,.86),rgba(70,37,71,.76)); }
+html[data-theme="dark"] .admin-update-confirm-dialog .admin-dialog-symbol { color: #ffedd5; border-color: rgba(251,146,60,.34); background: linear-gradient(135deg,#9a3412,#be185d); }
+html[data-theme="dark"] .admin-update-confirmation-intro { border-color: rgba(251,191,36,.3); background: linear-gradient(135deg,rgba(120,53,15,.34),rgba(127,29,29,.28)); }
+html[data-theme="dark"] .admin-update-confirmation-icon { color: #fed7aa; background: rgba(194,65,12,.28); box-shadow: none; }
+html[data-theme="dark"] .admin-update-confirmation-eyebrow { color: #fdba74; }
+html[data-theme="dark"] .admin-update-confirmation-intro strong { color: #fff7ed; }
+html[data-theme="dark"] .admin-update-confirmation-intro p { color: #f6d7c3; }
+html[data-theme="dark"] .admin-update-confirmation-checklist > div { color: #dbeafe; border-color: rgba(147,197,253,.2); background: rgba(30,58,95,.58); }
+html[data-theme="dark"] .admin-update-confirmation-input { border-color: rgba(129,140,248,.35); background: rgba(30,41,89,.6); }
+html[data-theme="dark"] .admin-update-confirmation-input > span { color: #e0e7ff; }
+html[data-theme="dark"] .admin-update-confirmation-input code { color: #c4b5fd; border-color: rgba(167,139,250,.35); background: rgba(79,70,229,.23); }
+html[data-theme="dark"] .admin-update-confirmation-input input { color: #f8fafc; border-color: rgba(129,140,248,.5); background: rgba(15,23,42,.56); }
+html[data-theme="dark"] .admin-update-confirmation-input small { color: #a9bdd8; }
 .admin-dialog .admin-button:hover:not(:disabled) { transform: none; filter: none; box-shadow: 0 0 0 4px rgba(96,165,250,.15), 0 8px 20px rgba(99,102,241,.14); }
 html[data-theme="dark"] .admin-version-summary { border-color: rgba(147,197,253,.25); background: linear-gradient(135deg, rgba(30,58,95,.82), rgba(49,46,129,.7)); }
 html[data-theme="dark"] .admin-version-summary small { color: #b8c9e1; }
@@ -476,6 +510,7 @@ html[data-theme="dark"] .admin-update-live p { color: #dbeafe; }
   .admin-dialog-backdrop { padding: 10px; }
   .admin-dialog > header,.admin-dialog > footer,.admin-dialog-body { padding: 15px; }
   .admin-version-summary { align-items: flex-start; flex-direction: column; gap: 11px; }
+  .admin-update-confirmation-checklist { grid-template-columns: 1fr; }
   .admin-pagination { display: block; }
   .admin-page-buttons { margin-top: 9px; }
   .admin-settings-content { padding: 15px; }

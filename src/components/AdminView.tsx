@@ -1564,10 +1564,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <label className="admin-field"><span>输入 RESTORE 确认</span><input value={restoreConfirmation} onChange={event => setRestoreConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="RESTORE" /></label>
         </div>
       </AdminDialog>
-      <AdminDialog open={updateDialogOpen} title="确认安装系统更新" description={`这是独立于“检查版本”的手动更新操作，将从官方发布源更新到 v${versionStatus?.latestVersion || '—'}。更新器会校验 SHA256、保留业务数据和环境配置、备份当前程序，失败时自动回滚。`} confirmLabel="确认开始更新" tone="danger" busy={busy} confirmDisabled={updateConfirmation !== 'UPDATE'} onClose={() => { setUpdateDialogOpen(false); setUpdateConfirmation(''); }} onConfirm={() => void startSystemUpdate()}>
-        <div className="admin-restore-confirmation">
-          <div><AlertTriangle /><p><strong>更新期间服务会短暂重启。</strong><span>不要关闭服务器、终止 PM2 或删除应用目录。页面会在新版本通过健康检查后自动刷新。</span></p></div>
-          <label className="admin-field"><span>输入 UPDATE 确认</span><input value={updateConfirmation} onChange={event => setUpdateConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="UPDATE" /></label>
+      <AdminDialog open={updateDialogOpen} className="admin-update-confirm-dialog" title="确认安装系统更新" description={`手动更新到 v${versionStatus?.latestVersion || '—'}，需要你最后确认后才会开始。`} confirmLabel="开始安装更新" cancelLabel="稍后处理" tone="danger" busy={busy} confirmDisabled={updateConfirmation !== 'UPDATE'} onClose={() => { setUpdateDialogOpen(false); setUpdateConfirmation(''); }} onConfirm={() => void startSystemUpdate()}>
+        <div className="admin-update-confirmation">
+          <div className="admin-update-confirmation-intro">
+            <span className="admin-update-confirmation-icon"><AlertTriangle /></span>
+            <div><span className="admin-update-confirmation-eyebrow">需要人工确认</span><strong>更新期间服务会短暂重启</strong><p>更新器会先备份当前程序，再下载并校验官方版本；完成健康检查后页面会自动刷新。</p></div>
+          </div>
+          <div className="admin-update-confirmation-checklist" aria-label="更新说明">
+            <div><CheckCircle2 /><span>保留业务数据与环境配置</span></div>
+            <div><CheckCircle2 /><span>校验 SHA256，失败自动回滚</span></div>
+            <div><AlertTriangle /><span>请勿关闭服务器、终止 PM2 或删除应用目录</span></div>
+          </div>
+          <label className="admin-field admin-update-confirmation-input"><span>最后一步：输入 <code>UPDATE</code> 才能开始</span><input value={updateConfirmation} onChange={event => setUpdateConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="输入 UPDATE" /><small>这是手动更新，不会因“检查版本”自动执行。</small></label>
         </div>
       </AdminDialog>
       <AdminDialog open={Boolean(viewDeployment)} title="交付任务详情" description="任务从额度预约到执行完成的真实状态和结果记录。" cancelLabel="关闭" onClose={() => setViewDeployment(null)}>
