@@ -91,15 +91,19 @@ export class UpdateService {
 
     const platform = options.platform || process.platform;
     const isRoot = options.isRoot ?? (typeof process.getuid === "function" && process.getuid() === 0);
-    const managedFiles = fs.existsSync(this.installScript) && fs.existsSync(this.runnerPath);
+    const hasInstallScript = fs.existsSync(this.installScript);
+    const hasRunner = fs.existsSync(this.runnerPath);
+    const hasOnePanelLauncher = fs.existsSync(path.join(this.rootDirectory, "start.cjs"));
     if (platform !== "linux") {
       this.deploymentMode = "development";
       this.canAutoUpdate = false;
       this.unsupportedReason = "当前不是 Linux 正式部署环境，可检查版本但不能网页更新";
-    } else if (!managedFiles) {
+    } else if (hasOnePanelLauncher || !hasInstallScript) {
       this.deploymentMode = "1panel";
-      this.canAutoUpdate = false;
-      this.unsupportedReason = "当前为网站目录部署，请下载新版 1Panel 包覆盖程序文件";
+      this.canAutoUpdate = hasRunner;
+      this.unsupportedReason = hasRunner
+        ? "可自动备份并更新 1Panel 网站目录，数据与环境配置会保持不变"
+        : "当前 1Panel 安装包缺少独立更新器，请先手动升级到支持自动更新的版本";
     } else if (!isRoot) {
       this.deploymentMode = "managed-linux";
       this.canAutoUpdate = false;
@@ -156,7 +160,10 @@ export class UpdateService {
       message: "更新任务已提交，正在启动独立更新器",
     };
     fs.writeFileSync(this.statusPath, JSON.stringify(scheduled), { encoding: "utf8", mode: 0o600 });
-    const child = this.spawnImpl(process.execPath, [this.runnerPath, this.installScript, this.statusPath, checked.latestVersion], {
+    const runnerArgs = this.deploymentMode === "1panel"
+      ? [this.runnerPath, "1panel", this.rootDirectory, this.statusPath, checked.latestVersion, String(process.pid)]
+      : [this.runnerPath, "managed-linux", this.installScript, this.statusPath, checked.latestVersion];
+    const child = this.spawnImpl(process.execPath, runnerArgs, {
       cwd: this.rootDirectory,
       detached: true,
       stdio: "ignore",

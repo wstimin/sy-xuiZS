@@ -1519,7 +1519,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <label className="admin-field"><span>输入 RESTORE 确认</span><input value={restoreConfirmation} onChange={event => setRestoreConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="RESTORE" /></label>
         </div>
       </AdminDialog>
-      <AdminDialog open={updateDialogOpen} title="安装系统更新" description={`将从官方发布源更新到 v${versionStatus?.latestVersion || '—'}。安装器会先备份数据并校验 SHA256，失败时自动回滚。`} confirmLabel="开始自动更新" tone="danger" busy={busy} confirmDisabled={updateConfirmation !== 'UPDATE'} onClose={() => { setUpdateDialogOpen(false); setUpdateConfirmation(''); }} onConfirm={() => void startSystemUpdate()}>
+      <AdminDialog open={updateDialogOpen} title="安装系统更新" description={`将从官方发布源更新到 v${versionStatus?.latestVersion || '—'}。更新器会校验 SHA256、保留业务数据和环境配置、备份当前程序，失败时自动回滚。`} confirmLabel="开始自动更新" tone="danger" busy={busy} confirmDisabled={updateConfirmation !== 'UPDATE'} onClose={() => { setUpdateDialogOpen(false); setUpdateConfirmation(''); }} onConfirm={() => void startSystemUpdate()}>
         <div className="admin-restore-confirmation">
           <div><AlertTriangle /><p><strong>更新期间服务会短暂重启。</strong><span>不要关闭服务器、终止 PM2 或删除应用目录。页面会在新版本通过健康检查后自动刷新。</span></p></div>
           <label className="admin-field"><span>输入 UPDATE 确认</span><input value={updateConfirmation} onChange={event => setUpdateConfirmation(event.target.value.toUpperCase())} autoComplete="off" placeholder="UPDATE" /></label>

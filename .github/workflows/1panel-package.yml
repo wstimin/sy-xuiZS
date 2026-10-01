@@ -59,6 +59,7 @@ jobs:
           test -s "$package_dir/package-lock.json"
           test -s "$package_dir/start.cjs"
           test -s "$package_dir/dist/server.cjs"
+          test -s "$package_dir/dist/update-runner.cjs"
           test -s "$package_dir/dist/index.html"
           test -s "$package_dir/.env.example"
           test -s "$package_dir/.npmrc"

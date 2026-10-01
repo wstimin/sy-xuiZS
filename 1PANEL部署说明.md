@@ -15,7 +15,7 @@
 - 永久发布页：[1panel-latest](https://github.com/wstimin/sy-xuiZS/releases/tag/1panel-latest)
 - SHA256 校验：[SHA256SUMS](https://github.com/wstimin/sy-xuiZS/releases/download/1panel-latest/SHA256SUMS)
 
-每个正式版本的发布页还会永久保留带版本号的 ZIP，例如 `xui-deploy-assistant-1panel-3.0.10.zip`。固定文件名始终指向最近一次构建成功的版本，旧版本发布包不会被覆盖或删除。以后每次发布都必须递增 `package.json` 版本号，并同步 `package-lock.json`、Git 标签和压缩包版本；禁止复用已有版本标签。
+每个正式版本的发布页还会永久保留带版本号的 ZIP，例如 `xui-deploy-assistant-1panel-3.0.11.zip`。固定文件名始终指向最近一次构建成功的版本，旧版本发布包不会被覆盖或删除。以后每次发布都必须递增 `package.json` 版本号，并同步 `package-lock.json`、Git 标签和压缩包版本；禁止复用已有版本标签。
 
 ## 一、运行环境
 
@@ -255,11 +255,11 @@ data/app.db.key
 
 ## 十一、更新方法
 
-已部署的网站不会静默自动更新。每次 `main` 分支远端构建成功后，永久下载地址会更新为最新构建。
+已部署的网站不会在无人确认时静默更新。每次 `main` 分支远端构建成功后，永久下载地址会更新为最新构建。
 
-管理后台会显示当前版本并可检查官方最新版。1Panel 网站目录部署由运行环境管理程序文件与进程，目前检测到新版本后会提供官方发布包入口，仍按下面步骤覆盖更新；`/opt/3xui-deploy-assistant` 的受管 Linux 安装则支持在管理后台直接启动自动更新。
+从 `v3.0.11` 起，1Panel 网站目录部署与 `/opt/3xui-deploy-assistant` 受管 Linux 安装都可以在管理后台确认后执行自动更新。1Panel 更新器会校验官方发布包、保留 `data` 和 `.env`、备份并替换程序文件、等待运行环境重启并执行健康检查；失败时自动恢复上一版程序。`v3.0.10` 及更早的 1Panel 安装需要按下方步骤手动升级一次到 `v3.0.11`，之后即可持续使用一键更新。
 
-更新步骤：
+无法使用一键更新时的手动步骤：
 
 1. 停止 `xui-assistant` Node.js 运行环境。
 2. 完整备份网站根目录下的 `data` 目录。
