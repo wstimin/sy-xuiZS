@@ -411,6 +411,8 @@ html:not([data-theme="dark"]) .payment-redeem-actions button {
 .history-modal {
   display: flex;
   flex-direction: column;
+  height: min(760px, calc(100dvh - 40px));
+  max-height: calc(100dvh - 40px);
   min-height: 320px;
   overflow: hidden;
 }
@@ -437,6 +439,22 @@ html:not([data-theme="dark"]) .payment-redeem-actions button {
   font-size: 11px;
   line-height: 1.55;
 }
+.history-local-notice {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(16,185,129,.24);
+  border-radius: 14px;
+  color: #047857;
+  background: rgba(209,250,229,.68);
+}
+.history-local-notice > svg { flex: 0 0 auto; margin-top: 1px; }
+.history-local-notice > div { min-width: 0; display: grid; gap: 3px; }
+.history-local-notice strong { color: #065f46; font-size: 11px; }
+.history-local-notice span { color: #047857; font-size: 10px; line-height: 1.55; }
 .history-empty-state {
   display: grid;
   flex: 1 1 auto;
@@ -475,7 +493,11 @@ html:not([data-theme="dark"]) .payment-redeem-actions button {
   overflow: hidden;
 }
 .history-record-list {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   padding: 16px;
   border-right: 1px solid rgba(148,163,184,.16);
   background: rgba(239,246,255,.38);
@@ -497,7 +519,18 @@ html:not([data-theme="dark"]) .payment-redeem-actions button {
   background: rgba(139,92,246,.12);
   text-align: center;
 }
-.history-record-list-scroll { display: grid; gap: 8px; overflow: auto; }
+.history-record-list-scroll {
+  align-content: start;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
 .history-record-card {
   display: grid;
   grid-template-columns: 30px minmax(0,1fr);
@@ -528,7 +561,15 @@ html:not([data-theme="dark"]) .payment-redeem-actions button {
 .history-record-copy { min-width: 0; display: grid; gap: 3px; }
 .history-record-copy strong { overflow: hidden; color: var(--ink); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .history-record-copy small, .history-record-copy > span { overflow: hidden; color: var(--muted); font-size: 10px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
-.history-record-detail { min-width: 0; overflow: auto; padding: 20px; }
+.history-record-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px;
+  scrollbar-gutter: stable;
+}
 .history-modal-footer {
   display: flex;
   flex: 0 0 auto;
@@ -547,13 +588,17 @@ html[data-theme="dark"] .history-record-card { border-color: rgba(147,197,253,.2
 html[data-theme="dark"] .history-record-card.is-active { border-color: rgba(196,181,253,.55); background: rgba(129,140,248,.24); }
 html[data-theme="dark"] .history-modal-title-icon,
 html[data-theme="dark"] .history-empty-state svg { color: #c4b5fd; background: rgba(139,92,246,.24); }
+html[data-theme="dark"] .history-local-notice { border-color: rgba(52,211,153,.34); background: rgba(6,78,59,.48); }
+html[data-theme="dark"] .history-local-notice strong { color: #d1fae5; }
+html[data-theme="dark"] .history-local-notice span,
+html[data-theme="dark"] .history-local-notice > svg { color: #a7f3d0; }
 
 @media (max-width: 650px) {
-  .history-modal { min-height: 280px; }
-  .history-modal-body { grid-template-columns: 1fr; overflow: auto; }
-  .history-record-list { border-right: 0; border-bottom: 1px solid rgba(148,163,184,.16); }
+  .history-modal { height: calc(100dvh - 20px); min-height: 280px; }
+  .history-modal-body { grid-template-columns: 1fr; grid-template-rows: minmax(145px, 34%) minmax(0, 1fr); overflow: hidden; }
+  .history-record-list { min-height: 0; border-right: 0; border-bottom: 1px solid rgba(148,163,184,.16); }
   .history-record-list-scroll { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .history-record-detail { min-height: 280px; }
+  .history-record-detail { min-height: 0; }
   .history-modal-footer { align-items: flex-start; flex-direction: column; }
 }
 

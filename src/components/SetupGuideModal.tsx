@@ -382,7 +382,7 @@ export const SetupGuideModal: React.FC<SetupGuideModalProps> = ({ isOpen, onClos
                     Q: 生成的历史记录会泄露给其他人吗？
                   </div>
                   <div className="text-zinc-300 leading-relaxed pl-6">
-                    历史配置会把面板登录信息、节点分享链接、订阅地址和相关配置保存在当前浏览器的 localStorage 中，方便遗忘后找回；这些信息不会上传到服务器，可随时在历史配置中清空。
+                    敏感详情按当前登录用户仅保存在此浏览器；服务器只保留脱敏任务摘要，不保存面板密码、API Token 或节点链接。换浏览器、使用无痕模式或清理网站数据后无法恢复，请仅在受信任设备使用。
                   </div>
                 </div>
               </div>

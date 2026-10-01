@@ -38,6 +38,15 @@ jobs:
       - name: Check installer syntax
         run: bash -n install.sh
 
+      - name: Verify installer menu command
+        shell: bash
+        run: |
+          menu_output="$(printf '0\n' | sudo env TERM=xterm bash install.sh menu)"
+          grep -Fq "一键管理工具" <<< "$menu_output"
+          grep -Fq "安装 / 更新" <<< "$menu_output"
+          grep -Fq "感谢使用" <<< "$menu_output"
+          grep -Fq 'SHORTCUT_PATH="/usr/local/bin/sy"' install.sh
+
       - name: Build production application
         run: npm run build
 

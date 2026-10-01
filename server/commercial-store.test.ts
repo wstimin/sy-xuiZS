@@ -1023,7 +1023,7 @@ test("verified online callbacks recover expired orders while unverified completi
   }
 });
 
-test("deployment history encrypts secrets, returns sanitized lists and enforces ownership", () => {
+test("deployment history keeps owner-scoped summaries without storing sensitive results", () => {
   const store = createStore();
   try {
     const owner = store.createUser("history-owner", "strong-password");
@@ -1039,34 +1039,19 @@ test("deployment history encrypts secrets, returns sanitized lists and enforces 
     });
     const reservation = store.reserveDeployment(owner.id, "panel", "history-request-1", "203.0.*.*");
     store.markDeploymentRunning(reservation.deploymentId);
-    store.succeedDeployment(reservation.deploymentId, "面板 203.0.*.*:54321", {
-      id: reservation.deploymentId,
-      host: "panel.example.test",
-      username: "panel-admin",
-      password: "history-panel-password",
-      apiToken: "history-api-token",
-      accessUrl: "https://panel.example.test:54321/secret/",
-    });
+    store.succeedDeployment(reservation.deploymentId, "面板 203.0.*.*:54321");
 
     const raw = store.db.prepare("SELECT result_payload_encrypted FROM deployments WHERE id = ?")
       .get(reservation.deploymentId) as any;
-    assert.match(raw.result_payload_encrypted, /^v1\./);
-    assert.doesNotMatch(raw.result_payload_encrypted, /history-panel-password|history-api-token|panel-admin/);
+    assert.equal(raw.result_payload_encrypted, "");
 
     const list = store.listDeploymentHistory(owner.id);
     assert.equal(list.length, 1);
-    assert.equal(list[0].hasDetails, true);
-    assert.equal("panelData" in list[0], false);
-    assert.doesNotMatch(JSON.stringify(list), /history-panel-password|history-api-token|panel-admin/);
-
-    const detail = store.getDeploymentHistoryDetail(owner.id, reservation.deploymentId)!;
-    assert.equal(detail.panelData?.password, "history-panel-password");
-    assert.equal(detail.panelData?.apiToken, "history-api-token");
-    assert.equal(store.getDeploymentHistoryDetail(other.id, reservation.deploymentId), null);
+    assert.equal(list[0].hasDetails, false);
+    assert.deepEqual(store.listDeploymentHistory(other.id), []);
 
     assert.equal(store.clearDeploymentHistory(owner.id), 1);
     assert.deepEqual(store.listDeploymentHistory(owner.id), []);
-    assert.equal(store.getDeploymentHistoryDetail(owner.id, reservation.deploymentId), null);
     const cleared = store.db.prepare("SELECT result_payload_encrypted, history_hidden FROM deployments WHERE id = ?")
       .get(reservation.deploymentId) as any;
     assert.equal(cleared.result_payload_encrypted, "");

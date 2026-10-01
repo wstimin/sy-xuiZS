@@ -22,9 +22,6 @@ interface HistoryDrawerProps {
   onClose: () => void;
   items: HistoryItem[];
   onClearHistory: () => void;
-  onRequestDetails: (id: string) => void;
-  detailLoadingId: string | null;
-  detailError: { id: string; message: string } | null;
   onCopyText: (text: string, title: string) => void;
   onSelectPanelToNode: (panelData: PanelResult) => void;
 }
@@ -126,7 +123,7 @@ const PanelHistoryDetail: React.FC<{
       }}
       className="history-use-panel-button"
     >
-      <span>用此面板搭建节点</span>
+      <span>复用此面板搭建节点</span>
       <ArrowRight className="h-4 w-4" />
     </button>
   </div>
@@ -233,9 +230,6 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   onClose,
   items,
   onClearHistory,
-  onRequestDetails,
-  detailLoadingId,
-  detailError,
   onCopyText,
   onSelectPanelToNode
 }) => {
@@ -261,11 +255,6 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
     };
   }, [isOpen, items, onClose]);
 
-  useEffect(() => {
-    if (!isOpen || !selectedItem?.hasDetails || selectedItem.panelData || selectedItem.nodeData) return;
-    onRequestDetails(selectedItem.id);
-  }, [isOpen, selectedItem?.id]);
-
   if (!isOpen) return null;
 
   return (
@@ -282,13 +271,21 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
             <div className="history-modal-title-icon"><ShieldCheck className="h-5 w-5" /></div>
             <div>
               <h3 id="history-modal-title">历史配置</h3>
-              <p>配置由服务器按当前账号加密保存，详情仅在查看时读取。</p>
+              <p>服务器只保留脱敏任务摘要，完整搭建信息不会上传。</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="history-modal-close" title="关闭历史配置">
             <X className="h-5 w-5" />
           </button>
         </header>
+
+        <div className="history-local-notice" role="note">
+          <ShieldCheck className="h-5 w-5" />
+          <div>
+            <strong>敏感信息仅保存在当前账号的此浏览器中</strong>
+            <span>密码、API Token 和节点链接不会保存到服务器；换浏览器、使用无痕模式或清理网站数据后将无法恢复，请仅在受信任设备使用。</span>
+          </div>
+        </div>
 
         {items.length === 0 ? (
           <div className="history-empty-state">
@@ -328,21 +325,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
             </aside>
 
             <main className="history-record-detail">
-              {selectedItem && detailLoadingId === selectedItem.id && (
-                <div className="history-legacy-state">
-                  <CalendarClock className="h-8 w-8" />
-                  <strong>正在安全读取详情</strong>
-                  <p>服务器正在验证当前账号并解密这条搭建记录。</p>
-                </div>
-              )}
-              {selectedItem && detailLoadingId !== selectedItem.id && detailError?.id === selectedItem.id && !selectedItem.panelData && !selectedItem.nodeData && (
-                <div className="history-legacy-state">
-                  <ShieldCheck className="h-8 w-8" />
-                  <strong>无法读取详情</strong>
-                  <p>{detailError.message}</p>
-                </div>
-              )}
-              {detailLoadingId !== selectedItem?.id && selectedItem?.type === 'panel' && selectedItem.panelData && (
+              {selectedItem?.type === 'panel' && selectedItem.panelData && (
                 <PanelHistoryDetail
                   data={selectedItem.panelData}
                   onCopyText={onCopyText}
@@ -350,14 +333,14 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                   onClose={onClose}
                 />
               )}
-              {detailLoadingId !== selectedItem?.id && selectedItem?.type === 'node' && selectedItem.nodeData && (
+              {selectedItem?.type === 'node' && selectedItem.nodeData && (
                 <NodeHistoryDetail data={selectedItem.nodeData} onCopyText={onCopyText} />
               )}
-              {selectedItem && detailLoadingId !== selectedItem.id && detailError?.id !== selectedItem.id && !selectedItem.panelData && !selectedItem.nodeData && (
+              {selectedItem && !selectedItem.panelData && !selectedItem.nodeData && (
                 <div className="history-legacy-state">
                   <CalendarClock className="h-8 w-8" />
-                  <strong>这条记录没有可用详情</strong>
-                  <p>服务器只保留了搭建摘要，无法复现密码、接口令牌或节点链接。</p>
+                  <strong>此浏览器没有这条记录的敏感详情</strong>
+                  <p>它可能由旧版本、另一台设备或其他浏览器创建。服务器从不保存密码、接口令牌和节点链接，因此无法从服务器恢复。</p>
                   <code>{selectedItem.summary}</code>
                 </div>
               )}
@@ -366,7 +349,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
         )}
 
         <footer className="history-modal-footer">
-          <span>清空会删除服务器中的加密详情，操作后无法恢复。</span>
+          <span>清空会删除此浏览器的本地详情及服务器脱敏摘要，操作后无法恢复。</span>
           {items.length > 0 && (
             <button type="button" onClick={onClearHistory} className="history-clear-button">
               <Trash2 className="h-3.5 w-3.5" />清空记录

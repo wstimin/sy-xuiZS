@@ -980,6 +980,9 @@ if [ -t 0 ] && [ -z "$1" ]; then
 else
   PARAM="${1:-install}"
   case "$PARAM" in
+    menu)
+      show_menu
+      ;;
     install|deploy)
       install_assistant
       ;;

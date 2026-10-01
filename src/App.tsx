@@ -16,11 +16,52 @@ import { ContactButton } from './components/ContactButton';
 import { ResourceRecommendationsView } from './components/ResourceRecommendationsView';
 import { CustomerNoticeDialog } from './components/CustomerNoticeDialog';
 
+const LOCAL_HISTORY_PREFIX = '3xui_deploy_history:v2:';
+
+const localHistoryKey = (userId: string) => `${LOCAL_HISTORY_PREFIX}${userId}`;
+
+const readLocalHistory = (userId: string): HistoryItem[] => {
+  try {
+    const raw = localStorage.getItem(localHistoryKey(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { version?: number; userId?: string; items?: unknown };
+    if (parsed.version !== 2 || parsed.userId !== userId || !Array.isArray(parsed.items)) return [];
+    return parsed.items.filter((item): item is HistoryItem => {
+      if (!item || typeof item !== 'object') return false;
+      const candidate = item as Partial<HistoryItem>;
+      return typeof candidate.id === 'string'
+        && (candidate.type === 'panel' || candidate.type === 'node')
+        && Boolean(candidate.type === 'panel' ? candidate.panelData : candidate.nodeData);
+    }).slice(0, 30);
+  } catch {
+    return [];
+  }
+};
+
+const writeLocalHistory = (userId: string, items: HistoryItem[]) => {
+  try {
+    const localItems = items.filter(item => item.type === 'panel' ? Boolean(item.panelData) : Boolean(item.nodeData)).slice(0, 30);
+    localStorage.setItem(localHistoryKey(userId), JSON.stringify({ version: 2, userId, items: localItems }));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const mergeHistory = (serverItems: HistoryItem[], localItems: HistoryItem[]): HistoryItem[] => {
+  const localById = new Map(localItems.map(item => [item.id, item]));
+  return serverItems.map(item => {
+    const local = localById.get(item.id);
+    if (!local || local.type !== item.type) return { ...item, hasDetails: false };
+    if (item.type === 'panel' && local.panelData) return { ...item, hasDetails: true, panelData: local.panelData };
+    if (item.type === 'node' && local.nodeData) return { ...item, hasDetails: true, nodeData: local.nodeData };
+    return { ...item, hasDetails: false };
+  });
+};
+
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('home');
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
-  const [historyDetailLoadingId, setHistoryDetailLoadingId] = useState<string | null>(null);
-  const [historyDetailError, setHistoryDetailError] = useState<{ id: string; message: string } | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [guideOpen, setGuideOpen] = useState<boolean>(false);
   const [setupGuideOpen, setSetupGuideOpen] = useState<boolean>(false);
@@ -48,8 +89,8 @@ export default function App() {
     webKeyFile?: string;
   } | null>(null);
 
-  // Remove legacy browser-side deployment records. They may contain passwords,
-  // API tokens and node keys, so they are deliberately not uploaded or migrated.
+  // The legacy key was shared by every account in the browser. Remove it instead
+  // of migrating secrets across users; v2 records are namespaced by user id.
   useEffect(() => {
     try {
       localStorage.removeItem('3xui_deploy_history');
@@ -81,9 +122,10 @@ export default function App() {
     }
   };
 
-  const refreshHistory = async () => {
+  const refreshHistory = async (owner = user) => {
+    if (!owner) return;
     const result = await api<{ items: HistoryItem[] }>('/api/deployment-history');
-    setHistoryItems(result.items);
+    setHistoryItems(mergeHistory(result.items, readLocalHistory(owner.id)));
   };
 
   const hasAvailableCapability = async (capability: 'panel' | 'node') => {
@@ -113,15 +155,13 @@ export default function App() {
   useEffect(() => {
     if (user) {
       void refreshAccount();
-      void refreshHistory().catch(() => setHistoryItems([]));
+      void refreshHistory(user).catch(() => setHistoryItems([]));
       void api<{ recommendations: ResourceRecommendationSettings }>('/api/resource-recommendations')
         .then(result => setRecommendations(result.recommendations))
         .catch(() => setRecommendations({ serverEnabled: true, residentialIpEnabled: true, items: [] }));
     } else {
       setAccount(null);
       setHistoryItems([]);
-      setHistoryDetailLoadingId(null);
-      setHistoryDetailError(null);
       setPrefilledPanel(null);
       setRecommendations({ serverEnabled: true, residentialIpEnabled: true, items: [] });
     }
@@ -180,7 +220,13 @@ export default function App() {
   }, [user?.id]);
 
   const saveHistoryInMemory = (newItem: HistoryItem) => {
-    setHistoryItems(prev => [newItem, ...prev.filter(item => item.id !== newItem.id)].slice(0, 30));
+    setHistoryItems(prev => {
+      const next = [newItem, ...prev.filter(item => item.id !== newItem.id)].slice(0, 30);
+      if (user && !writeLocalHistory(user.id, next)) {
+        window.setTimeout(() => showToast('本地保存失败', '浏览器可能禁用了本地存储，请及时复制并另行保管搭建信息', 'warning'));
+      }
+      return next;
+    });
   };
 
   const showToast = (
@@ -202,26 +248,11 @@ export default function App() {
   const handleClearHistory = async () => {
     try {
       await api<{ success: true; cleared: number }>('/api/deployment-history', { method: 'DELETE' });
+      if (user) localStorage.removeItem(localHistoryKey(user.id));
       setHistoryItems([]);
-      setHistoryDetailError(null);
-      showToast('历史记录已清空', '服务器已删除保存的搭建详情', 'info');
+      showToast('历史记录已清空', '此浏览器中的敏感详情和服务器上的脱敏摘要均已清除', 'info');
     } catch (error) {
       showToast('清空失败', error instanceof Error ? error.message : '请稍后重试', 'error');
-    }
-  };
-
-  const handleRequestHistoryDetails = async (id: string) => {
-    const current = historyItems.find(item => item.id === id);
-    if (!current?.hasDetails || current.panelData || current.nodeData || historyDetailLoadingId === id) return;
-    setHistoryDetailLoadingId(id);
-    setHistoryDetailError(null);
-    try {
-      const result = await api<{ item: HistoryItem }>(`/api/deployment-history/${encodeURIComponent(id)}`);
-      setHistoryItems(prev => prev.map(item => item.id === id ? result.item : item));
-    } catch (error) {
-      setHistoryDetailError({ id, message: error instanceof Error ? error.message : '无法读取搭建历史详情' });
-    } finally {
-      setHistoryDetailLoadingId(currentId => currentId === id ? null : currentId);
     }
   };
 
@@ -423,9 +454,6 @@ export default function App() {
         onClose={() => setHistoryOpen(false)}
         items={historyItems}
         onClearHistory={handleClearHistory}
-        onRequestDetails={handleRequestHistoryDetails}
-        detailLoadingId={historyDetailLoadingId}
-        detailError={historyDetailError}
         onCopyText={async (text, title) => {
           const success = await copyToClipboard(text);
           if (success) {

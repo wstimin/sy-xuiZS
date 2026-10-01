@@ -200,8 +200,6 @@ export interface DeploymentHistoryItem {
   title: string;
   summary: string;
   hasDetails: boolean;
-  panelData?: Record<string, unknown>;
-  nodeData?: Record<string, unknown>;
 }
 
 export interface EntitlementGrantInput {
@@ -380,10 +378,6 @@ export class CommercialStore {
 
       const smtpPassword = source.prepare("SELECT value FROM system_settings WHERE key = 'smtp_password_encrypted'").get() as { value?: string } | undefined;
       if (smtpPassword?.value) vault.decrypt(String(smtpPassword.value));
-      for (const row of source.prepare("SELECT result_payload_encrypted FROM deployments WHERE result_payload_encrypted <> ''").all() as Array<{ result_payload_encrypted: string }>) {
-        vault.decrypt(String(row.result_payload_encrypted));
-      }
-
       const counts = Object.fromEntries(DATABASE_BACKUP_TABLES.map(table => [
         table,
         Number((source!.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as any).count),
@@ -443,10 +437,7 @@ export class CommercialStore {
         const externalRedeemApiKey = source.prepare("SELECT value FROM system_settings WHERE key = 'external_redeem_api_key_encrypted'").get() as { value?: string } | undefined;
         if (externalRedeemApiKey?.value) source.prepare("UPDATE system_settings SET value = ? WHERE key = 'external_redeem_api_key_encrypted'").run(rewrap(externalRedeemApiKey.value));
 
-        const updateDeployment = source.prepare("UPDATE deployments SET result_payload_encrypted = ? WHERE id = ?");
-        for (const row of source.prepare("SELECT id, result_payload_encrypted FROM deployments WHERE result_payload_encrypted <> ''").all() as any[]) {
-          updateDeployment.run(rewrap(row.result_payload_encrypted), row.id);
-        }
+        source.prepare("UPDATE deployments SET result_payload_encrypted = '' WHERE result_payload_encrypted <> ''").run();
       });
       transform.immediate();
       const rewrappedDatabase = source.serialize();
@@ -489,6 +480,10 @@ export class CommercialStore {
             insert.run(...columns.map(column => row[column]));
           }
         }
+        // Sensitive deployment results are browser-only. Old backups may still
+        // contain payloads created by earlier releases, so discard them during
+        // restore while retaining the owner-scoped, masked task summaries.
+        this.db.prepare("UPDATE deployments SET result_payload_encrypted = '' WHERE result_payload_encrypted <> ''").run();
         this.db.prepare("DELETE FROM sessions").run();
         const auditAdmin = this.db.prepare("SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1").get() as any;
         this.recordAdminAction(auditAdmin.id, "恢复数据库备份", "database", "restore", `操作账号：${operatorUsername}；恢复后全部会话已失效；自动备份：${automaticBackupName || "内存数据库未生成文件"}`);
@@ -786,6 +781,9 @@ export class CommercialStore {
     if (!deploymentColumns.some(column => column.name === "history_hidden")) {
       this.db.exec("ALTER TABLE deployments ADD COLUMN history_hidden INTEGER NOT NULL DEFAULT 0");
     }
+    // v3.0.14 changes deployment secrets to browser-only storage. Purge payloads
+    // written by older releases; masked summaries and ownership remain intact.
+    this.db.exec("UPDATE deployments SET result_payload_encrypted = '' WHERE result_payload_encrypted <> ''");
     const redeemCodeColumns = this.db.prepare("PRAGMA table_info(redeem_codes)").all() as Array<{ name: string }>;
     if (!redeemCodeColumns.some(column => column.name === "amount_cents")) {
       // Card semantics changed from plan-bound vouchers to monetary vouchers.
@@ -2441,14 +2439,11 @@ export class CommercialStore {
       .run(nowIso(), deploymentId);
   }
 
-  succeedDeployment(deploymentId: string, summary = "", result?: Record<string, unknown>) {
+  succeedDeployment(deploymentId: string, summary = "") {
     this.db.transaction(() => {
       const deployment = this.db.prepare("SELECT * FROM deployments WHERE id = ?").get(deploymentId) as any;
       if (!deployment || deployment.status === "succeeded") return;
       if (!["reserved", "running", "uncertain"].includes(deployment.status)) return;
-      const encryptedResult = result
-        ? this.vault.encrypt(JSON.stringify({ version: 1, capability: deployment.capability, data: result }))
-        : "";
       if (deployment.quota_mode === "limited") {
         this.db.prepare(`
           UPDATE entitlements SET ${deployment.capability}_reserved = MAX(0, ${deployment.capability}_reserved - 1),
@@ -2456,9 +2451,9 @@ export class CommercialStore {
         `).run(deployment.entitlement_id);
       }
       this.db.prepare(`
-        UPDATE deployments SET status = 'succeeded', result_summary = ?, result_payload_encrypted = ?,
+        UPDATE deployments SET status = 'succeeded', result_summary = ?, result_payload_encrypted = '',
           history_hidden = 0, finished_at = ? WHERE id = ?
-      `).run(summary.slice(0, 500), encryptedResult, nowIso(), deploymentId);
+      `).run(summary.slice(0, 500), nowIso(), deploymentId);
       this.addLedger(deployment.user_id, deployment.entitlement_id, deploymentId, deployment.capability, "consume", deployment.quota_mode === "limited" ? 1 : 0, "搭建成功核销权益");
     })();
   }
@@ -2506,31 +2501,12 @@ export class CommercialStore {
 
   listDeploymentHistory(userId: string): DeploymentHistoryItem[] {
     const rows = this.db.prepare(`
-      SELECT id, capability, result_summary, result_payload_encrypted, created_at
+      SELECT id, capability, result_summary, created_at
       FROM deployments
       WHERE user_id = ? AND status = 'succeeded' AND history_hidden = 0
       ORDER BY created_at DESC LIMIT 30
     `).all(userId) as any[];
     return rows.map(row => this.deploymentHistorySummary(row));
-  }
-
-  getDeploymentHistoryDetail(userId: string, deploymentId: string): DeploymentHistoryItem | null {
-    const row = this.db.prepare(`
-      SELECT id, capability, result_summary, result_payload_encrypted, created_at
-      FROM deployments
-      WHERE id = ? AND user_id = ? AND status = 'succeeded' AND history_hidden = 0
-    `).get(deploymentId, userId) as any;
-    if (!row) return null;
-    const item = this.deploymentHistorySummary(row);
-    if (!row.result_payload_encrypted) return item;
-
-    const envelope = JSON.parse(this.vault.decrypt(String(row.result_payload_encrypted))) as any;
-    if (envelope?.version !== 1 || envelope?.capability !== row.capability || !envelope?.data || typeof envelope.data !== "object") {
-      throw new Error("搭建历史详情格式无效，请联系管理员检查数据");
-    }
-    if (row.capability === "panel") item.panelData = envelope.data;
-    else item.nodeData = envelope.data;
-    return item;
   }
 
   clearDeploymentHistory(userId: string) {
@@ -2552,7 +2528,7 @@ export class CommercialStore {
       type: capability,
       title,
       summary,
-      hasDetails: Boolean(row.result_payload_encrypted),
+      hasDetails: false,
     };
   }
 

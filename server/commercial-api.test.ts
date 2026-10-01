@@ -427,7 +427,7 @@ test("admin operations expose diagnoses, payment checks and guarded database res
   }
 });
 
-test("deployment history API returns summaries and only decrypts records for their owner", async () => {
+test("deployment history API exposes only owner-scoped, non-sensitive summaries", async () => {
   const store = createTestStore();
   const app = express();
   app.use(express.json());
@@ -451,12 +451,7 @@ test("deployment history API returns summaries and only decrypts records for the
       nodeLimit: 2,
     });
     const deployment = store.reserveDeployment(owner.id, "node", "history-api-request", "198.51.*.*");
-    store.succeedDeployment(deployment.deploymentId, "VLESS 节点 198.51.*.*:443", {
-      id: deployment.deploymentId,
-      nodeName: "私有节点",
-      shareLink: "vless://history-secret-link",
-      uuid: "history-secret-uuid",
-    });
+    store.succeedDeployment(deployment.deploymentId, "VLESS 节点 198.51.*.*:443");
     const ownerCookie = `xui_user_session=${store.createSession(owner.id)}`;
     const otherCookie = `xui_user_session=${store.createSession(other.id)}`;
 
@@ -465,14 +460,10 @@ test("deployment history API returns summaries and only decrypts records for the
     assert.equal(listResponse.status, 200);
     const list = await listResponse.json() as any;
     assert.equal(list.items.length, 1);
-    assert.equal(list.items[0].hasDetails, true);
-    assert.doesNotMatch(JSON.stringify(list), /history-secret-link|history-secret-uuid/);
+    assert.equal(list.items[0].hasDetails, false);
 
     const detailResponse = await fetch(`${base}/deployment-history/${deployment.deploymentId}`, { headers: { cookie: ownerCookie } });
-    assert.equal(detailResponse.status, 200);
-    assert.equal(detailResponse.headers.get("cache-control"), "no-store");
-    const detail = await detailResponse.json() as any;
-    assert.equal(detail.item.nodeData.shareLink, "vless://history-secret-link");
+    assert.equal(detailResponse.status, 404);
 
     const crossAccount = await fetch(`${base}/deployment-history/${deployment.deploymentId}`, { headers: { cookie: otherCookie } });
     assert.equal(crossAccount.status, 404);

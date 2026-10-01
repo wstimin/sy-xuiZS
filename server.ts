@@ -407,7 +407,6 @@ async function startServer() {
       commercialStore.succeedDeployment(
         reservation.deploymentId,
         `面板 ${maskHost(domain || host)}:${installedPort}`,
-        result,
       );
       write({ type: "result", result });
       completed = true;
@@ -660,7 +659,6 @@ async function startServer() {
       commercialStore.succeedDeployment(
         reservation.deploymentId,
         `${body.protocol || "VLESS"} 节点 ${maskHost(body.panelAddress)}:${built.port}`,
-        result,
       );
       write({ type: "result", result });
     } catch (error) {

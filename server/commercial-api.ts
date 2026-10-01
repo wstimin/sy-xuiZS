@@ -1024,12 +1024,6 @@ export function createCommercialRouter(store: CommercialStore, options: { update
   router.get("/deployment-history", requireCommercialUser, route((req, res) => {
     res.json({ items: store.listDeploymentHistory(commercialUser(res).id) || [] });
   }));
-  router.get("/deployment-history/:id", requireCommercialUser, route((req, res) => {
-    const item = store.getDeploymentHistoryDetail(commercialUser(res).id, req.params.id);
-    if (!item) return res.status(404).json({ success: false, error: "搭建历史不存在" });
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ item });
-  }));
   router.delete("/deployment-history", requireCommercialUser, route((req, res) => {
     res.json({ success: true, cleared: store.clearDeploymentHistory(commercialUser(res).id) });
   }));
