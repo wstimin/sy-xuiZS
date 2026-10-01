@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { PanelDeployForm, PanelResult } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { ensureAssistantConnection } from '../utils/apiConnection';
-import { activeCapability, Entitlement, quotaText } from '../commercial';
+import { availableCapabilityText, Entitlement } from '../commercial';
 import { NumberInput } from './NumberInput';
 import {
   Terminal, Key, Server, Lock, Globe, Shield, Sparkles, Copy, Check, ExternalLink, Play, ArrowRight, X, Code2, CheckCircle2,
-  AlertTriangle, ShieldAlert, Cpu, HardDrive, Activity, Clock, AlertCircle, ChevronDown, ChevronUp, Zap
+  AlertTriangle, ShieldAlert, Cpu, HardDrive, Activity, Clock, AlertCircle, ChevronDown, ChevronUp, ChevronRight, Zap
 } from 'lucide-react';
 
 interface PanelDeployViewProps {
@@ -413,7 +413,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
       {onOpenResources && <button type="button" className="deploy-resource-link" onClick={onOpenResources}><Server /><span>还没有服务器？前往资源推荐</span><ArrowRight /></button>}
       <div className="rounded-md border border-indigo-500/25 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
-        面板权益：{activeCapability(entitlements, 'panel').length ? activeCapability(entitlements, 'panel').map(item => `${item.planName} ${quotaText(item.panelMode, item.panelRemaining)}`).join('；') : '暂无可用次数，请先购买套餐或联系管理员发放'}
+        面板可用次数：{availableCapabilityText(entitlements, 'panel') || '0 次'}
       </div>
       {/* Page Title & Intro */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/10">
@@ -512,24 +512,32 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               服务器 SSH 连接信息
             </h2>
 
-            <button
-              type="button"
-              onClick={handleTestSSH}
-              disabled={isTestingSSH || isDeploying}
-              className="console-ssh-check-button"
-            >
-              {isTestingSSH ? (
-                <>
-                  <div className="console-ssh-check-spinner w-3.5 h-3.5 border-2 rounded-full animate-spin" />
-                  <span>正在快速检测...</span>
-                </>
-              ) : (
-                <>
-                  <Activity className="w-3.5 h-3.5" />
-                  <span>快速检测 SSH 与必要环境</span>
-                </>
-              )}
-            </button>
+            <div className="console-ssh-check-action">
+              <span className="console-ssh-check-flow" aria-hidden="true">
+                <ChevronRight />
+                <ChevronRight />
+                <ChevronRight />
+                <ChevronRight />
+              </span>
+              <button
+                type="button"
+                onClick={handleTestSSH}
+                disabled={isTestingSSH || isDeploying}
+                className="console-ssh-check-button"
+              >
+                {isTestingSSH ? (
+                  <>
+                    <div className="console-ssh-check-spinner w-3.5 h-3.5 border-2 rounded-full animate-spin" />
+                    <span>正在快速检测...</span>
+                  </>
+                ) : (
+                  <>
+                    <Activity className="w-3.5 h-3.5" />
+                    <span>快速检测 SSH 与必要环境</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="grid sm:grid-cols-3 gap-4">

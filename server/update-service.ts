@@ -18,6 +18,8 @@ export interface UpdateStatus {
   reason: string;
   releaseUrl: string;
   state: UpdateState;
+  progress: number;
+  stage?: string;
   targetVersion?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -35,7 +37,31 @@ type UpdateServiceOptions = {
   isRoot?: boolean;
 };
 
-type PersistedUpdateState = Pick<UpdateStatus, "state" | "targetVersion" | "startedAt" | "finishedAt" | "message">;
+type PersistedUpdateState = Pick<UpdateStatus, "state" | "targetVersion" | "startedAt" | "finishedAt" | "message" | "stage"> & {
+  progress?: number;
+  runnerPid?: number;
+};
+
+const ACTIVE_UPDATE_STALE_MS = 20 * 60_000;
+
+function updateProgress(value: unknown, state: UpdateState) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return Math.max(0, Math.min(100, Math.round(numeric)));
+  if (state === "scheduled") return 5;
+  if (state === "running") return 15;
+  if (state === "succeeded") return 100;
+  return 0;
+}
+
+function isProcessAlive(pid: unknown) {
+  if (!Number.isInteger(pid) || Number(pid) <= 1) return false;
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function numericVersion(value: string) {
   const match = String(value || "").trim().replace(/^v/i, "").match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
@@ -102,7 +128,7 @@ export class UpdateService {
       this.deploymentMode = "1panel";
       this.canAutoUpdate = hasRunner;
       this.unsupportedReason = hasRunner
-        ? "可自动备份并更新 1Panel 网站目录，数据与环境配置会保持不变"
+        ? "确认后可备份并更新 1Panel 网站目录，数据与环境配置会保持不变"
         : "当前 1Panel 安装包缺少独立更新器，请先手动升级到支持自动更新的版本";
     } else if (!isRoot) {
       this.deploymentMode = "managed-linux";
@@ -111,12 +137,47 @@ export class UpdateService {
     } else {
       this.deploymentMode = "managed-linux";
       this.canAutoUpdate = true;
-      this.unsupportedReason = "可使用内置安装器自动备份、校验、更新和回滚";
+      this.unsupportedReason = "确认后可使用内置安装器备份、校验、更新和回滚";
     }
   }
 
   status(): UpdateStatus {
-    const persisted = readPersistedState(this.statusPath);
+    let persisted = readPersistedState(this.statusPath);
+    if ((persisted.state === "scheduled" || persisted.state === "running") && persisted.targetVersion) {
+      const currentIsVersion = Boolean(numericVersion(this.currentVersion));
+      const targetIsVersion = Boolean(numericVersion(persisted.targetVersion));
+      if (currentIsVersion && targetIsVersion && compareVersions(this.currentVersion, persisted.targetVersion) >= 0) {
+        persisted = {
+          ...persisted,
+          state: "succeeded",
+          progress: 100,
+          stage: "completed",
+          finishedAt: persisted.finishedAt || new Date().toISOString(),
+          message: `已更新到 v${this.currentVersion}`,
+          runnerPid: undefined,
+        };
+        fs.writeFileSync(this.statusPath, JSON.stringify(persisted), { encoding: "utf8", mode: 0o600 });
+      } else {
+        const startedAt = persisted.startedAt ? Date.parse(persisted.startedAt) : Number.NaN;
+        const age = Number.isFinite(startedAt) ? Date.now() - startedAt : Number.POSITIVE_INFINITY;
+        const runnerExited = persisted.runnerPid !== undefined && !isProcessAlive(persisted.runnerPid);
+        const legacyStateExpired = persisted.runnerPid === undefined && age > ACTIVE_UPDATE_STALE_MS;
+        if ((runnerExited && age > 5_000) || legacyStateExpired) {
+          persisted = {
+            ...persisted,
+            state: "failed",
+            progress: updateProgress(persisted.progress, persisted.state),
+            stage: "interrupted",
+            finishedAt: new Date().toISOString(),
+            message: runnerExited
+              ? "更新进程已退出但没有完成，已解除更新锁；请查看 1Panel 运行日志后重试"
+              : "检测到超过 20 分钟未完成的旧更新状态，已自动解除更新锁，可重新发起更新",
+            runnerPid: undefined,
+          };
+          fs.writeFileSync(this.statusPath, JSON.stringify(persisted), { encoding: "utf8", mode: 0o600 });
+        }
+      }
+    }
     return {
       currentVersion: this.currentVersion,
       latestVersion: this.latestVersion,
@@ -127,6 +188,7 @@ export class UpdateService {
       reason: this.unsupportedReason,
       releaseUrl: RELEASE_PAGE_URL,
       ...persisted,
+      progress: updateProgress(persisted.progress, persisted.state),
     };
   }
 
@@ -155,6 +217,8 @@ export class UpdateService {
     fs.mkdirSync(path.dirname(this.statusPath), { recursive: true });
     const scheduled: PersistedUpdateState = {
       state: "scheduled",
+      progress: 5,
+      stage: "queued",
       targetVersion: checked.latestVersion,
       startedAt: new Date().toISOString(),
       message: "更新任务已提交，正在启动独立更新器",
@@ -170,6 +234,10 @@ export class UpdateService {
       env: { ...process.env },
       windowsHide: true,
     });
+    const afterSpawn = readPersistedState(this.statusPath);
+    if (afterSpawn.state === "scheduled" && child.pid) {
+      fs.writeFileSync(this.statusPath, JSON.stringify({ ...afterSpawn, runnerPid: child.pid }), { encoding: "utf8", mode: 0o600 });
+    }
     child.unref();
     return this.status();
   }

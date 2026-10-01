@@ -722,6 +722,41 @@ html[data-theme="dark"] .admin-toast-close:hover { color: #f3f8ff; background: r
 
 /* High-signal action for the first deployment gate. It must remain legible
    against both the light and dark workbench surfaces. */
+.console-ssh-check-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 100%;
+}
+.console-ssh-check-flow {
+  width: 86px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 24%, #000 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 24%, #000 100%);
+}
+.console-ssh-check-flow svg {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 auto;
+  stroke-width: 3;
+  animation: console-ssh-arrow-flow 1.15s linear infinite;
+}
+.console-ssh-check-flow svg:nth-child(1) { color: #a78bfa; animation-delay: -.86s; }
+.console-ssh-check-flow svg:nth-child(2) { color: #f472b6; animation-delay: -.58s; }
+.console-ssh-check-flow svg:nth-child(3) { color: #60a5fa; animation-delay: -.29s; }
+.console-ssh-check-flow svg:nth-child(4) { color: #2dd4bf; }
+@keyframes console-ssh-arrow-flow {
+  0% { opacity: 0; transform: translateX(-12px) scale(.84); }
+  28% { opacity: 1; }
+  72% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(8px) scale(1); }
+}
 .console-ssh-check-button {
   min-height: 38px;
   display: inline-flex;
@@ -765,7 +800,17 @@ html[data-theme="dark"] .console-ssh-check-button {
     box-shadow: 0 14px 28px rgba(37, 99, 235, .34);
   }
 }
+@media (max-width: 420px) {
+  .console-ssh-check-action { width: 100%; gap: 4px; }
+  .console-ssh-check-flow { width: auto; min-width: 42px; flex: 1 1 auto; }
+  .console-ssh-check-button { flex: 0 0 auto; padding: 0 10px; font-size: 11px; }
+}
 @media (prefers-reduced-motion: reduce) {
+  .console-ssh-check-flow svg {
+    animation: none;
+    opacity: .85;
+    transform: none;
+  }
   .console-ssh-check-button { transition: opacity 150ms ease, filter 150ms ease; }
   .console-ssh-check-button:hover:not(:disabled),
   .console-ssh-check-button:active:not(:disabled) { transform: none; }

@@ -67,7 +67,11 @@ export type SystemVersionStatus = {
   reason: string;
   releaseUrl: string;
   state: 'idle' | 'scheduled' | 'running' | 'succeeded' | 'failed';
+  progress: number;
+  stage?: string;
   targetVersion?: string;
+  startedAt?: string;
+  finishedAt?: string;
   message?: string;
 };
 

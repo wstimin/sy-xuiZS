@@ -54,8 +54,13 @@ test("managed Linux updates launch only the bundled detached runner", async () =
         return { unref() {} };
       }) as any,
     });
+    const checked = await service.check(true);
+    assert.equal(checked.state, "idle");
+    assert.equal(checked.updateAvailable, true);
+    assert.equal(invocation, null, "checking the version must never launch the updater");
     const status = await service.startUpdate();
     assert.equal(status.state, "scheduled");
+    assert.equal(status.progress, 5);
     assert.equal(status.targetVersion, "3.1.0");
     assert.equal(invocation?.command, process.execPath);
     assert.deepEqual(invocation?.args, [
@@ -94,6 +99,7 @@ test("1Panel website deployments launch the portable updater without root", asyn
     assert.equal(service.status().canAutoUpdate, true);
     const status = await service.startUpdate();
     assert.equal(status.state, "scheduled");
+    assert.equal(status.progress, 5);
     assert.deepEqual(invocation?.args, [
       path.join(directory, "dist", "update-runner.cjs"),
       "1panel",
@@ -103,6 +109,35 @@ test("1Panel website deployments launch the portable updater without root", asyn
       String(process.pid),
     ]);
     assert.equal(invocation?.options.detached, true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("stale legacy update states are unlocked instead of disabling updates forever", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "xui-stale-update-test-"));
+  try {
+    fs.mkdirSync(path.join(directory, "dist"), { recursive: true });
+    fs.mkdirSync(path.join(directory, "data"), { recursive: true });
+    fs.writeFileSync(path.join(directory, "start.cjs"), "", "utf8");
+    fs.writeFileSync(path.join(directory, "dist", "update-runner.cjs"), "", "utf8");
+    fs.writeFileSync(path.join(directory, "data", "update-status.json"), JSON.stringify({
+      state: "running",
+      targetVersion: "3.0.14",
+      startedAt: new Date(Date.now() - 21 * 60_000).toISOString(),
+      message: "正在安装生产依赖并准备切换版本",
+    }), "utf8");
+    const service = new UpdateService({
+      currentVersion: "3.0.13",
+      databasePath: path.join(directory, "data", "app.db"),
+      rootDirectory: directory,
+      platform: "linux",
+      isRoot: false,
+    });
+    const status = service.status();
+    assert.equal(status.state, "failed");
+    assert.equal(status.stage, "interrupted");
+    assert.match(status.message || "", /解除更新锁/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

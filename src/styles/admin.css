@@ -332,6 +332,22 @@ html[data-theme="dark"] .admin-database-file-copy small { color: #c7d8ef; }
 .admin-version-summary > span { flex: none; padding: 7px 10px; color: #6d28d9; border: 1px solid rgba(139,92,246,.2); border-radius: 999px; background: rgba(237,233,254,.82); font-size: 10px; font-weight: 800; }
 .admin-version-summary > span.available { color: #047857; border-color: rgba(16,185,129,.24); background: rgba(236,253,245,.86); }
 .admin-update-content > p { margin: 0; padding: 13px 15px; color: var(--muted); border-left: 3px solid #8b5cf6; border-radius: 0 11px 11px 0; background: rgba(239,246,255,.68); font-size: 12px; line-height: 1.7; }
+.admin-update-content > p.is-error { color: #be123c; border-left-color: #f43f5e; background: rgba(255,228,230,.68); }
+.admin-update-manual-note { display: flex; align-items: flex-start; gap: 9px; padding: 12px 14px; color: #92400e; border: 1px solid rgba(245,158,11,.24); border-radius: 12px; background: rgba(254,243,199,.68); font-size: 11px; line-height: 1.6; }
+.admin-update-manual-note svg { width: 16px; height: 16px; flex: 0 0 auto; margin-top: 1px; }
+.admin-update-manual-note strong { color: #78350f; }
+.admin-update-progress { display: grid; gap: 10px; padding: 15px; border: 1px solid rgba(96,165,250,.25); border-radius: 14px; background: linear-gradient(135deg,rgba(239,246,255,.82),rgba(245,243,255,.76)); }
+.admin-update-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.admin-update-progress-heading > span { display: inline-flex; align-items: center; gap: 7px; color: #4338ca; font-size: 12px; font-weight: 800; }
+.admin-update-progress-heading svg { width: 15px; height: 15px; }
+.admin-update-progress-heading strong { color: #4338ca; font-size: 13px; }
+.admin-update-progress-track { height: 9px; position: relative; overflow: hidden; border-radius: 999px; background: rgba(148,163,184,.2); }
+.admin-update-progress-track > i { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(90deg,#8b5cf6,#60a5fa,#34d399); transform: scaleX(0); transform-origin: left center; transition: transform 240ms linear; }
+.admin-update-progress-track::after { position: absolute; inset: 0; content: ''; background: linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent); transform: translateX(-100%); animation: admin-progress-scan 1.4s linear infinite; }
+.admin-update-progress p,.admin-update-progress small { margin: 0; }
+.admin-update-progress p { color: var(--body); font-size: 11px; font-weight: 700; line-height: 1.55; }
+.admin-update-progress small { color: var(--muted); font-size: 10px; line-height: 1.55; }
+@keyframes admin-progress-scan { to { transform: translateX(100%); } }
 .admin-update-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 1px; }
 .admin-dialog .admin-button:hover:not(:disabled) { transform: none; filter: none; box-shadow: 0 0 0 4px rgba(96,165,250,.15), 0 8px 20px rgba(99,102,241,.14); }
 html[data-theme="dark"] .admin-version-summary { border-color: rgba(147,197,253,.25); background: linear-gradient(135deg, rgba(30,58,95,.82), rgba(49,46,129,.7)); }
@@ -340,6 +356,14 @@ html[data-theme="dark"] .admin-version-summary strong { color: #f3f8ff; }
 html[data-theme="dark"] .admin-version-summary > span { color: #ddd6fe; border-color: rgba(167,139,250,.32); background: rgba(109,40,217,.28); }
 html[data-theme="dark"] .admin-version-summary > span.available { color: #a7f3d0; border-color: rgba(52,211,153,.3); background: rgba(6,78,59,.35); }
 html[data-theme="dark"] .admin-update-content > p { color: #c7d8ef; border-left-color: #a78bfa; background: rgba(15,23,42,.32); }
+html[data-theme="dark"] .admin-update-content > p.is-error { color: #fecdd3; border-left-color: #fb7185; background: rgba(127,29,29,.3); }
+html[data-theme="dark"] .admin-update-manual-note { color: #fde68a; border-color: rgba(251,191,36,.3); background: rgba(120,53,15,.3); }
+html[data-theme="dark"] .admin-update-manual-note strong { color: #fef3c7; }
+html[data-theme="dark"] .admin-update-progress { border-color: rgba(147,197,253,.28); background: linear-gradient(135deg,rgba(30,58,95,.72),rgba(49,46,129,.58)); }
+html[data-theme="dark"] .admin-update-progress-heading > span,
+html[data-theme="dark"] .admin-update-progress-heading strong { color: #ddd6fe; }
+html[data-theme="dark"] .admin-update-progress p { color: #dbeafe; }
+html[data-theme="dark"] .admin-update-progress small { color: #b8c9e1; }
 .admin-settings-shell { display: grid; grid-template-columns: 220px minmax(0,1fr); overflow: hidden; border-radius: 20px; }
 .admin-settings-nav { padding: 13px; border-right: 1px solid var(--admin-line); background: rgba(239,246,255,.55); }
 .admin-settings-nav button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 11px 12px; color: var(--muted); border: 1px solid transparent; border-radius: 11px; background: transparent; cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
@@ -440,6 +464,8 @@ html[data-theme="dark"] .admin-update-content > p { color: #c7d8ef; border-left-
 }
 @media (prefers-reduced-motion: reduce) {
   .admin-sidebar,.admin-stat,.admin-dashboard-panel,.admin-section,.admin-button,.admin-icon-button,.admin-dialog { animation: none !important; transition: none !important; }
+  .admin-update-progress-track::after { animation: none !important; }
+  .admin-update-progress-track > i { transition: none !important; }
 }
 
 /* 新版运营工作台结构：与旧版列表样式解耦，数据接口仍由 AdminView 提供。 */

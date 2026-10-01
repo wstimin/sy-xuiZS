@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import { NodeDeployForm, NodeResult, ProtocolType, TransportType, SecurityType, PanelFlavor } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { ensureAssistantConnection } from '../utils/apiConnection';
-import { activeCapability, Entitlement, quotaText } from '../commercial';
+import { availableCapabilityText, Entitlement } from '../commercial';
 import { parseSocksInput } from '../utils/socksParser';
 import {
   checkTransportAllowed,
@@ -523,7 +523,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
       {onOpenResources && <button type="button" className="deploy-resource-link residential" onClick={onOpenResources}><Server /><span>需要服务器或住宅 IP？查看资源推荐</span><ArrowRight /></button>}
       <div className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-        节点权益：{activeCapability(entitlements, 'node').length ? activeCapability(entitlements, 'node').map(item => `${item.planName} ${quotaText(item.nodeMode, item.nodeRemaining)}`).join('；') : '暂无可用次数，请先购买套餐或联系管理员发放'}
+        节点可用次数：{availableCapabilityText(entitlements, 'node') || '0 次'}
       </div>
       {/* Page Title */}
       <div className="pb-6 border-b border-white/10">

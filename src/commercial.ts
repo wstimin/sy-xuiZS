@@ -378,3 +378,10 @@ export function activeCapability(entitlements: Entitlement[], capability: 'panel
     .filter(item => item[`${capability}Mode`] !== 'none')
     .filter(item => item[`${capability}Mode`] === 'unlimited' || item[`${capability}Remaining`] > 0);
 }
+
+export function availableCapabilityText(entitlements: Entitlement[], capability: 'panel' | 'node') {
+  const available = activeCapability(entitlements, capability);
+  if (!available.length) return null;
+  if (available.some(item => item[`${capability}Mode`] === 'unlimited')) return '不限次数';
+  return `${available.reduce((total, item) => total + item[`${capability}Remaining`], 0)} 次`;
+}
