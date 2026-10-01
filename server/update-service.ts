@@ -128,7 +128,7 @@ export class UpdateService {
       this.deploymentMode = "1panel";
       this.canAutoUpdate = hasRunner;
       this.unsupportedReason = hasRunner
-        ? "可备份并更新 1Panel 网站目录，数据与环境配置会保持不变"
+        ? "确认后可备份并更新 1Panel 网站目录，数据与环境配置会保持不变"
         : "当前 1Panel 安装包缺少独立更新器，请先手动升级到支持自动更新的版本";
     } else if (!isRoot) {
       this.deploymentMode = "managed-linux";
@@ -137,7 +137,7 @@ export class UpdateService {
     } else {
       this.deploymentMode = "managed-linux";
       this.canAutoUpdate = true;
-      this.unsupportedReason = "可使用内置安装器备份、校验、更新和回滚";
+      this.unsupportedReason = "确认后可使用内置安装器备份、校验、更新和回滚";
     }
   }
 
@@ -170,8 +170,8 @@ export class UpdateService {
             stage: "interrupted",
             finishedAt: new Date().toISOString(),
             message: runnerExited
-              ? "更新进程已退出但没有完成，已结束旧更新状态；请查看 1Panel 运行日志后重试"
-              : "检测到超过 20 分钟未完成的旧更新状态，已自动结束该状态，可重新发起更新",
+              ? "更新进程已退出但没有完成，已解除更新锁；请查看 1Panel 运行日志后重试"
+              : "检测到超过 20 分钟未完成的旧更新状态，已自动解除更新锁，可重新发起更新",
             runnerPid: undefined,
           };
           fs.writeFileSync(this.statusPath, JSON.stringify(persisted), { encoding: "utf8", mode: 0o600 });
@@ -209,6 +209,8 @@ export class UpdateService {
 
   async startUpdate(): Promise<UpdateStatus> {
     if (!this.canAutoUpdate) throw new Error(this.unsupportedReason);
+    const currentState = readPersistedState(this.statusPath);
+    if (currentState.state === "scheduled" || currentState.state === "running") throw new Error("系统更新已经在执行中");
     const checked = await this.check(true);
     if (!checked.updateAvailable || !checked.latestVersion) throw new Error("当前已经是最新版本");
 

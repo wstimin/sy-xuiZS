@@ -394,16 +394,10 @@ export class CommercialStore {
   }
 
   createPortableBackup(password: string, appVersion: string) {
-    // Take one consistent snapshot and reuse it for validation and encryption.
-    // Serializing the live WAL database twice can observe different states (or
-    // briefly contend with a concurrent write), which made complete backups
-    // fail even though the database itself was healthy.
-    const database = this.createDatabaseBackup();
-    const validation = this.validateDatabaseBackup(database);
-    const backup = createPortableBackup(database, this.vault.exportKey(), password, appVersion);
+    const backup = createPortableBackup(this.createDatabaseBackup(), this.vault.exportKey(), password, appVersion);
     return {
       ...backup,
-      validation,
+      validation: this.validateDatabaseBackup(this.createDatabaseBackup()),
     };
   }
 
