@@ -175,6 +175,18 @@ export function isRetryablePanelConnectionError(error: unknown): boolean {
     || (error instanceof Error && /^无法连接面板:/.test(error.message));
 }
 
+function panelConnectionFailureHint(error: any, baseUrl: string): string {
+  const code = String(error?.cause?.code || error?.cause?.cause?.code || "").toUpperCase();
+  if (["DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "CERT_HAS_EXPIRED", "ERR_TLS_CERT_ALTNAME_INVALID"].includes(code)) {
+    return "；这是 TLS 证书校验失败，请在节点页面开启“允许自签名证书”，或改用有效域名证书";
+  }
+  if (code === "ECONNREFUSED") return "；目标端口拒绝连接，请确认面板端口已放行且 x-ui 服务正在监听";
+  if (["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"].includes(code)) return "；连接超时，请检查云安全组、防火墙和面板端口是否允许部署助手访问";
+  if (["ENOTFOUND", "EAI_AGAIN"].includes(code)) return "；域名解析失败，请检查面板地址或 DNS 配置";
+  if (baseUrl.startsWith("https://")) return "；如果面板使用自签名证书，请在节点页面开启“允许自签名证书”";
+  return "；请检查面板端口是否放行，并确认该地址能从部署助手所在服务器访问";
+}
+
 export function serializeInboundForm(payload: Record<string, unknown>): URLSearchParams {
   const serialized = serializeInboundPayload(payload);
   const form = new URLSearchParams();
@@ -544,10 +556,10 @@ export class XuiClient {
         if (this.options.signal?.aborted) throw new Error("节点创建已终止");
         throw new PanelRequestTimeoutError(timeoutMessage || "连接面板超时");
       }
-      const hint = this.baseUrl.startsWith("https://")
-        ? "；如面板使用自签名证书，请显式开启“允许自签名证书”"
-        : "";
-      throw new Error(`无法连接面板: ${error?.message || String(error)}${hint}`);
+      const causeCode = String(error?.cause?.code || error?.cause?.cause?.code || "").toUpperCase();
+      const causeDetail = causeCode ? `（${causeCode}）` : "";
+      const hint = panelConnectionFailureHint(error, this.baseUrl);
+      throw new Error(`无法连接面板: ${error?.message || String(error)}${causeDetail}${hint}`);
     } finally {
       clearTimeout(timer);
       this.options.signal?.removeEventListener("abort", abortFromParent);

@@ -997,3 +997,99 @@ html[data-theme="dark"] .console-shell .account-pagination button { border-color
   .workspace-orbit-ring.ring-two { animation: none; }
   .workspace-orbit-spark { animation: workspace-orbit-spark-reduced 2.8s var(--ease-in-out) infinite; }
 }
+
+/* Deployment diagnostics: keep the SSH result and install timeline visually
+   connected to the workbench instead of falling back to utility-only cards. */
+.system-status-result {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid transparent !important;
+  background: linear-gradient(145deg, rgba(30,41,95,.92), rgba(15,73,92,.72)) padding-box,
+    linear-gradient(120deg, rgba(167,139,250,.7), rgba(96,165,250,.45), rgba(45,212,191,.58)) border-box !important;
+  box-shadow: 0 18px 38px rgba(15,23,42,.22), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.system-status-result::before {
+  position: absolute;
+  inset: -80% -10%;
+  content: '';
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 38%, rgba(255,255,255,.1) 48%, transparent 58%);
+  transform: translateX(-40%);
+  animation: deployment-card-sheen 6s linear infinite;
+}
+.system-status-result > * { position: relative; z-index: 1; }
+.system-status-card {
+  position: relative;
+  min-height: 58px;
+  overflow: hidden;
+  padding: 10px 11px;
+  border: 1px solid rgba(147,197,253,.22) !important;
+  border-radius: 13px;
+  background: linear-gradient(145deg, rgba(30,58,95,.72), rgba(49,46,129,.48)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+  transition: transform 160ms var(--ease-out), border-color 160ms ease, box-shadow 160ms ease;
+}
+.system-status-card::after {
+  position: absolute;
+  right: -22px;
+  bottom: -26px;
+  width: 76px;
+  height: 76px;
+  content: '';
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .08;
+  filter: blur(8px);
+  pointer-events: none;
+}
+.system-status-card > span:first-child { position: relative; z-index: 1; color: #b8c9e1 !important; font-size: 10px; letter-spacing: .03em; }
+.system-status-card__value { position: relative; z-index: 1; display: block; overflow: hidden; margin-top: 5px; color: #f3f8ff !important; font-size: 12px; font-weight: 800; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.system-status-card--cyan { color: #67e8f9; border-color: rgba(34,211,238,.34) !important; background: linear-gradient(145deg, rgba(8,145,178,.22), rgba(30,58,95,.68)) !important; }
+.system-status-card--indigo { color: #a78bfa; border-color: rgba(129,140,248,.38) !important; background: linear-gradient(145deg, rgba(79,70,229,.22), rgba(30,58,95,.68)) !important; }
+.system-status-card--emerald,.system-status-card--lime { color: #34d399; border-color: rgba(52,211,153,.34) !important; background: linear-gradient(145deg, rgba(5,150,105,.2), rgba(30,58,95,.68)) !important; }
+.system-status-card--amber { color: #fbbf24; border-color: rgba(251,191,36,.34) !important; background: linear-gradient(145deg, rgba(180,83,9,.2), rgba(30,58,95,.68)) !important; }
+.system-status-card--sky { color: #7dd3fc; border-color: rgba(56,189,248,.34) !important; background: linear-gradient(145deg, rgba(14,116,144,.2), rgba(30,58,95,.68)) !important; }
+.system-status-card--violet { color: #c4b5fd; border-color: rgba(167,139,250,.4) !important; background: linear-gradient(145deg, rgba(109,40,217,.24), rgba(30,58,95,.68)) !important; }
+.system-status-card--rose { color: #fda4af; border-color: rgba(251,113,133,.38) !important; background: linear-gradient(145deg, rgba(159,18,57,.25), rgba(30,58,95,.68)) !important; }
+@media (hover: hover) and (pointer: fine) {
+  .system-status-card:hover { transform: translateY(-2px); border-color: rgba(125,211,252,.58) !important; box-shadow: 0 10px 22px rgba(2,6,23,.22), inset 0 1px 0 rgba(255,255,255,.12); }
+}
+
+.deploy-progress-panel {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid transparent !important;
+  background: linear-gradient(145deg, rgba(15,23,62,.96), rgba(30,41,95,.92) 48%, rgba(6,78,88,.82)) padding-box,
+    linear-gradient(120deg, rgba(167,139,250,.72), rgba(96,165,250,.56), rgba(52,211,153,.6)) border-box !important;
+  box-shadow: 0 24px 52px rgba(15,23,42,.28), inset 0 1px 0 rgba(255,255,255,.1);
+}
+.deploy-progress-panel::before {
+  position: absolute;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  background: radial-gradient(circle at 12% 0%, rgba(167,139,250,.22), transparent 33%), radial-gradient(circle at 92% 100%, rgba(45,212,191,.16), transparent 36%);
+}
+.deploy-progress-panel > * { position: relative; z-index: 1; }
+.deploy-progress-header { border-color: rgba(147,197,253,.22) !important; }
+.deploy-progress-track { height: 13px !important; padding: 2px !important; border-color: rgba(147,197,253,.28) !important; background: rgba(15,23,42,.58) !important; box-shadow: inset 0 1px 4px rgba(2,6,23,.34); }
+.deploy-progress-fill { overflow: hidden; background: linear-gradient(90deg, #8b5cf6 0%, #60a5fa 42%, #22d3ee 72%, #34d399 100%) !important; box-shadow: 0 0 18px rgba(96,165,250,.42), inset 0 1px 0 rgba(255,255,255,.34); transition: width 500ms var(--ease-out) !important; }
+.deploy-progress-fill::after { position: absolute; inset: 0; content: ''; background: linear-gradient(100deg, transparent, rgba(255,255,255,.42), transparent); transform: translateX(-100%); animation: deployment-progress-sheen 1.8s linear infinite; }
+.deploy-progress-step { min-height: 72px; border-color: rgba(147,197,253,.2) !important; border-radius: 14px; opacity: 1 !important; transition: transform 160ms var(--ease-out), border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease; }
+.deploy-progress-step--completed { border-color: rgba(52,211,153,.42) !important; background: linear-gradient(145deg, rgba(5,150,105,.24), rgba(30,58,95,.7)) !important; box-shadow: inset 0 1px 0 rgba(167,243,208,.1); }
+.deploy-progress-step--active { border-color: rgba(129,140,248,.7) !important; background: linear-gradient(145deg, rgba(99,102,241,.34), rgba(8,145,178,.2)) !important; box-shadow: 0 10px 22px rgba(79,70,229,.2), inset 0 1px 0 rgba(255,255,255,.14); }
+.deploy-progress-step--idle { color: #8da3bf !important; background: rgba(30,58,95,.42) !important; }
+.deploy-progress-step--idle p { color: #8da3bf !important; }
+.deploy-progress-step--completed p,.deploy-progress-step--active p { color: #b8c9e1 !important; }
+.deploy-progress-step--active > div:first-child > div { border-color: #c4b5fd !important; border-top-color: transparent !important; }
+.deploy-error-panel { border-color: rgba(251,113,133,.5) !important; background: linear-gradient(135deg, rgba(127,29,29,.34), rgba(159,18,57,.18)) !important; box-shadow: inset 0 1px 0 rgba(254,205,211,.08); }
+.deploy-error-panel__heading { display: flex; align-items: center; gap: 7px; color: #fecdd3; font-weight: 800; }
+.deploy-error-panel__heading svg { width: 16px; height: 16px; color: #fb7185; }
+.deploy-error-panel p { margin: 7px 0 0; color: #ffe4e6; line-height: 1.6; }
+.deploy-error-panel small { display: block; margin-top: 6px; color: #fda4af; font-size: 10px; line-height: 1.55; }
+@keyframes deployment-card-sheen { to { transform: translateX(40%); } }
+@keyframes deployment-progress-sheen { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .system-status-result::before,.deploy-progress-fill::after { animation: none; }
+  .system-status-card,.deploy-progress-step,.deploy-progress-fill { transition: none; }
+}

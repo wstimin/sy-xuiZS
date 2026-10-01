@@ -644,7 +644,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
           {/* SSH & System Inspection Diagnostic Card */}
           {sshTestResult && (
-            <div className="mt-4 p-4 rounded-xl bg-black/40 border border-indigo-500/30 space-y-3 animate-in fade-in duration-200">
+            <div className="system-status-result mt-4 p-4 rounded-xl bg-black/40 border border-indigo-500/30 space-y-3 animate-in fade-in duration-200">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5 text-xs">
                 <div className={`flex items-center gap-2 font-semibold ${sshTestResult.status === 'incompatible' ? 'text-rose-400' : sshTestResult.status === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
                   {sshTestResult.status === 'incompatible' ? <ShieldAlert className="w-4 h-4" /> : sshTestResult.status === 'warning' ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
@@ -901,9 +901,9 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
 
       {/* Deploying Visual Progress & Interactive Timeline */}
       {(isDeploying || deployLogs.length > 0 || deployError) && (
-        <div className="p-6 rounded-2xl bg-[#0a0a0c] border border-white/10 space-y-6 shadow-2xl animate-in fade-in duration-300">
+        <div className="deploy-progress-panel p-6 rounded-2xl bg-[#0a0a0c] border border-white/10 space-y-6 shadow-2xl animate-in fade-in duration-300">
           {/* Header & Percentage Progress Bar */}
-          <div className="space-y-3 border-b border-white/10 pb-4">
+          <div className="deploy-progress-header space-y-3 border-b border-white/10 pb-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Activity className={`w-5 h-5 ${deployError ? 'text-rose-400' : 'text-indigo-400 animate-spin'}`} />
@@ -923,9 +923,9 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             </div>
 
             {/* Visual Animated Progress Bar */}
-            <div className="w-full bg-white/5 rounded-full h-3 p-0.5 overflow-hidden border border-white/10">
+            <div className="deploy-progress-track w-full bg-white/5 rounded-full h-3 p-0.5 overflow-hidden border border-white/10">
               <div
-                className="bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 h-full rounded-full transition-all duration-500 ease-out shadow-sm shadow-indigo-500/50 relative"
+                className="deploy-progress-fill bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 h-full rounded-full transition-[width] duration-500 ease-out shadow-sm shadow-indigo-500/50 relative"
                 style={{ width: `${Math.min(Math.round((deployStep / 9) * 100), 100)}%` }}
               >
                 <div className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
@@ -934,8 +934,10 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
           </div>
 
           {deployError && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200">
-              {deployError}
+            <div className="deploy-error-panel p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200">
+              <div className="deploy-error-panel__heading"><AlertCircle /><strong>安装后验证失败</strong></div>
+              <p>{deployError}</p>
+              <small>如果面板服务已经启动，请先放行面板端口，并确认该地址能从部署助手所在服务器访问。</small>
             </div>
           )}
 
@@ -947,12 +949,12 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
               return (
                 <div
                   key={s.step}
-                  className={`p-3 rounded-xl border transition-all duration-300 flex items-start gap-2.5 ${
+                  className={`deploy-progress-step p-3 rounded-xl border transition-transform duration-300 flex items-start gap-2.5 ${
                     isCompleted
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+                      ? 'deploy-progress-step--completed bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
                       : isActive
-                      ? 'bg-indigo-500/15 border-indigo-500/50 text-white shadow-md shadow-indigo-500/10 scale-[1.01]'
-                      : 'bg-white/5 border-white/5 text-zinc-500 opacity-60'
+                      ? 'deploy-progress-step--active bg-indigo-500/15 border-indigo-500/50 text-white shadow-md shadow-indigo-500/10 scale-[1.01]'
+                      : 'deploy-progress-step--idle bg-white/5 border-white/5 text-zinc-500 opacity-60'
                   }`}
                 >
                   <div className="mt-0.5 shrink-0">
