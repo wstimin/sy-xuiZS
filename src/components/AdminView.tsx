@@ -208,6 +208,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
   const [settingsDialog, setSettingsDialog] = useState<SettingsDialog>(null);
+  const [externalRedeemTestCode, setExternalRedeemTestCode] = useState('');
+  const [externalRedeemTestBusy, setExternalRedeemTestBusy] = useState(false);
+  const [externalRedeemTestResult, setExternalRedeemTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [securityDialog, setSecurityDialog] = useState<'username' | 'path' | 'password' | 'update' | 'backup' | null>(null);
   const [editingPaymentMethod, setEditingPaymentMethod] = useState<{ index: number; method: PaymentMethod } | null>(null);
   const [deletingPaymentMethod, setDeletingPaymentMethod] = useState<{ index: number; method: PaymentMethod } | null>(null);
@@ -464,6 +467,52 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       await runAction('系统设置已保存', '/api/admin/settings', { method: 'PUT', body: JSON.stringify(settingsData) });
     } finally {
       setSettingsSaveBusy(false);
+    }
+  };
+
+  const saveRedeemSettings = async () => {
+    const enabled = settingsData.externalRedeem.enabled;
+    const saved = await runAction(
+      enabled ? '第三方卡密核销已启用' : '卡密设置已保存',
+      '/api/admin/settings',
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          redeemCodePurchaseUrl: settingsData.redeemCodePurchaseUrl,
+          externalRedeem: settingsData.externalRedeem,
+        }),
+      },
+    );
+    if (saved) setSettingsDialog(null);
+  };
+
+  const testExternalRedeem = async () => {
+    const code = externalRedeemTestCode.trim();
+    if (!code) return showToast('请输入测试卡密', '验证只读取卡密状态，不会核销或绑定卡密', 'warning');
+    setExternalRedeemTestBusy(true);
+    setExternalRedeemTestResult(null);
+    try {
+      await api('/api/admin/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          redeemCodePurchaseUrl: settingsData.redeemCodePurchaseUrl,
+          externalRedeem: settingsData.externalRedeem,
+        }),
+      });
+      const response = await api<{ result: { valid: true; kind: string; amountCents: number } }>('/api/admin/settings/external-redeem/test', {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      });
+      const message = `金额卡有效，可充值 ${formatMoney(response.result.amountCents)}`;
+      setExternalRedeemTestResult({ ok: true, message });
+      await load(true);
+      showToast('第三方卡密验证通过', `${message}；本次仅验卡，未核销`, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '请稍后重试';
+      setExternalRedeemTestResult({ ok: false, message });
+      showToast('第三方卡密验证失败', message, 'error');
+    } finally {
+      setExternalRedeemTestBusy(false);
     }
   };
 
@@ -1383,8 +1432,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <label className="admin-field"><span>支付与联系说明</span><textarea value={settingsData.paymentInstructions} maxLength={2000} onChange={event => setSettingsData({ ...settingsData, paymentInstructions: event.target.value })} placeholder="填写收款方式、联系渠道和订单备注要求" /><small>{settingsData.paymentInstructions.length} / 2000</small></label>
         </div>
       </AdminDialog>
-      <AdminDialog open={settingsDialog === 'redeem'} size="wide" title="设置卡密与第三方系统" description="本地卡密优先匹配；本地不存在时，系统才会调用已启用的第三方核销接口。确认后仍需点击“保存更改”生效。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>
+      <AdminDialog open={settingsDialog === 'redeem'} size="wide" title="设置卡密与第三方系统" description="本地 XUI 卡密优先匹配；其他格式的卡密会交给已启用的第三方接口核销。本弹窗的保存按钮会直接写入后端。" confirmLabel={settingsData.externalRedeem.enabled ? '保存并启用' : '保存为停用'} cancelLabel="取消" busy={busy || externalRedeemTestBusy} onClose={() => setSettingsDialog(null)} onConfirm={() => void saveRedeemSettings()}>
         <div className="admin-form-grid">
+          <div className={`admin-external-redeem-state span-2 ${settingsData.externalRedeem.enabled ? 'enabled' : 'disabled'}`}><KeyRound /><div><strong>{settingsData.externalRedeem.enabled ? '第三方卡密将参与核销' : '当前仅接受本地 XUI 卡密'}</strong><small>{settingsData.externalRedeem.enabled ? '非本地卡密会按下方配置请求第三方系统。' : '如要使用十夜卡密，请开启下方开关后点击“保存并启用”。'}</small></div></div>
           <label className="admin-field span-2"><span>卡密购买链接</span><input type="url" value={settingsData.redeemCodePurchaseUrl} maxLength={1000} onChange={event => setSettingsData({ ...settingsData, redeemCodePurchaseUrl: event.target.value })} placeholder="https://example.com/buy" /><small>留空则不显示购买按钮，仅支持 HTTP 或 HTTPS。</small></label>
           <div className="admin-field span-2 admin-external-redeem-toggle"><SettingSwitch label="启用第三方卡密核销" description="用户提交非本地卡密时，服务端调用下面的标准 JSON 接口进行一次性核销。" checked={settingsData.externalRedeem.enabled} onChange={enabled => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, enabled } })} /></div>
           <label className="admin-field"><span>接口类型</span><select value={settingsData.externalRedeem.provider} onChange={event => { const provider = event.target.value as 'generic_json' | 'shiyeka'; setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, provider, name: provider === 'shiyeka' ? '十夜卡密' : '第三方卡密', apiKey: '', apiKeyConfigured: false } }); }}><option value="shiyeka">十夜卡密（原生适配）</option><option value="generic_json">通用 JSON 接口</option></select></label>
@@ -1396,6 +1446,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           {settingsData.externalRedeem.provider === 'generic_json' && <label className="admin-field"><span>amount 金额单位</span><select value={settingsData.externalRedeem.amountUnit} onChange={event => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, amountUnit: event.target.value as 'cents' | 'yuan' } })}><option value="cents">分</option><option value="yuan">元</option></select><small>若响应直接返回 amountCents，则始终按分处理。</small></label>}
           <label className="admin-field"><span>接口超时（秒）</span><NumberInput min="3" max="30" value={settingsData.externalRedeem.timeoutSeconds} onValueChange={timeoutSeconds => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, timeoutSeconds } })} /></label>
           <div className="admin-field span-2"><SettingSwitch label="允许访问内网接口" description="仅当卡密系统部署在同一内网时开启；默认阻止环回、私网和链路本地地址。" checked={settingsData.externalRedeem.allowPrivateNetwork} onChange={allowPrivateNetwork => setSettingsData({ ...settingsData, externalRedeem: { ...settingsData.externalRedeem, allowPrivateNetwork } })} /></div>
+          {settingsData.externalRedeem.provider === 'shiyeka' && <div className="admin-external-redeem-test span-2"><div className="admin-external-redeem-test-head"><span><ShieldCheck /></span><div><strong>保存配置并验卡</strong><small>调用十夜 <code>/verify</code> 只读接口，不激活、不绑定、不核销。</small></div></div><div className="admin-external-redeem-test-control"><input value={externalRedeemTestCode} maxLength={200} autoComplete="off" spellCheck={false} onChange={event => { setExternalRedeemTestCode(event.target.value); setExternalRedeemTestResult(null); }} placeholder="粘贴一张十夜金额卡测试" /><button type="button" className="admin-button secondary" disabled={busy || externalRedeemTestBusy || !externalRedeemTestCode.trim()} onClick={() => void testExternalRedeem()}><RefreshCw className={externalRedeemTestBusy ? 'spinning' : ''} /> {externalRedeemTestBusy ? '正在验证' : '测试卡密'}</button></div>{externalRedeemTestResult && <div className={`admin-external-redeem-test-result ${externalRedeemTestResult.ok ? 'success' : 'error'}`}>{externalRedeemTestResult.ok ? <CheckCircle2 /> : <AlertTriangle />}<span>{externalRedeemTestResult.message}</span></div>}</div>}
           <div className="admin-field span-2"><small>{settingsData.externalRedeem.provider === 'shiyeka' ? <>仅接受十夜卡密中的“金额卡”；请求使用其文档规定的 HMAC-SHA256 签名，成功激活后按返回的 <code>data.amount</code> 充值。</> : <>请求：<code>{'{ code, requestId, userId, username, planId }'}</code>；成功响应：<code>{'{ success: true, amountCents, tradeNo }'}</code>。也支持字段放在 <code>data</code> 中，或按上方单位返回 <code>amount</code>。</>}</small></div>
         </div>
       </AdminDialog>

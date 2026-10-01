@@ -19,6 +19,10 @@ test("configured third-party card API grants a plan once without exposing its se
     requestId = req.header("x-idempotency-key") || "";
     res.json({ success: true, amountCents: 1200, tradeNo: "provider-trade-1" });
   });
+  providerApp.post("/api/v1/card/verify", (req, res) => {
+    assert.equal(req.body.card, "SY23456789ABCDEFGH");
+    res.json({ code: 0, message: "ok", data: { valid: true, type: "money", remaining_amount: 23.5 } });
+  });
   const providerServer = providerApp.listen(0, "127.0.0.1");
   await new Promise<void>(resolve => providerServer.once("listening", resolve));
   const providerPort = (providerServer.address() as AddressInfo).port;
@@ -51,6 +55,14 @@ test("configured third-party card API grants a plan once without exposing its se
     });
     const userCookie = sessionCookie(userResponse);
     const registered = await userResponse.json() as any;
+
+    const disabledExternal = await fetch(`${base}/redeem-codes/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: userCookie },
+      body: JSON.stringify({ code: "SY23456789ABCDEFGH", planId: plan.id }),
+    });
+    assert.equal(disabledExternal.status, 400);
+    assert.match(String((await disabledExternal.json() as any).error), /第三方卡密核销尚未启用/);
 
     const saved = await fetch(`${base}/admin/settings`, {
       method: "PUT",
@@ -93,6 +105,32 @@ test("configured third-party card API grants a plan once without exposing its se
     assert.equal(repeated.status, 400);
     assert.match(String((await repeated.json() as any).error), /已经在本系统入账/);
     assert.equal(store.listEntitlements(registered.user.id).length, 1);
+
+    const savedShiyeka = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ externalRedeem: {
+        provider: "shiyeka",
+        enabled: true,
+        name: "十夜卡密",
+        apiUrl: `http://127.0.0.1:${providerPort}`,
+        appKey: "APPKEY123",
+        apiKey: "app-secret-value",
+        authMode: "none",
+        amountUnit: "cents",
+        timeoutSeconds: 5,
+        allowPrivateNetwork: true,
+      } }),
+    });
+    assert.equal(savedShiyeka.status, 200);
+    const inspectedResponse = await fetch(`${base}/admin/settings/external-redeem/test`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ code: "sy23456789abcdefgh" }),
+    });
+    const inspectedBody = await inspectedResponse.json() as any;
+    assert.equal(inspectedResponse.status, 200, JSON.stringify(inspectedBody));
+    assert.deepEqual(inspectedBody.result, { valid: true, kind: "money", amountCents: 2350 });
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     await new Promise<void>((resolve, reject) => providerServer.close(error => error ? reject(error) : resolve()));

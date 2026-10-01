@@ -267,6 +267,10 @@ function normalizeRedeemCode(value: string) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
 }
 
+export function isLocalRedeemCodeFormat(value: string) {
+  return /^XUI-[A-Z2-9]{4}(?:-[A-Z2-9]{4}){3}$/.test(normalizeRedeemCode(value));
+}
+
 function createRedeemCodeValue() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const bytes = randomBytes(16);
@@ -1046,7 +1050,7 @@ export class CommercialStore {
       this.setSetting("external_redeem_name", String(input.name || current.name || "第三方卡密").trim().slice(0, 40));
       this.setSetting("external_redeem_api_url", String(input.apiUrl || "").trim().slice(0, 1000));
       this.setSetting("external_redeem_app_key", String(input.appKey || "").trim().slice(0, 200));
-      this.setSetting("external_redeem_api_key_encrypted", authMode === "none" ? "" : nextApiKey);
+      this.setSetting("external_redeem_api_key_encrypted", input.provider !== "shiyeka" && authMode === "none" ? "" : nextApiKey);
       this.setSetting("external_redeem_auth_mode", authMode);
       this.setSetting("external_redeem_amount_unit", amountUnit);
       this.setSetting("external_redeem_timeout_seconds", String(timeoutSeconds));
@@ -2181,7 +2185,7 @@ export class CommercialStore {
 
   redeemCode(userId: string, value: string, expectedPlanId = "") {
     const code = normalizeRedeemCode(value);
-    if (!/^XUI-[A-Z2-9]{4}(?:-[A-Z2-9]{4}){3}$/.test(code)) throw new Error("卡密格式不正确");
+    if (!isLocalRedeemCodeFormat(code)) throw new Error("卡密格式不正确");
     return this.db.transaction(() => {
       const row = this.db.prepare("SELECT * FROM redeem_codes WHERE code_hash = ?").get(hashToken(code)) as any;
       if (!row) throw new Error("卡密不存在");

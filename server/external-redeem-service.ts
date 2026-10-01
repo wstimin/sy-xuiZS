@@ -98,9 +98,9 @@ function externalMessage(payload: any, fallback: string) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, 300) : fallback;
 }
 
-function shiyekaEndpoint(baseUrl: URL, action: "activate" | "query") {
-  if (/\/api\/v1\/card\/(?:activate|query)\/?$/i.test(baseUrl.pathname)) {
-    baseUrl.pathname = baseUrl.pathname.replace(/\/(?:activate|query)\/?$/i, `/${action}`);
+function shiyekaEndpoint(baseUrl: URL, action: "activate" | "query" | "verify") {
+  if (/\/api\/v1\/card\/(?:activate|query|verify)\/?$/i.test(baseUrl.pathname)) {
+    baseUrl.pathname = baseUrl.pathname.replace(/\/(?:activate|query|verify)\/?$/i, `/${action}`);
     return baseUrl;
   }
   baseUrl.pathname = `${baseUrl.pathname.replace(/\/+$/, "")}/api/v1/card/${action}`.replace(/^\/\//, "/");
@@ -110,7 +110,7 @@ function shiyekaEndpoint(baseUrl: URL, action: "activate" | "query") {
 async function callShiyeka(
   config: ExternalRedeemConfig,
   baseUrl: URL,
-  action: "activate" | "query",
+  action: "activate" | "query" | "verify",
   code: string,
   fetcher: FetchLike,
   signal: AbortSignal,
@@ -176,6 +176,38 @@ async function redeemShiyekaCard(
 
 export function externalRedeemRequestId(code: string) {
   return `xui-${createHash("sha256").update(String(code || "").trim()).digest("hex").slice(0, 40)}`;
+}
+
+export async function inspectExternalCard(
+  config: ExternalRedeemConfig,
+  rawCode: string,
+  fetcher: FetchLike = fetch,
+) {
+  if (config.provider !== "shiyeka") throw new Error("当前接口类型不支持无核销验卡");
+  const code = String(rawCode || "").trim().toUpperCase();
+  if (code.length < 4 || code.length > 200) throw new Error("卡密长度必须为 4 到 200 个字符");
+  const url = await validatedApiUrl(config);
+  const timeoutSeconds = Math.min(30, Math.max(3, Math.trunc(Number(config.timeoutSeconds) || 10)));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+  try {
+    const payload = await callShiyeka(config, url, "verify", code, fetcher, controller.signal);
+    if (Number(payload?.code) !== 0) throw new Error(externalMessage(payload, "十夜卡密验证失败"));
+    const data = payload?.data || {};
+    if (data.valid === false) throw new Error(externalMessage(payload, "该卡密当前不可用"));
+    const kind = String(data.type ?? data.kind ?? "").trim();
+    if (kind !== "money") throw new Error(`卡密有效，但类型为 ${kind || "未知"}，只有金额卡可用于充值`);
+    const amount = Number(data.amount ?? data.remaining_amount);
+    const amountCents = Math.round(amount * 100);
+    if (!Number.isSafeInteger(amountCents) || amountCents < 1 || amountCents > 100_000_000) throw new Error("十夜卡密返回的金额无效");
+    return { valid: true as const, kind, amountCents };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw new Error("十夜卡密接口响应超时，请稍后重试");
+    if (error instanceof Error && error.name !== "TypeError") throw error;
+    throw new Error(`十夜卡密接口连接失败：${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function redeemExternalCard(

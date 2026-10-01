@@ -2,10 +2,10 @@ import { NextFunction, Request, Response, Router, raw } from "express";
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { CommercialStore, DurationUnit, EntitlementGrantInput, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
+import { CommercialStore, DurationUnit, EntitlementGrantInput, isLocalRedeemCodeFormat, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
 import { sendSmtpMail } from "./email-service.js";
 import { getPaymentDriver, PaymentChannelConfig, PaymentProvider } from "./payment-service.js";
-import { redeemExternalCard } from "./external-redeem-service.js";
+import { inspectExternalCard, redeemExternalCard } from "./external-redeem-service.js";
 
 const USER_COOKIE_NAME = "xui_user_session";
 const ADMIN_COOKIE_NAME = "xui_admin_session";
@@ -1034,15 +1034,20 @@ export function createCommercialRouter(store: CommercialStore, options: { update
     const planId = String(req.body?.planId || "");
     const external = store.getExternalRedeemSettings(true);
     let result;
-    if (store.hasLocalRedeemCode(code) || !external.enabled) {
+    if (store.hasLocalRedeemCode(code)) {
       result = store.redeemCode(user.id, code, planId);
-    } else {
+    } else if (external.enabled) {
       const verified = await redeemExternalCard(external, { code, userId: user.id, username: user.username, planId });
       result = store.redeemExternalCode(user.id, code, planId, {
         amountCents: verified.amountCents,
         providerName: external.name,
         tradeNo: verified.tradeNo,
       });
+    } else {
+      if (!isLocalRedeemCodeFormat(code)) {
+        throw new Error("该卡密不是本地 XUI 卡密，且第三方卡密核销尚未启用；请管理员在“系统设置 → 卡密与第三方系统”中开启并保存");
+      }
+      result = store.redeemCode(user.id, code, planId);
     }
     res.json({ success: true, ...result });
   }));
@@ -1400,6 +1405,13 @@ export function createCommercialRouter(store: CommercialStore, options: { update
       return { adminPath };
     })();
     res.json({ success: true, adminPath: adminPath || store.getAdminPath() });
+  }));
+
+  router.post("/admin/settings/external-redeem/test", requireAdmin, route(async (req, res) => {
+    const code = String(req.body?.code || "").trim();
+    const result = await inspectExternalCard(store.getExternalRedeemSettings(true), code);
+    store.recordAdminAction(adminUser(res).id, "测试第三方卡密", "settings", "external_redeem", JSON.stringify({ provider: "shiyeka", result: "valid" }));
+    res.json({ success: true, result });
   }));
 
   router.post("/admin/contact-qr", requireAdmin, route((req, res) => {

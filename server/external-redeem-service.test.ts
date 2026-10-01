@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash, createHmac } from "node:crypto";
-import { externalRedeemRequestId, redeemExternalCard } from "./external-redeem-service.js";
+import { externalRedeemRequestId, inspectExternalCard, redeemExternalCard } from "./external-redeem-service.js";
 
 test("external redeem adapter sends authenticated idempotent JSON and normalizes yuan", async () => {
   let received: { url: string; init?: RequestInit } | null = null;
@@ -119,4 +119,25 @@ test("Shiyeka adapter recovers a same-project activation through query", async (
   assert.deepEqual(paths, ["/api/v1/card/activate", "/api/v1/card/query"]);
   assert.equal(result.amountCents, 990);
   assert.equal(result.recovered, true);
+});
+
+test("Shiyeka card inspection uses verify without consuming the card", async () => {
+  let receivedPath = "";
+  const result = await inspectExternalCard({
+    provider: "shiyeka",
+    enabled: false,
+    name: "十夜卡密",
+    apiUrl: "http://127.0.0.1:1111",
+    appKey: "APPKEY123",
+    apiKey: "app-secret-value",
+    authMode: "none",
+    amountUnit: "cents",
+    timeoutSeconds: 5,
+    allowPrivateNetwork: true,
+  }, "sy23456789abcdefgh", async input => {
+    receivedPath = new URL(String(input)).pathname;
+    return new Response(JSON.stringify({ code: 0, message: "ok", data: { valid: true, type: "money", remaining_amount: 19.9 } }));
+  });
+  assert.equal(receivedPath, "/api/v1/card/verify");
+  assert.deepEqual(result, { valid: true, kind: "money", amountCents: 1990 });
 });

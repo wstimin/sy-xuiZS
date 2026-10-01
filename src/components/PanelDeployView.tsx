@@ -925,10 +925,9 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             {/* Visual Animated Progress Bar */}
             <div className="deploy-progress-track w-full bg-white/5 rounded-full h-3 p-0.5 overflow-hidden border border-white/10">
               <div
-                className="deploy-progress-fill bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 h-full rounded-full transition-[width] duration-500 ease-out shadow-sm shadow-indigo-500/50 relative"
-                style={{ width: `${Math.min(Math.round((deployStep / 9) * 100), 100)}%` }}
+                className="deploy-progress-fill h-full w-full rounded-full relative"
+                style={{ transform: `scaleX(${Math.min(deployStep / 9, 1)})` }}
               >
-                <div className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
               </div>
             </div>
           </div>

@@ -1073,8 +1073,8 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
       </form>
 
       {(isDeploying || deployStep > 0 || deployError) && (
-        <div className="p-5 sm:p-6 rounded-2xl bg-[#0a0a0c] border border-white/10 space-y-5 shadow-2xl animate-in fade-in duration-300">
-          <div className="space-y-3">
+        <div className="deploy-progress-panel p-5 sm:p-6 rounded-2xl bg-[#0a0a0c] border border-white/10 space-y-5 shadow-2xl animate-in fade-in duration-300">
+          <div className="deploy-progress-header space-y-3 border-b border-white/10 pb-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <Activity className={`w-5 h-5 shrink-0 ${deployError ? 'text-rose-400' : deployStep === NODE_DEPLOY_STEPS.length && !isDeploying ? 'text-emerald-400' : 'text-indigo-400 animate-pulse'}`} />
@@ -1093,17 +1093,16 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
               </div>
             </div>
 
-            <div className="w-full bg-white/5 rounded-full h-3 p-0.5 overflow-hidden border border-white/10">
+            <div className="deploy-progress-track w-full rounded-full h-3 overflow-hidden border">
               <div
-                className="node-deploy-progress h-full rounded-full transition-[width] duration-500 ease-out relative overflow-hidden"
-                style={{ width: `${Math.max(4, Math.round((deployStep / NODE_DEPLOY_STEPS.length) * 100))}%` }}
+                className="deploy-progress-fill h-full w-full rounded-full relative"
+                style={{ transform: `scaleX(${Math.max(.04, deployStep / NODE_DEPLOY_STEPS.length)})` }}
               >
-                {isDeploying && <div className="absolute inset-0 node-deploy-progress-shimmer" />}
               </div>
             </div>
           </div>
 
-          {deployError && <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200">{deployError}</div>}
+          {deployError && <div className="deploy-error-panel p-3 rounded-xl border text-xs"><div className="deploy-error-panel__heading"><AlertTriangle /><strong>节点创建未完成</strong></div><p>{deployError}</p></div>}
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {NODE_DEPLOY_STEPS.map((label, index) => {
@@ -1111,7 +1110,7 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
               const completed = deployStep > step || (deployStep === NODE_DEPLOY_STEPS.length && !deployError);
               const active = deployStep === step && isDeploying;
               return (
-                <div key={label} className={`h-16 p-2.5 rounded-lg border flex items-center gap-2 transition-colors ${completed ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200' : active ? 'bg-indigo-500/15 border-indigo-500/40 text-white' : 'bg-white/5 border-white/5 text-zinc-500'}`}>
+                <div key={label} className={`deploy-progress-step h-16 p-2.5 rounded-lg border flex items-center gap-2 ${completed ? 'deploy-progress-step--completed text-emerald-100' : active ? 'deploy-progress-step--active text-white' : 'deploy-progress-step--idle'}`}>
                   {completed ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : active ? <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" /> : <span className="w-4 h-4 rounded-full border border-zinc-600 text-[9px] flex items-center justify-center shrink-0">{step}</span>}
                   <span className="text-[11px] font-semibold leading-tight">{label}</span>
                 </div>
