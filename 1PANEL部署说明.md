@@ -15,7 +15,7 @@
 - 永久发布页：[1panel-latest](https://github.com/wstimin/sy-xuiZS/releases/tag/1panel-latest)
 - SHA256 校验：[SHA256SUMS](https://github.com/wstimin/sy-xuiZS/releases/download/1panel-latest/SHA256SUMS)
 
-每个正式版本的发布页还会永久保留带版本号的 ZIP，例如 `xui-deploy-assistant-1panel-3.0.8.zip`。固定文件名始终指向最近一次构建成功的版本，旧版本发布包不会被覆盖或删除。以后每次发布都必须递增 `package.json` 版本号，并同步 `package-lock.json`、Git 标签和压缩包版本；禁止复用已有版本标签。
+每个正式版本的发布页还会永久保留带版本号的 ZIP，例如 `xui-deploy-assistant-1panel-3.0.9.zip`。固定文件名始终指向最近一次构建成功的版本，旧版本发布包不会被覆盖或删除。以后每次发布都必须递增 `package.json` 版本号，并同步 `package-lock.json`、Git 标签和压缩包版本；禁止复用已有版本标签。
 
 ## 一、运行环境
 

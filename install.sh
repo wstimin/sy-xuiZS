@@ -349,6 +349,41 @@ check_environment() {
   pause_if_tty
 }
 
+node_major_version() {
+  "$1" -v 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\).*$/\1/p'
+}
+
+select_supported_node() {
+  local candidate current_node node_dir major
+  local -a candidates=()
+  current_node=$(command -v node 2>/dev/null || true)
+  if [ -n "$current_node" ]; then
+    candidates+=("$current_node")
+  fi
+  # apt/rpm normally install here, while pre-existing Node.js distributions
+  # often leave an unsupported binary earlier in PATH (for example v24 in
+  # /usr/local/bin). Check both locations before reporting a failed install.
+  candidates+=("/usr/bin/node" "/usr/local/bin/node" "/opt/nodejs/bin/node")
+
+  for candidate in "${candidates[@]}"; do
+    if [ ! -x "$candidate" ]; then
+      continue
+    fi
+    major=$(node_major_version "$candidate")
+    if [ "$major" = "20" ] || [ "$major" = "22" ]; then
+      node_dir=$(dirname "$candidate")
+      PATH="$node_dir:$PATH"
+      export PATH
+      hash -r 2>/dev/null || true
+      NODE_BIN="$candidate"
+      NODE_MAJOR_VER="$major"
+      export NODE_BIN NODE_MAJOR_VER
+      return 0
+    fi
+  done
+  return 1
+}
+
 install_assistant() {
   echo -e "${CYAN}============================================================${NC}"
   echo -e "${BOLD}       🚀 安装 / 更新 3x-ui 部署助手面板 (Deploy Assistant)      ${NC}"
@@ -373,17 +408,12 @@ install_assistant() {
 
   echo -e "${BLUE}[3/5] 检查并补全 Node.js 运行环境...${NC}"
   NEED_NODE_INSTALL=false
-  if ! command -v node &> /dev/null; then
-    NEED_NODE_INSTALL=true
-    echo -e "${YELLOW}[INFO] 未检测到 Node.js 环境，准备自动安装 Node.js LTS (v20)...${NC}"
+  if select_supported_node; then
+    echo -e "${GREEN}[OK] Node.js 环境正常: $(node -v) ($(command -v node))${NC}"
   else
-    NODE_MAJOR_VER=$(node -v | cut -d'.' -f1 | sed 's/v//')
-    if [ "$NODE_MAJOR_VER" -lt 20 ] || [ "$NODE_MAJOR_VER" -gt 22 ]; then
-      NEED_NODE_INSTALL=true
-      echo -e "${YELLOW}[WARN] 当前 Node.js 版本 (v${NODE_MAJOR_VER}) 不在支持范围 20-22，准备安装 Node.js LTS (v20)...${NC}"
-    else
-      echo -e "${GREEN}[OK] Node.js 环境正常: $(node -v)${NC}"
-    fi
+    NEED_NODE_INSTALL=true
+    CURRENT_NODE_VERSION=$(node -v 2>/dev/null || echo "未安装")
+    echo -e "${YELLOW}[WARN] 当前 Node.js 版本 (${CURRENT_NODE_VERSION}) 不在支持范围 20-22，准备安装 Node.js LTS (v20)...${NC}"
   fi
 
   if [ "$NEED_NODE_INSTALL" = true ]; then
@@ -395,14 +425,20 @@ install_assistant() {
       curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
       $PKG_MANAGER install -y nodejs --allowerasing > /dev/null 2>&1
     fi
-    NODE_MAJOR_VER=$(node -v | cut -d'.' -f1 | sed 's/v//')
-    if [ "$NODE_MAJOR_VER" -lt 20 ] || [ "$NODE_MAJOR_VER" -gt 22 ]; then
+    if ! select_supported_node; then
+      CURRENT_NODE_VERSION=$(node -v 2>/dev/null || echo "未安装")
+      NODE_CANDIDATES="$(for candidate in /usr/bin/node /usr/local/bin/node /opt/nodejs/bin/node; do
+        if [ -x "$candidate" ]; then
+          printf '%s=%s ' "$candidate" "$("$candidate" -v 2>/dev/null || echo unknown)"
+        fi
+      done)"
       rm -rf "$DOWNLOADED_WORK_DIR"
-      echo -e "${RED}[ERROR] Node.js 安装后版本仍为 $(node -v)，商业版要求 Node.js 20 或 22。${NC}"
+      echo -e "${RED}[ERROR] Node.js 安装后仍未找到可用的 20/22 版本。当前命令: ${CURRENT_NODE_VERSION}; 可检测路径: ${NODE_CANDIDATES:-无}${NC}"
+      echo -e "${YELLOW}[HINT] 如果系统中同时存在 /usr/local/bin/node v24，请确认 /usr/bin/node 已安装 Node.js 20/22，或清理旧 Node.js 后重新运行安装。${NC}"
       pause_if_tty
       return 1
     fi
-    echo -e "${GREEN}[OK] Node.js 已成功安装: $(node -v)${NC}"
+    echo -e "${GREEN}[OK] Node.js 已成功安装: $(node -v) ($(command -v node))${NC}"
   fi
 
   echo -e "${BLUE}[4/5] 安装生产运行依赖并切换到新构建包...${NC}"
