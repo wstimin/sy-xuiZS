@@ -775,29 +775,47 @@ html[data-theme="dark"] .admin-status.info { color: #bae6fd !important; backgrou
   grid-template-columns: auto minmax(0,1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 12px 13px;
+  min-height: 70px;
+  padding: 12px 14px;
   border: 1px solid var(--admin-line);
   border-radius: 14px;
   color: var(--body);
   background: rgba(255,255,255,.5);
+  appearance: none;
+  font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color .2s ease, background .2s ease, transform .2s ease;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 140ms cubic-bezier(.23,1,.32,1);
 }
-.admin-settings-summary-row:hover { border-color: rgba(124,110,239,.35); background: rgba(255,255,255,.78); transform: translateY(-1px); }
+.admin-settings-summary-row:active { transform: scale(.99); }
+.admin-setting-summary-icon { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 auto; color: var(--admin-indigo); border: 1px solid rgba(124,110,239,.14); border-radius: 12px; background: rgba(139,92,246,.1); }
+.admin-setting-summary-icon svg { width: 18px; height: 18px; }
+.admin-settings-summary-row > span:nth-child(2) { min-width: 0; }
 .admin-settings-summary-row strong,.admin-settings-summary-row small { display: block; }
-.admin-settings-summary-row strong { color: var(--ink); font-size: 12px; }
-.admin-settings-summary-row small { margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.admin-settings-summary-row strong { color: var(--ink); font-size: 13px; font-weight: 800; letter-spacing: -.01em; line-height: 1.35; }
+.admin-settings-summary-row small { margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 550; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.admin-settings-row-action { width: 32px; height: 32px; display: grid; place-items: center; color: var(--admin-indigo); border: 1px solid rgba(124,110,239,.14); border-radius: 10px; background: rgba(139,92,246,.08); transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, transform 160ms cubic-bezier(.23,1,.32,1); }
+.admin-settings-row-action svg { width: 16px; height: 16px; }
+.admin-settings-summary-row.test-action .admin-setting-summary-icon { color: #047857; border-color: rgba(16,185,129,.18); background: rgba(16,185,129,.1); }
+.admin-settings-summary-row.test-action .admin-settings-row-action { color: #047857; border-color: rgba(16,185,129,.18); background: rgba(16,185,129,.1); }
+@media (hover: hover) and (pointer: fine) {
+  .admin-settings-summary-row:hover { border-color: rgba(124,110,239,.35); background-color: rgba(255,255,255,.78); box-shadow: 0 8px 18px rgba(99,102,241,.08); transform: translateY(-1px); }
+  .admin-settings-summary-row:hover .admin-settings-row-action { color: #fff; border-color: transparent; background: var(--gradient); transform: translateX(2px); }
+}
 html[data-theme="dark"] .admin-settings-summary-row {
   border-color: rgba(147,197,253,.22);
   color: #dbeafe;
   background: rgba(15,23,42,.28);
 }
-html[data-theme="dark"] .admin-settings-summary-row:hover { border-color: rgba(125,211,252,.52); background: rgba(96,165,250,.14); }
 html[data-theme="dark"] .admin-settings-summary-row strong { color: #f3f8ff !important; }
 html[data-theme="dark"] .admin-settings-summary-row small { color: #b8c9e1 !important; }
-html[data-theme="dark"] .admin-settings-row-action { color: #93c5fd !important; }
+html[data-theme="dark"] .admin-settings-row-action { color: #c4b5fd; border-color: rgba(196,181,253,.22); background: rgba(139,92,246,.14); }
 html[data-theme="dark"] .admin-setting-summary-icon { color: #c4b5fd; background: rgba(139,92,246,.2); }
+html[data-theme="dark"] .admin-settings-summary-row.test-action .admin-setting-summary-icon,html[data-theme="dark"] .admin-settings-summary-row.test-action .admin-settings-row-action { color: #6ee7b7; border-color: rgba(52,211,153,.25); background: rgba(16,185,129,.16); }
+@media (hover: hover) and (pointer: fine) {
+  html[data-theme="dark"] .admin-settings-summary-row:hover { border-color: rgba(125,211,252,.52); background-color: rgba(96,165,250,.14); }
+  html[data-theme="dark"] .admin-settings-summary-row:hover .admin-settings-row-action { color: #fff; }
+}
 
 html[data-theme="dark"] .admin-user-cell strong { color: #f3f8ff !important; }
 html[data-theme="dark"] .admin-user-cell small { color: #c7d8ef !important; }
@@ -1203,6 +1221,71 @@ html[data-theme="dark"] .admin-payment-table td { color: #c7d8ef; border-color: 
 html[data-theme="dark"] .admin-payment-table tbody tr:hover { background: rgba(147,197,253,.09); }
 html[data-theme="dark"] .admin-payment-table .admin-payment-name strong { color: #eef6ff; }
 html[data-theme="dark"] .admin-payment-table .admin-payment-name small { color: #a9bdd8; }
+
+/* Contact methods are compact responsive cards, not a wide payment table. */
+.admin-contact-method-list { width: 100%; display: grid; gap: 10px; }
+.admin-contact-method-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px,1.3fr) minmax(130px,1fr) auto auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 13px;
+  border: 1px solid var(--admin-line);
+  border-radius: 14px;
+  background: rgba(255,255,255,.56);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+.admin-contact-method-identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.admin-contact-method-identity > span { width: 34px; height: 34px; display: grid; flex: 0 0 auto; place-items: center; color: var(--admin-indigo); border-radius: 10px; background: rgba(139,92,246,.11); }
+.admin-contact-method-identity > span svg { width: 16px; height: 16px; }
+.admin-contact-method-identity > div,.admin-contact-method-account { min-width: 0; }
+.admin-contact-method-identity strong,.admin-contact-method-identity small,.admin-contact-method-account strong,.admin-contact-method-account small { display: block; }
+.admin-contact-method-identity strong { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.admin-contact-method-identity small { margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.admin-contact-method-account small { color: var(--muted); font-size: 9px; font-weight: 700; }
+.admin-contact-method-account strong { margin-top: 4px; overflow: hidden; color: var(--body); font-size: 11px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.admin-contact-method-state { display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; white-space: nowrap; }
+.admin-contact-method-qr { display: flex; align-items: center; gap: 7px; }
+.admin-contact-qr-preview { width: 58px; height: 58px; display: grid; flex: 0 0 58px; place-items: center; overflow: hidden; color: var(--soft); border: 1px dashed rgba(148,163,184,.4); border-radius: 11px; background: rgba(248,250,252,.78); }
+.admin-contact-qr-preview svg { width: 22px; height: 22px; }
+.admin-contact-qr-preview.has-image { border-style: solid; background: #fff; }
+.admin-contact-qr-preview img { width: 100%; height: 100%; display: block; object-fit: contain; }
+.admin-contact-qr-tools,.admin-contact-method-actions { display: flex; align-items: center; gap: 5px; }
+.admin-contact-qr-tools { flex-direction: column; }
+.admin-contact-method-upload { width: 30px; height: 30px; position: relative; display: grid; place-items: center; color: var(--admin-indigo); border: 1px solid rgba(117,87,238,.23); border-radius: 9px; background: rgba(255,255,255,.75); cursor: pointer; transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, transform 140ms cubic-bezier(.23,1,.32,1); }
+.admin-contact-method-upload svg { width: 14px; height: 14px; }
+.admin-contact-method-upload input { width: 1px; height: 1px; position: absolute; overflow: hidden; clip-path: inset(50%); opacity: 0; white-space: nowrap; }
+.admin-contact-method-upload.disabled { pointer-events: none; opacity: .5; }
+.admin-contact-method-upload:active { transform: scale(.96); }
+@media (hover: hover) and (pointer: fine) {
+  .admin-contact-method-card:hover { border-color: rgba(124,110,239,.3); background-color: rgba(255,255,255,.76); box-shadow: 0 8px 20px rgba(99,102,241,.07); }
+  .admin-contact-method-upload:hover { color: #fff; border-color: transparent; background: var(--gradient); }
+}
+html[data-theme="dark"] .admin-contact-method-card { border-color: rgba(147,197,253,.22); background: rgba(15,23,42,.25); }
+html[data-theme="dark"] .admin-contact-method-identity > span { color: #c4b5fd; background: rgba(139,92,246,.2); }
+html[data-theme="dark"] .admin-contact-method-identity strong,html[data-theme="dark"] .admin-contact-method-account strong { color: #eef6ff; }
+html[data-theme="dark"] .admin-contact-method-identity small,html[data-theme="dark"] .admin-contact-method-account small { color: #a9bdd8; }
+html[data-theme="dark"] .admin-contact-qr-preview { color: #93c5fd; border-color: rgba(147,197,253,.3); background: rgba(15,23,42,.38); }
+html[data-theme="dark"] .admin-contact-qr-preview.has-image { background: #fff; }
+html[data-theme="dark"] .admin-contact-method-upload { color: #c4b5fd; border-color: rgba(196,181,253,.25); background: rgba(139,92,246,.14); }
+@media (hover: hover) and (pointer: fine) {
+  html[data-theme="dark"] .admin-contact-method-card:hover { border-color: rgba(125,211,252,.42); background-color: rgba(30,58,95,.56); }
+}
+@media (max-width: 760px) {
+  .admin-contact-method-card { grid-template-columns: minmax(0,1fr) auto; gap: 11px 14px; }
+  .admin-contact-method-account { grid-column: 1; }
+  .admin-contact-method-state { grid-column: 2; grid-row: 1; }
+  .admin-contact-method-qr { grid-column: 1; grid-row: 3; }
+  .admin-contact-method-actions { grid-column: 2; grid-row: 3; justify-content: flex-end; }
+  .admin-contact-qr-tools { flex-direction: row; }
+}
+@media (max-width: 480px) {
+  .admin-contact-method-card { grid-template-columns: minmax(0,1fr); }
+  .admin-contact-method-state,.admin-contact-method-qr,.admin-contact-method-actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
+  .admin-contact-method-state { justify-content: space-between; }
+  .admin-contact-method-actions { padding-top: 4px; border-top: 1px solid var(--admin-line); }
+}
 
 /* The attention cards sit on the dark operations canvas too; keep their
    surface, labels, and status icons in the same blue-indigo theme instead of
