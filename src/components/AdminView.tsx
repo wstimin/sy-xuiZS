@@ -908,6 +908,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
       setVersionStatus(result.status);
       setUpdateDialogOpen(false);
       setUpdateConfirmation('');
+      setSecurityDialog('update');
       showToast('更新任务已手动启动', `目标版本 v${result.status.targetVersion || versionStatus.latestVersion}；可以关闭弹窗，后台进度会持续保存`, 'success');
     } catch (error) {
       showToast('更新启动失败', error instanceof Error ? error.message : '当前版本没有被替换', 'error');
