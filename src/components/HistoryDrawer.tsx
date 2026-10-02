@@ -45,7 +45,7 @@ const DetailField: React.FC<DetailFieldProps> = ({
   const canCopy = text !== '未记录';
 
   return (
-    <div className={wide ? 'history-detail-field sm:col-span-2' : 'history-detail-field'}>
+    <div className={`history-detail-field${wide ? ' is-wide' : ''}`}>
       <span className="history-detail-label">{label}</span>
       <div className="history-detail-value-row">
         <span className="history-detail-value">{text}</span>
@@ -234,6 +234,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   onSelectPanelToNode
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const detailRef = useRef<HTMLElement>(null);
 
   const selectedItem = useMemo(
     () => items.find(item => item.id === selectedId) || items[0] || null,
@@ -254,6 +255,10 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen, items, onClose]);
+
+  useEffect(() => {
+    detailRef.current?.scrollTo({ top: 0 });
+  }, [selectedItem?.id]);
 
   if (!isOpen) return null;
 
@@ -324,7 +329,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
               </div>
             </aside>
 
-            <main className="history-record-detail">
+            <main ref={detailRef} className="history-record-detail">
               {selectedItem?.type === 'panel' && selectedItem.panelData && (
                 <PanelHistoryDetail
                   data={selectedItem.panelData}
