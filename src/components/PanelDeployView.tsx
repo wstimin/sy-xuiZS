@@ -6,7 +6,7 @@ import { availableCapabilityText, Entitlement } from '../commercial';
 import { NumberInput } from './NumberInput';
 import {
   Terminal, Key, Server, Lock, Globe, Shield, Sparkles, Copy, Check, ExternalLink, Play, ArrowRight, X, Code2, CheckCircle2,
-  AlertTriangle, ShieldAlert, Cpu, HardDrive, Activity, Clock, AlertCircle, ChevronDown, ChevronUp, ChevronRight, Zap
+  AlertTriangle, ShieldAlert, Cpu, HardDrive, Activity, Clock, AlertCircle, CircleX, ChevronDown, ChevronUp, ChevronRight, Zap
 } from 'lucide-react';
 
 interface PanelDeployViewProps {
@@ -39,6 +39,10 @@ interface SshTestDetails {
   hasPasswordlessSudo: boolean;
   canInstall: boolean;
   hasCurl: boolean;
+  hasCaCertificates: boolean;
+  hasTar: boolean;
+  hasGzip: boolean;
+  missingDependencies: string[];
   warnings: string[];
   status: 'compatible' | 'warning' | 'incompatible';
 }
@@ -104,8 +108,6 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
       timer = setInterval(() => {
         setElapsedTime(prev => prev + 1);
       }, 1000);
-    } else {
-      setElapsedTime(0);
     }
     return () => clearInterval(timer);
   }, [isDeploying]);
@@ -290,6 +292,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
     }
 
     setIsDeploying(true);
+    setElapsedTime(0);
     setDeployLogs([]);
     setDeployStep(1);
     setDeployError(null);
@@ -370,6 +373,10 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
           backendResult = event.result as PanelResult;
         } else if (event.type === 'error') {
           streamError = String(event.error || '远程部署失败');
+          if (Number.isFinite(Number(event.step))) {
+            setDeployStep(Math.max(1, Math.min(9, Number(event.step))));
+          }
+          setDeployError(streamError);
           setDeployLogs(prev => [...prev, `[ERROR] ${streamError}`]);
         }
       };
@@ -686,7 +693,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                 </div>
                 <div className="system-status-card system-status-card--lime">
                   <span className="text-zinc-500 font-mono block">安装依赖</span>
-                  <span className="system-status-card__value">{sshTestResult.packageManager} / curl {sshTestResult.hasCurl ? '可用' : '缺失'}</span>
+                  <span className="system-status-card__value">{sshTestResult.missingDependencies?.length ? `待自动安装 ${sshTestResult.missingDependencies.length} 项` : `${sshTestResult.packageManager} / 依赖完整`}</span>
                 </div>
                 <div className={`system-status-card ${sshTestResult.canInstall ? 'system-status-card--violet' : 'system-status-card--rose'}`}>
                   <span className="text-zinc-500 font-mono block">部署权限</span>
@@ -906,9 +913,9 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
           <div className="deploy-progress-header space-y-3 border-b border-white/10 pb-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Activity className={`w-5 h-5 ${deployError ? 'text-rose-400' : 'text-indigo-400 animate-spin'}`} />
+                {deployError ? <CircleX className="w-5 h-5 text-rose-400" /> : <Activity className="w-5 h-5 text-indigo-400 animate-spin" />}
                 <h3 className="text-base font-bold text-white">
-                  {deployError ? '自动化安装失败' : isDeploying ? '自动化安装进行中' : '自动化安装状态'}
+                  {deployError ? '自动化安装已终止' : isDeploying ? '自动化安装进行中' : resultModal ? '自动化安装完成' : '自动化安装状态'}
                 </h3>
               </div>
               <div className="flex items-center gap-3 font-mono text-xs">
@@ -925,7 +932,7 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             {/* Visual Animated Progress Bar */}
             <div className="deploy-progress-track w-full bg-white/5 rounded-full h-3 p-0.5 overflow-hidden border border-white/10">
               <div
-                className="deploy-progress-fill h-full w-full rounded-full relative"
+                className={`deploy-progress-fill h-full w-full rounded-full relative ${deployError ? 'deploy-progress-fill--failed' : ''}`}
                 style={{ transform: `scaleX(${Math.min(deployStep / 9, 1)})` }}
               >
               </div>
@@ -936,20 +943,23 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
             <div className="deploy-error-panel p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200">
               <div className="deploy-error-panel__heading"><AlertCircle /><strong>安装后验证失败</strong></div>
               <p>{deployError}</p>
-              <small>如果面板服务已经启动，请先放行面板端口，并确认该地址能从部署助手所在服务器访问。</small>
+              <small>流程已在当前步骤终止，不会继续执行后续操作。请根据错误提示处理后重新进行 SSH 快速检测。</small>
             </div>
           )}
 
           {/* 9-Step Visual Interactive Timeline */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
             {DEPLOY_STEPS_INFO.map(s => {
-              const isCompleted = deployStep > s.step;
-              const isActive = deployStep === s.step;
+              const isFailed = Boolean(deployError) && deployStep === s.step;
+              const isCompleted = deployStep > s.step || (Boolean(resultModal) && deployStep === s.step);
+              const isActive = !isFailed && isDeploying && deployStep === s.step;
               return (
                 <div
                   key={s.step}
                   className={`deploy-progress-step p-3 rounded-xl border transition-transform duration-300 flex items-start gap-2.5 ${
-                    isCompleted
+                    isFailed
+                      ? 'deploy-progress-step--failed bg-rose-500/15 border-rose-400/60 text-rose-100 shadow-md shadow-rose-500/10'
+                      : isCompleted
                       ? 'deploy-progress-step--completed bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
                       : isActive
                       ? 'deploy-progress-step--active bg-indigo-500/15 border-indigo-500/50 text-white shadow-md shadow-indigo-500/10 scale-[1.01]'
@@ -957,7 +967,9 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
                   }`}
                 >
                   <div className="mt-0.5 shrink-0">
-                    {isCompleted ? (
+                    {isFailed ? (
+                      <CircleX className="w-4 h-4 text-rose-400" />
+                    ) : isCompleted ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     ) : isActive ? (
                       <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />

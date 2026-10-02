@@ -9,7 +9,7 @@ import { createServer as createViteServer } from "vite";
 import { attachCommercialUser, commercialUser, createCommercialRouter, requireCommercialUser } from "./server/commercial-api.js";
 import { CommercialStore, maskHost } from "./server/commercial-store.js";
 import { buildInbound, InboundInput } from "./server/inbound-builder.js";
-import { buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, inspectServer, SshInput } from "./server/ssh.js";
+import { buildDependencyInstallCommand, buildInstallCommand, connectSsh, execSsh, formatServerInspectionError, inspectServer, missingServerDependencies, serverDependencyLabel, shellQuote, SshInput } from "./server/ssh.js";
 import { cleanHostInput, normalizeWebPath, optionalString, panelPassword, panelUsername, randomToken, validPort } from "./server/validation.js";
 import { findInboundRecord, isRetryablePanelConnectionError, parseApiTokenFromOutput, XuiClient, XuiClientOptions } from "./server/xui-client.js";
 import { injectSocksRouting, parseSocksInput } from "./server/xray-template.js";
@@ -119,6 +119,19 @@ function requireAppAuth(req: Request, res: Response, next: NextFunction) {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function remoteCommandFailure(label: string, result: { stdout: string; stderr: string; code: number }) {
+  const lines = `${result.stderr}\n${result.stdout}`
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line
+      .replace(/\b(password|passwd|token|secret|username)\s*[:=]\s*\S+/gi, "$1=[已隐藏]")
+      .replace(/https?:\/\/\S+/gi, "[远程地址]"));
+  const detail = [...new Set(lines)].slice(-3).join("；").slice(0, 360);
+  return `${label}（退出码 ${result.code}）${detail ? `：${detail}` : ""}`;
 }
 
 function formatElapsed(milliseconds: number): string {
@@ -251,6 +264,11 @@ async function startServer() {
       res.write(`${JSON.stringify(event)}\n`);
       (res as Response & { flush?: () => void }).flush?.();
     };
+    let currentStep = 1;
+    const progress = (step: number, message: string) => {
+      currentStep = step;
+      write({ type: "log", step, message });
+    };
     const heartbeat = setInterval(() => write({ type: "heartbeat", timestamp: Date.now() }), 10_000);
     heartbeat.unref();
     let session;
@@ -281,14 +299,15 @@ async function startServer() {
       const cachedInspection = takeSshInspection(body.sshSessionId, body);
       if (!cachedInspection) throw new Error("SSH 检测会话无效或已过期，请重新执行快速检测后再部署");
       let systemInfo: ServerInspection;
-      write({ type: "log", step: 1, message: `[SSH] 正在建立正式部署连接 ${host}:${body.sshPort || 22}` });
+      progress(1, `[SSH] 正在建立正式部署连接 ${host}:${body.sshPort || 22}`);
       session = await connectSsh(body, {
         timeoutMs: 25_000,
         expectedFingerprint: cachedInspection.hostKeyFingerprint,
       });
-      write({ type: "log", step: 1, message: `[SSH] 正式部署连接成功，主机密钥指纹 ${session.fingerprint}` });
-      systemInfo = cachedInspection;
-      write({ type: "log", step: 2, message: `[OS] 已复用快速检测结果：${systemInfo.osName} / ${systemInfo.arch}` });
+      progress(1, `[SSH] 正式部署连接成功，主机密钥指纹 ${session.fingerprint}`);
+      progress(2, "[ENV] 正在重新检测系统、权限和安装依赖");
+      systemInfo = await inspectServer(session, { timeoutMs: 15_000 });
+      progress(2, `[OS] 环境检测完成：${systemInfo.osName} / ${systemInfo.arch}`);
       if (!systemInfo.systemdAvailable) throw new Error("服务器没有可用的 systemd，无法安装面板服务");
       if (!systemInfo.canInstall) throw new Error("当前 SSH 用户不是 root，且没有可用的免密 sudo 权限，无法安装面板");
       if (!systemInfo.isRoot) {
@@ -296,8 +315,41 @@ async function startServer() {
         if (sudo.code !== 0) throw new Error("当前 SSH 用户的免密 sudo 权限不可用，请重新检测服务器权限");
       }
 
+      const missingDependencies = missingServerDependencies(systemInfo);
+      if (missingDependencies.length) {
+        const dependencyNames = missingDependencies.map(serverDependencyLabel).join("、");
+        progress(2, `[ENV] 检测到缺少依赖：${dependencyNames}，正在通过 ${systemInfo.packageManager} 自动安装`);
+        const dependencyCommand = buildDependencyInstallCommand(
+          systemInfo.packageManager,
+          !systemInfo.isRoot,
+          missingDependencies,
+        );
+        const dependencyInstall = await execSsh(session.client, dependencyCommand, { timeoutMs: 6 * 60_000 });
+        if (dependencyInstall.code !== 0) {
+          throw new Error(remoteCommandFailure(`自动安装依赖 ${dependencyNames} 失败`, dependencyInstall));
+        }
+        progress(2, "[ENV] 依赖安装完成，正在重新验证环境");
+        systemInfo = await inspectServer(session, { timeoutMs: 15_000 });
+        const stillMissing = missingServerDependencies(systemInfo);
+        if (stillMissing.length) {
+          throw new Error(`依赖安装后验证失败，仍然缺少：${stillMissing.map(serverDependencyLabel).join("、")}`);
+        }
+        progress(2, "[ENV] 必要依赖已安装并验证通过");
+      } else {
+        progress(2, "[ENV] 必要依赖完整，无需安装");
+      }
+
       const scriptLabel = "官方脚本";
-      write({ type: "log", step: 3, message: `[ENV] 环境检查完成，准备执行${scriptLabel}` });
+      progress(3, `[ENV] 环境检查完成，正在验证${scriptLabel}下载地址`);
+      const installerCheck = await execSsh(
+        session.client,
+        `curl -fLsS --connect-timeout 10 --max-time 25 -o /dev/null ${shellQuote(scriptUrl)}`,
+        { timeoutMs: 35_000 },
+      );
+      if (installerCheck.code !== 0) {
+        throw new Error(remoteCommandFailure("官方安装脚本下载检测失败", installerCheck));
+      }
+      progress(3, `[ENV] ${scriptLabel}下载地址可用，安装参数已生成`);
       const command = buildInstallCommand({
         scriptUrl,
         username,
@@ -311,10 +363,10 @@ async function startServer() {
         scriptArgs: [OFFICIAL_INSTALLER_VERSION],
         configurePanelAfterInstall: true,
       });
-      write({ type: "log", step: 4, message: `[INSTALL] 正在执行${scriptLabel}，安装输出已在后端安全收集` });
+      progress(4, `[INSTALL] 正在执行${scriptLabel}，安装输出已在后端安全收集`);
       const installProgressTimers = [
-        setTimeout(() => write({ type: "log", step: 5, message: "[INSTALL] 正在安装组件并写入面板配置" }), 12_000),
-        setTimeout(() => write({ type: "log", step: 6, message: "[CONFIG] 正在初始化面板服务与访问参数" }), 35_000),
+        setTimeout(() => progress(5, "[INSTALL] 正在安装组件并写入面板配置"), 12_000),
+        setTimeout(() => progress(6, "[CONFIG] 正在初始化面板服务与访问参数"), 35_000),
       ];
       let install;
       try {
@@ -325,15 +377,10 @@ async function startServer() {
         installProgressTimers.forEach(clearTimeout);
       }
       if (install.code !== 0) {
-        const lastError = install.stderr
-          .split(/\r?\n/)
-          .map(line => line.trim())
-          .filter(line => line && !/curl|bash\s|https?:\/\/|token|password|username/i.test(line))
-          .at(-1);
-        throw new Error(lastError ? `面板安装失败：${lastError.slice(0, 240)}` : `安装脚本退出码 ${install.code}`);
+        throw new Error(remoteCommandFailure("面板安装失败", install));
       }
 
-      write({ type: "log", step: 7, message: "[VERIFY] 正在验证服务和读取安装结果" });
+      progress(7, "[VERIFY] 正在验证服务和读取安装结果");
       const sudo = systemInfo.isRoot ? "" : "sudo -n ";
       const verifyCommand = `${sudo}systemctl is-active x-ui && ${sudo}bash -c 'if [ -r /etc/x-ui/install-result.env ]; then . /etc/x-ui/install-result.env; printf "__XUI_USERNAME__=%s\\n__XUI_PASSWORD__=%s\\n__XUI_PANEL_PORT__=%s\\n__XUI_WEB_BASE_PATH__=%s\\n__XUI_ACCESS_URL__=%s\\n__XUI_API_TOKEN__=%s\\n" "$XUI_USERNAME" "$XUI_PASSWORD" "$XUI_PANEL_PORT" "$XUI_WEB_BASE_PATH" "$XUI_ACCESS_URL" "$XUI_API_TOKEN"; fi; if [ -x /usr/local/x-ui/x-ui ]; then cert_output=$(/usr/local/x-ui/x-ui setting -getCert true 2>/dev/null || true); web_cert=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*cert:/{print \\$2; exit}"); web_key=$(printf "%s\\n" "$cert_output" | awk -F": *" "/^[[:space:]]*key:/{print \\$2; exit}"); printf "__XUI_WEB_CERT_FILE__=%s\\n__XUI_WEB_KEY_FILE__=%s\\n" "$web_cert" "$web_key"; fi'`;
       const verify = await execSsh(session.client, verifyCommand, { timeoutMs: 30_000 });
@@ -344,7 +391,7 @@ async function startServer() {
       const fallbackProtocol = sslMode === "none" ? "http" : "https";
       const accessUrl = `${fallbackProtocol}://${domain || host}:${installedPort}${installedPath}`;
 
-      write({ type: "log", step: 8, message: "[AUTH] 正在验证面板登录凭证" });
+      progress(8, "[AUTH] 正在验证面板登录凭证");
       panelClient = new XuiClient({
         panelAddress: domain || host,
         panelPort: installedPort,
@@ -372,16 +419,16 @@ async function startServer() {
 
       let apiToken = installed.API_TOKEN || parseApiTokenFromOutput(`${install.stdout}\n${install.stderr}`) || undefined;
       if (apiToken) {
-        write({ type: "log", step: 8, message: "[TOKEN] 登录凭证已验证，并已从安装结果中提取面板 API Token" });
+        progress(8, "[TOKEN] 登录凭证已验证，并已从安装结果中提取面板 API Token");
       }
       if (!apiToken) {
-        write({ type: "log", step: 8, message: "[TOKEN] 正在读取节点创建所需的 API Token" });
+        progress(8, "[TOKEN] 正在读取节点创建所需的 API Token");
         try {
           apiToken = await panelClient.getApiToken();
         } catch (error) {
           throw new Error(`面板已安装，但未能读取创建节点所需的 API Token：${errorMessage(error)}`);
         }
-        write({ type: "log", step: 8, message: "[TOKEN] API Token 已读取并将自动带入节点页面" });
+        progress(8, "[TOKEN] API Token 已读取并将自动带入节点页面");
       }
 
       const result = {
@@ -402,7 +449,7 @@ async function startServer() {
         panelFlavor: "official" as const,
         systemInfo,
       };
-      write({ type: "log", step: 9, message: "[SUCCESS] 面板服务已启动，安装结果验证通过" });
+      progress(9, "[SUCCESS] 面板服务已启动，安装结果验证通过");
       remoteSucceeded = true;
       commercialStore.succeedDeployment(
         reservation.deploymentId,
@@ -416,7 +463,7 @@ async function startServer() {
       } else {
         commercialStore.failDeployment(reservation.deploymentId, errorMessage(error));
       }
-      write({ type: "error", error: errorMessage(error) });
+      write({ type: "error", step: currentStep, error: errorMessage(error) });
       completed = true;
     } finally {
       clearInterval(heartbeat);

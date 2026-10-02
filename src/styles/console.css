@@ -1091,6 +1091,8 @@ html[data-theme="dark"] .console-shell .account-pagination button { border-color
 .deploy-progress-track { position: relative; height: 13px !important; padding: 2px !important; border-color: rgba(147,197,253,.36) !important; background: rgba(15,23,42,.66) !important; box-shadow: inset 0 1px 4px rgba(2,6,23,.4), 0 0 0 1px rgba(129,140,248,.06); }
 .deploy-progress-fill { overflow: hidden; transform-origin: left center; background: linear-gradient(90deg, #8b5cf6 0%, #ec4899 24%, #60a5fa 48%, #22d3ee 72%, #34d399 100%) !important; box-shadow: 0 0 20px rgba(96,165,250,.54), inset 0 1px 0 rgba(255,255,255,.4); transition: transform 220ms var(--ease-out) !important; will-change: transform; }
 .deploy-progress-fill::after { position: absolute; inset: 0; content: ''; background: linear-gradient(100deg, transparent, rgba(255,255,255,.42), transparent); transform: translateX(-100%); animation: deployment-progress-sheen 1.8s linear infinite; }
+.deploy-progress-fill--failed { background: linear-gradient(90deg, #fb7185, #e11d48) !important; box-shadow: 0 0 18px rgba(244,63,94,.42), inset 0 1px 0 rgba(255,255,255,.28); }
+.deploy-progress-fill--failed::after { opacity: 0; animation: none; }
 .deploy-progress-step {
   --deploy-accent: 96 165 250;
   position: relative;
@@ -1117,6 +1119,9 @@ html[data-theme="dark"] .console-shell .account-pagination button { border-color
 .deploy-progress-step--completed { border-color: rgb(var(--deploy-accent) / .52) !important; background: linear-gradient(145deg, rgb(var(--deploy-accent) / .25), rgba(30,58,95,.74) 68%) !important; }
 .deploy-progress-step--active { border-color: rgb(var(--deploy-accent) / .82) !important; background: linear-gradient(145deg, rgb(var(--deploy-accent) / .38), rgba(30,58,95,.76) 70%) !important; box-shadow: 0 12px 28px rgb(var(--deploy-accent) / .2), inset 0 1px 0 rgba(255,255,255,.16); }
 .deploy-progress-step--active::before { animation: deployment-active-glow 1.8s var(--ease-in-out) infinite; }
+.deploy-progress-step--failed { --deploy-accent: 251 113 133; border-color: rgba(251,113,133,.72) !important; background: linear-gradient(145deg, rgba(159,18,57,.42), rgba(69,10,10,.45)) !important; box-shadow: 0 10px 24px rgba(190,24,93,.16), inset 0 1px 0 rgba(254,205,211,.12); }
+.deploy-progress-step--failed::before { opacity: .2; animation: none; }
+.deploy-progress-step--failed p { color: #fecdd3 !important; }
 .deploy-progress-step--idle { color: #c1d2e8 !important; }
 .deploy-progress-step--idle p { color: #9fb4d0 !important; }
 .deploy-progress-step--completed p,.deploy-progress-step--active p { color: #b8c9e1 !important; }

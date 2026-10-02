@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildInstallCommand, formatServerInspectionError, formatSshConnectionError, matchesSshHostKey, parseServerInspectionOutput, shellQuote, sshHostKeyFingerprint } from "./ssh.js";
+import { buildDependencyInstallCommand, buildInstallCommand, formatServerInspectionError, formatSshConnectionError, matchesSshHostKey, parseServerInspectionOutput, shellQuote, sshHostKeyFingerprint } from "./ssh.js";
 
 test("shellQuote safely escapes single quotes", () => {
   assert.equal(shellQuote("a'b"), "'a'\"'\"'b'");
@@ -117,6 +117,17 @@ test("buildInstallCommand applies final panel credentials through the official x
   assert.doesNotMatch(command, /safe password ' value/);
 });
 
+test("buildDependencyInstallCommand installs only allowlisted packages", () => {
+  const apt = buildDependencyInstallCommand("apt", true, ["curl", "ca-certificates", "curl"]);
+  assert.match(apt, /^sudo -n sh -c /);
+  assert.match(apt, /apt-get update/);
+  assert.match(apt, /apt-get install -y --no-install-recommends curl ca-certificates/);
+  const dnf = buildDependencyInstallCommand("dnf", false, ["tar", "gzip"]);
+  assert.match(dnf, /^sh -c /);
+  assert.match(dnf, /dnf -y install tar gzip/);
+  assert.throws(() => buildDependencyInstallCommand("unknown", false, ["curl"]), /没有检测到支持的包管理器/);
+});
+
 test("parseServerInspectionOutput reports a compatible systemd server", () => {
   const details = parseServerInspectionOutput(
     { host: "203.0.113.10", port: 22, user: "root", fingerprint: "SHA256:test", latencyMs: 42 },
@@ -136,6 +147,9 @@ test("parseServerInspectionOutput reports a compatible systemd server", () => {
       "__UID__=0",
       "__SUDO__=not-required",
       "__CURL__=yes",
+      "__CA_CERTIFICATES__=yes",
+      "__TAR__=yes",
+      "__GZIP__=yes",
       "__PKG_MANAGER__=apt",
     ].join("\n"),
   );
@@ -161,6 +175,9 @@ test("parseServerInspectionOutput accepts a non-root user with passwordless sudo
       "__UID__=1000",
       "__SUDO__=yes",
       "__CURL__=yes",
+      "__CA_CERTIFICATES__=yes",
+      "__TAR__=yes",
+      "__GZIP__=yes",
       "__PKG_MANAGER__=apt",
     ].join("\n"),
   );
@@ -183,6 +200,9 @@ test("parseServerInspectionOutput rejects a non-root user without passwordless s
       "__UID__=1000",
       "__SUDO__=no",
       "__CURL__=yes",
+      "__CA_CERTIFICATES__=yes",
+      "__TAR__=yes",
+      "__GZIP__=yes",
       "__PKG_MANAGER__=apt",
     ].join("\n"),
   );
@@ -208,6 +228,9 @@ test("parseServerInspectionOutput rejects systems where systemd is not PID 1", (
       "__UID__=0",
       "__SUDO__=not-required",
       "__CURL__=yes",
+      "__CA_CERTIFICATES__=yes",
+      "__TAR__=yes",
+      "__GZIP__=yes",
       "__PKG_MANAGER__=apt",
     ].join("\n"),
   );
@@ -215,4 +238,26 @@ test("parseServerInspectionOutput rejects systems where systemd is not PID 1", (
   assert.equal(details.status, "incompatible");
   assert.equal(details.systemdAvailable, false);
   assert.match(details.warnings.join("\n"), /未运行 systemd/);
+});
+
+test("parseServerInspectionOutput reports dependencies that can be installed automatically", () => {
+  const details = parseServerInspectionOutput(
+    { host: "203.0.113.20", port: 22, user: "root", fingerprint: "SHA256:test", latencyMs: 42 },
+    [
+      "__OS__=Debian GNU/Linux 13 (trixie)",
+      "__SYSTEMD_ACTIVE__=yes",
+      "__RAM_KB__=1048576",
+      "__DISK_FREE_KB__=10485760",
+      "__UID__=0",
+      "__SUDO__=not-required",
+      "__CURL__=no",
+      "__CA_CERTIFICATES__=no",
+      "__TAR__=yes",
+      "__GZIP__=yes",
+      "__PKG_MANAGER__=apt",
+    ].join("\n"),
+  );
+  assert.equal(details.status, "warning");
+  assert.deepEqual(details.missingDependencies, ["curl", "ca-certificates"]);
+  assert.match(details.warnings.join("\n"), /正式部署时将自动安装/);
 });

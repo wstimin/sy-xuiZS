@@ -80,6 +80,54 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+export type ServerDependency = "curl" | "ca-certificates" | "tar" | "gzip";
+
+const dependencyLabels: Record<ServerDependency, string> = {
+  curl: "curl",
+  "ca-certificates": "CA 证书",
+  tar: "tar",
+  gzip: "gzip",
+};
+
+export function missingServerDependencies(details: {
+  hasCurl: boolean;
+  hasCaCertificates: boolean;
+  hasTar: boolean;
+  hasGzip: boolean;
+}): ServerDependency[] {
+  const missing: ServerDependency[] = [];
+  if (!details.hasCurl) missing.push("curl");
+  if (!details.hasCaCertificates) missing.push("ca-certificates");
+  if (!details.hasTar) missing.push("tar");
+  if (!details.hasGzip) missing.push("gzip");
+  return missing;
+}
+
+export function serverDependencyLabel(dependency: ServerDependency) {
+  return dependencyLabels[dependency];
+}
+
+export function buildDependencyInstallCommand(
+  packageManager: string,
+  useSudo: boolean,
+  missing: ServerDependency[],
+) {
+  const allowed = new Set<ServerDependency>(["curl", "ca-certificates", "tar", "gzip"]);
+  const packages = [...new Set(missing)].filter(item => allowed.has(item));
+  if (!packages.length) return ":";
+  let installer: string;
+  if (packageManager === "apt") {
+    installer = `export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")}`;
+  } else if (packageManager === "dnf") {
+    installer = `dnf -y install ${packages.join(" ")}`;
+  } else if (packageManager === "yum") {
+    installer = `yum -y install ${packages.join(" ")}`;
+  } else {
+    throw new Error("服务器缺少必要依赖，但没有检测到支持的包管理器（apt、dnf 或 yum）");
+  }
+  return `${useSudo ? "sudo -n " : ""}sh -c ${shellQuote(installer)}`;
+}
+
 export function buildInstallCommand(params: {
   scriptUrl: string;
   username: string;
@@ -279,7 +327,12 @@ export function parseServerInspectionOutput(
   const warnings: string[] = [];
   if (!isRoot && hasPasswordlessSudo) warnings.push("当前用户不是 root，部署时将自动通过免密 sudo 提权。");
   if (!canInstall) warnings.push("当前用户不是 root，且没有可用的免密 sudo 权限，无法执行部署。");
-  if (values.get("CURL") !== "yes") warnings.push("服务器尚未安装 curl，安装脚本可能无法启动。");
+  const hasCurl = values.get("CURL") === "yes";
+  const hasCaCertificates = values.get("CA_CERTIFICATES") === "yes";
+  const hasTar = values.get("TAR") === "yes";
+  const hasGzip = values.get("GZIP") === "yes";
+  const missingDependencies = missingServerDependencies({ hasCurl, hasCaCertificates, hasTar, hasGzip });
+  if (missingDependencies.length) warnings.push(`服务器缺少安装依赖：${missingDependencies.map(serverDependencyLabel).join("、")}；正式部署时将自动安装。`);
   const totalRamMb = Math.round(Number(values.get("RAM_KB") || 0) / 1024);
   if (totalRamMb && totalRamMb < 512) warnings.push("服务器内存低于 512MB，建议先配置 Swap。");
   if (!systemdAvailable) warnings.push("当前系统未运行 systemd，无法安装 x-ui 系统服务。");
@@ -305,7 +358,11 @@ export function parseServerInspectionOutput(
     isRoot,
     hasPasswordlessSudo,
     canInstall,
-    hasCurl: values.get("CURL") === "yes",
+    hasCurl,
+    hasCaCertificates,
+    hasTar,
+    hasGzip,
+    missingDependencies,
     warnings,
     status: !systemdAvailable || !canInstall ? "incompatible" : warnings.length ? "warning" : "compatible",
   };
@@ -326,6 +383,9 @@ export async function inspectServer(
     "printf '__UID__='; id -u",
     "printf '__SUDO__='; if [ \"$(id -u)\" = \"0\" ]; then echo not-required; elif command -v sudo >/dev/null 2>&1 && [ \"$(sudo -n env sh -c 'id -u' 2>/dev/null)\" = \"0\" ]; then echo yes; else echo no; fi",
     "printf '__CURL__='; command -v curl >/dev/null && echo yes || echo no",
+    "printf '__CA_CERTIFICATES__='; if [ -s /etc/ssl/certs/ca-certificates.crt ] || [ -s /etc/pki/tls/certs/ca-bundle.crt ]; then echo yes; else echo no; fi",
+    "printf '__TAR__='; command -v tar >/dev/null && echo yes || echo no",
+    "printf '__GZIP__='; command -v gzip >/dev/null && echo yes || echo no",
     "printf '__PKG_MANAGER__='; if command -v apt-get >/dev/null; then echo apt; elif command -v dnf >/dev/null; then echo dnf; elif command -v yum >/dev/null; then echo yum; else echo unknown; fi",
   ].join("; ");
   const result = await execSsh(session.client, command, { timeoutMs: options.timeoutMs ?? 12_000 });
