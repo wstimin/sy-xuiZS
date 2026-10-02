@@ -252,6 +252,11 @@ button.admin-user-cell { cursor: pointer; }
 .admin-external-redeem-test-result svg { width: 16px; height: 16px; flex: 0 0 auto; }
 .admin-external-redeem-test-result.success { color: #047857; border-color: rgba(16,185,129,.3); background: rgba(209,250,229,.68); }
 .admin-external-redeem-test-result.error { color: #be123c; border-color: rgba(244,63,94,.3); background: rgba(255,228,230,.7); }
+.admin-redeem-result-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
+.admin-redeem-result-list { display: grid; gap: 9px; max-height: min(52vh, 460px); overflow: auto; padding: 3px; border: 1px solid rgba(148,163,184,.2); border-radius: 15px; background: rgba(241,245,249,.64); }
+.admin-redeem-result-list code { display: block; min-width: 0; overflow-x: auto; padding: 12px 14px; border: 1px solid rgba(99,102,241,.17); border-radius: 11px; color: #312e81; background: rgba(255,255,255,.92); font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size: 13px; font-weight: 700; letter-spacing: .055em; line-height: 1.35; white-space: nowrap; scrollbar-width: thin; }
+html[data-theme="dark"] .admin-redeem-result-list { border-color: rgba(147,197,253,.22); background: rgba(15,23,42,.28); }
+html[data-theme="dark"] .admin-redeem-result-list code { border-color: rgba(147,197,253,.22); color: #eef6ff; background: rgba(15,23,42,.48); }
 .admin-form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 15px; }
 .admin-password-form { display: grid; gap: 15px; }
 .admin-password-form > .admin-button { justify-self: start; }

@@ -419,8 +419,9 @@ export const PanelDeployView: React.FC<PanelDeployViewProps> = ({
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
       {onOpenResources && <button type="button" className="deploy-resource-link" onClick={onOpenResources}><Server /><span>还没有服务器？前往资源推荐</span><ArrowRight /></button>}
-      <div className="rounded-md border border-indigo-500/25 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
-        面板可用次数：{availableCapabilityText(entitlements, 'panel') || '0 次'}
+      <div className="deploy-quota-summary panel">
+        <span>面板可用次数</span>
+        <strong>{availableCapabilityText(entitlements, 'panel') || '0 次'}</strong>
       </div>
       {/* Page Title & Intro */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/10">

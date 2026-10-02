@@ -522,8 +522,9 @@ export const NodeDeployView: React.FC<NodeDeployViewProps> = ({
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
       {onOpenResources && <button type="button" className="deploy-resource-link residential" onClick={onOpenResources}><Server /><span>需要服务器或住宅 IP？查看资源推荐</span><ArrowRight /></button>}
-      <div className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-        节点可用次数：{availableCapabilityText(entitlements, 'node') || '0 次'}
+      <div className="deploy-quota-summary node">
+        <span>节点可用次数</span>
+        <strong>{availableCapabilityText(entitlements, 'node') || '0 次'}</strong>
       </div>
       {/* Page Title */}
       <div className="pb-6 border-b border-white/10">
