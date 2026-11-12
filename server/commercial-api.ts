@@ -766,6 +766,14 @@ function configuredPaymentCallbackUrl(store: CommercialStore, provider: string, 
   }
 }
 
+function paymentReturnPath(planSnapshot: string) {
+  try {
+    return JSON.parse(planSnapshot || "{}").kind === "wallet_topup" ? "/console/account/overview" : "/console/pricing";
+  } catch {
+    return "/console/pricing";
+  }
+}
+
 async function createCheckout(store: CommercialStore, order: any) {
   const method = store.getPaymentMethods(true, true).find(item => item.id === order.paymentProvider);
   if (!method?.enabled) throw new Error("订单所选支付方式已停用，请取消订单后重新下单");
@@ -778,6 +786,7 @@ async function createCheckout(store: CommercialStore, order: any) {
   try {
     const baseUrl = paymentBaseUrl(store, method.callbackBaseUrl);
     const siteUrl = paymentBaseUrl(store);
+    const returnPath = paymentReturnPath(order.planSnapshot);
     const config = channelConfig(method);
     if (provider === "epay" && order.paymentChannel) config.channel = order.paymentChannel;
     const paypalReturnUrl = `${baseUrl}/api/payment/paypal/${encodeURIComponent(method.id)}/return`;
@@ -787,8 +796,8 @@ async function createCheckout(store: CommercialStore, order: any) {
       name: String(snapshot.name || "网络搭建服务"),
       userKey: user?.email || user?.username || order.userId,
       notifyUrl: `${baseUrl}/api/payment/${provider}/${encodeURIComponent(method.id)}/notify`,
-      returnUrl: provider === "paypal" ? paypalReturnUrl : `${siteUrl}/console/account/orders?payment=return&order=${encodeURIComponent(order.id)}`,
-      cancelUrl: `${siteUrl}/console/account/orders?payment=cancel&order=${encodeURIComponent(order.id)}`,
+      returnUrl: provider === "paypal" ? paypalReturnUrl : `${siteUrl}${returnPath}?payment_return=${encodeURIComponent(order.id)}`,
+      cancelUrl: `${siteUrl}${returnPath}?payment_cancel=${encodeURIComponent(order.id)}`,
       expiresAt: order.expiresAt,
     });
     store.closeOpenPaymentAttempts(order.id);
@@ -999,7 +1008,7 @@ export function createCommercialRouter(store: CommercialStore, options: { update
       if (verified.orderNo !== order.orderNo || verified.amountCents !== order.amountCents) throw new Error("PayPal 扣款订单或金额不匹配");
       store.completePaymentAttempt(order.id, channel.id, verified.tradeNo, verified.payload);
       store.recordPaymentNotification(channel.id, "paypal", verified.orderNo, "accepted", verified.payload);
-      return res.redirect(`${baseUrl}/console?payment=success&order=${encodeURIComponent(order.id)}`);
+      return res.redirect(`${baseUrl}${paymentReturnPath(order.planSnapshot)}?payment_return=${encodeURIComponent(order.id)}`);
     } catch (error) {
       store.recordPaymentNotification(channel.id, "paypal", "", "rejected", { token }, message(error));
       return res.redirect(`${baseUrl}/console?payment=error`);

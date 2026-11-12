@@ -848,7 +848,7 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
     assert.match(createdOrder.payment.checkoutUrl, /[?&]type=wxpay(?:&|$)/);
     const checkoutUrl = new URL(createdOrder.payment.checkoutUrl);
     assert.equal(checkoutUrl.searchParams.get("notify_url"), "https://site.example.test/api/payment/epay/epay-live/notify");
-    assert.equal(checkoutUrl.searchParams.get("return_url"), `https://site.example.test/console/account/orders?payment=return&order=${encodeURIComponent(order.id)}`);
+    assert.equal(checkoutUrl.searchParams.get("return_url"), `https://site.example.test/console/pricing?payment_return=${encodeURIComponent(order.id)}`);
 
     const directVisit = await fetch(`${base}/payment/epay/epay-live/notify`);
     assert.equal(directVisit.status, 200);
@@ -890,7 +890,10 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
       body: JSON.stringify({ amountCents: 500, paymentProvider: "epay-live--alipay" }),
     });
     assert.equal(topupResponse.status, 201);
-    const topup = (await topupResponse.json() as any).order;
+    const createdTopup = await topupResponse.json() as any;
+    const topup = createdTopup.order;
+    const topupCheckoutUrl = new URL(createdTopup.payment.checkoutUrl);
+    assert.equal(topupCheckoutUrl.searchParams.get("return_url"), `https://site.example.test/console/account/overview?payment_return=${encodeURIComponent(topup.id)}`);
     const topupParams: Record<string, string> = {
       pid: "1001", out_trade_no: topup.orderNo, trade_no: "EPAY-TOPUP-1",
       trade_status: "TRADE_SUCCESS", money: "5.00", sign_type: "MD5",
