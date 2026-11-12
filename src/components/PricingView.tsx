@@ -17,7 +17,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [paymentProvider, setPaymentProvider] = useState('');
-  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>('redeem');
+  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>('payment');
   const [redeemCode, setRedeemCode] = useState('');
   const [redeeming, setRedeeming] = useState(false);
   const [redeemCodePurchaseUrl, setRedeemCodePurchaseUrl] = useState('');
@@ -41,7 +41,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       setRedeemCodeEnabled(result.redeemCodeEnabled !== false);
       setBalancePaymentEnabled(result.balancePaymentEnabled !== false);
       setBalanceCents(Number(account.user.balanceCents) || 0);
-      setPurchaseMode(result.redeemCodeEnabled !== false ? 'redeem' : result.balancePaymentEnabled !== false ? 'balance' : 'payment');
+      setPurchaseMode(enabledMethods.length ? 'payment' : result.redeemCodeEnabled !== false ? 'redeem' : 'balance');
     }).catch(() => {
       setPaymentMethods([]);
       setPaymentProvider('');
@@ -51,7 +51,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
   }, []);
 
   const openPurchase = (plan: Plan) => {
-    setPurchaseMode(redeemCodeEnabled ? 'redeem' : balancePaymentEnabled ? 'balance' : 'payment');
+    setPurchaseMode(paymentMethods.length ? 'payment' : redeemCodeEnabled ? 'redeem' : 'balance');
     setRedeemCode('');
     setSelectedPlan(plan);
   };
@@ -171,9 +171,9 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
           <header><div><span>永久次数套餐</span><h2 id="payment-title">购买套餐</h2><small>选择可用的购买方式完成付款</small></div><button type="button" disabled={Boolean(ordering) || redeeming} onClick={() => setSelectedPlan(null)} aria-label="关闭">×</button></header>
           <div className="payment-order-summary"><div><span>套餐</span><strong>{selectedPlan.name}</strong></div><div><span>套餐价格</span><strong>{formatMoney(selectedPlan.priceCents)}</strong></div></div>
           <div className="payment-mode-tabs" role="tablist" aria-label="购买方式">
+            {paymentMethods.length > 0 && <button type="button" role="tab" aria-selected={purchaseMode === 'payment'} className={purchaseMode === 'payment' ? 'active' : ''} onClick={() => setPurchaseMode('payment')}><CreditCard />在线支付</button>}
             {redeemCodeEnabled && <button type="button" role="tab" aria-selected={purchaseMode === 'redeem'} className={purchaseMode === 'redeem' ? 'active' : ''} onClick={() => setPurchaseMode('redeem')}><KeyRound />卡密兑换</button>}
             {balancePaymentEnabled && <button type="button" role="tab" aria-selected={purchaseMode === 'balance'} className={purchaseMode === 'balance' ? 'active' : ''} onClick={() => setPurchaseMode('balance')}><CreditCard />余额购买</button>}
-            {paymentMethods.length > 0 && <button type="button" role="tab" aria-selected={purchaseMode === 'payment'} className={purchaseMode === 'payment' ? 'active' : ''} onClick={() => setPurchaseMode('payment')}><CreditCard />在线支付</button>}
           </div>
           {purchaseMode === 'balance' ? <div className="payment-redeem-panel payment-balance-panel">
             <div className="payment-balance-card" aria-label="余额概览">
