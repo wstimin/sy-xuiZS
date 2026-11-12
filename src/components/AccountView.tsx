@@ -27,6 +27,7 @@ interface AccountViewProps {
   loading: boolean;
   onRefresh: () => Promise<unknown> | void;
   onPurchaseSuccess: (title?: string, description?: string) => void;
+  entitlementsNavigationKey: number;
   onLoggedOut: () => void;
   onLogout: () => void;
   showToast: (title: string, message?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
@@ -72,7 +73,7 @@ function entitlementStatusLabel(status: ReturnType<typeof entitlementDisplayStat
   return status === 'active' ? '有效' : status === 'expired' ? '已过期' : '已停用';
 }
 
-export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRefresh, onPurchaseSuccess, onLoggedOut, onLogout, showToast }) => {
+export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRefresh, onPurchaseSuccess, entitlementsNavigationKey, onLoggedOut, onLogout, showToast }) => {
   const [tab, setTabState] = useState<AccountTab>(accountTabFromPath);
   const setTab = (next: AccountTab) => {
     setTabState(next);
@@ -84,6 +85,16 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+  useEffect(() => {
+    if (!entitlementsNavigationKey) return;
+    setTabState('overview');
+    const frame = window.requestAnimationFrame(() => {
+      const section = document.getElementById('account-entitlements');
+      section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      section?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [entitlementsNavigationKey]);
   const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
   const [payingOrderId, setPayingOrderId] = useState('');
   const [walletCode, setWalletCode] = useState('');
@@ -153,8 +164,18 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
     setPayingOrderId(order.id);
     try {
       const result = await api<{ order: Order; verificationError?: string }>(`/api/orders/${encodeURIComponent(order.id)}/verify-payment`, { method: 'POST' });
-      await onRefresh();
-      showToast(result.order.status === 'paid' ? '支付已到账' : '尚未查到到账', result.order.status === 'paid' ? '余额或套餐权益已更新。' : result.verificationError || '请稍后再试，或联系管理员核对支付平台记录。', result.order.status === 'paid' ? 'success' : 'info');
+      if (result.order.status === 'paid') {
+        let accountRefreshed = true;
+        try { await onRefresh(); } catch { accountRefreshed = false; }
+        let snapshot: { kind?: string; name?: string } = {};
+        try { snapshot = JSON.parse(result.order.planSnapshot || '{}'); } catch { /* Ignore malformed legacy snapshots. */ }
+        const detail = snapshot.kind === 'wallet_topup'
+          ? `已充值 ${formatMoney(result.order.amountCents)} 到账户余额；充值不等于购买套餐，可进入账户查看。`
+          : `${snapshot.name || '套餐'}权益已发放到账户，可查看面板和节点可用次数。`;
+        onPurchaseSuccess(snapshot.kind === 'wallet_topup' ? '余额充值成功' : '套餐购买完成', accountRefreshed ? detail : `${detail} 账户数据暂未刷新，请稍后重试。`);
+      } else {
+        showToast('尚未查到到账', result.verificationError || '请稍后再试，或联系管理员核对支付平台记录。', 'info');
+      }
     } catch (error) {
       showToast('核查支付失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
@@ -168,8 +189,9 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
     try {
       const result = await api<{ balanceCents: number; amountCents: number }>('/api/redeem-codes/redeem', { method: 'POST', body: JSON.stringify({ code: walletCode }) });
       setWalletCode('');
-      await onRefresh();
-      showToast('余额充值成功', `已到账 ${formatMoney(result.amountCents)}，当前余额 ${formatMoney(result.balanceCents)}。`, 'success');
+      setWalletRechargeOpen(false);
+      try { await onRefresh(); } catch { showToast('账户数据暂未刷新', '充值已成功，可稍后在我的账户重新查看余额。', 'warning'); }
+      onPurchaseSuccess('卡密充值成功', `已到账 ${formatMoney(result.amountCents)}，当前余额 ${formatMoney(result.balanceCents)}。充值不等于购买套餐，可进入账户查看权益。`);
     } catch (error) {
       showToast('余额充值失败', error instanceof Error ? error.message : '请检查卡密后重试', 'error');
     } finally {
@@ -244,7 +266,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
         <button type="button" className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}><ShieldCheck /> 账户安全</button>
       </nav>
 
-      {tab === 'overview' && <section className="account-section">
+      {tab === 'overview' && <section id="account-entitlements" className="account-section" tabIndex={-1}>
         <header><div><span>权益与额度</span><h2>当前可用套餐</h2><p>面板搭建和节点配置分别计次，额度数据来自当前账户的真实权益记录。</p></div></header>
         <div className="account-entitlement-grid">
           {visibleEntitlements.map(item => { const displayStatus = entitlementDisplayStatus(item); return <article key={item.id} className="account-entitlement-card">
@@ -308,8 +330,8 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       {checkout && <PaymentCheckoutDialog order={checkout.order} payment={checkout.payment} onClose={() => setCheckout(null)} onPaid={() => {
         setCheckout(null);
         void Promise.resolve(onRefresh()).then(
-          () => onPurchaseSuccess('余额充值成功', '充值金额已到账，可以继续购买永久次数套餐。'),
-          () => onPurchaseSuccess(),
+          () => onPurchaseSuccess('余额充值成功', `已充值 ${formatMoney(checkout.order.amountCents)} 到账户余额；充值不等于购买套餐，可进入账户查看。`),
+          () => onPurchaseSuccess('余额充值成功', `支付已确认，已充值 ${formatMoney(checkout.order.amountCents)}；账户数据暂未刷新，请稍后查看。`),
         );
       }} />}
     </div>

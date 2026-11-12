@@ -9,7 +9,7 @@ import { ProtocolMatrixGuideModal } from './components/ProtocolMatrixGuideModal'
 import { SetupGuideModal } from './components/SetupGuideModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { Toast } from './components/Toast';
-import { AccountData, activeCapability, api, CurrentUser, Plan, ResourceRecommendationSettings } from './commercial';
+import { AccountData, activeCapability, api, CurrentUser, formatMoney, Plan, ResourceRecommendationSettings } from './commercial';
 import { PricingView } from './components/PricingView';
 import { AccountView } from './components/AccountView';
 import { ContactButton } from './components/ContactButton';
@@ -83,6 +83,7 @@ export default function App() {
   const [accountLoading, setAccountLoading] = useState(false);
   const [quotaRequired, setQuotaRequired] = useState<'panel' | 'node' | null>(null);
   const [purchaseNotice, setPurchaseNotice] = useState<{ title: string; description: string } | null>(null);
+  const [entitlementsNavigationKey, setEntitlementsNavigationKey] = useState(0);
   const [recommendations, setRecommendations] = useState<ResourceRecommendationSettings>({ serverEnabled: true, residentialIpEnabled: true, items: [] });
 
   // Pre-filled panel login credentials for node deployment
@@ -154,8 +155,16 @@ export default function App() {
     }
   };
 
-  const showPurchaseSuccess = (title = '套餐购买成功', description = '套餐权益已经自动发放到账户，现在可以继续搭建。') => {
+  const showPurchaseSuccess = (title = '套餐购买完成', description = '套餐权益已发放到我的账户，可前往权益概览查看面板和节点可用次数。') => {
     setPurchaseNotice({ title, description });
+  };
+
+  const viewEntitlements = () => {
+    setPurchaseNotice(null);
+    setCurrentViewState('account');
+    const path = '/console/account/overview';
+    if (window.location.pathname !== path) window.history.pushState({}, '', path);
+    setEntitlementsNavigationKey(key => key + 1);
   };
 
   useEffect(() => {
@@ -198,14 +207,18 @@ export default function App() {
     let attempts = 0;
     const checkPayment = async () => {
       try {
-        const result = await api<{ order: { status: string; planSnapshot?: string }; verificationError?: string }>(`/api/orders/${encodeURIComponent(orderId)}/${attempts % 4 === 0 ? 'verify-payment' : 'status'}`, attempts % 4 === 0 ? { method: 'POST' } : undefined);
+        const result = await api<{ order: { status: string; amountCents: number; planSnapshot?: string }; verificationError?: string }>(`/api/orders/${encodeURIComponent(orderId)}/${attempts % 4 === 0 ? 'verify-payment' : 'status'}`, attempts % 4 === 0 ? { method: 'POST' } : undefined);
         if (stopped) return;
         if (result.order.status === 'paid') {
-          await refreshAccount();
+          let accountRefreshed = true;
+          try { await refreshAccount(); } catch { accountRefreshed = false; }
           setCurrentViewState('account');
-          let walletTopup = false;
-          try { walletTopup = JSON.parse(result.order.planSnapshot || '{}').kind === 'wallet_topup'; } catch { /* Ignore malformed legacy snapshots. */ }
-          showPurchaseSuccess(walletTopup ? '余额充值成功' : undefined, walletTopup ? '充值金额已到账，可以继续购买永久次数套餐。' : undefined);
+          let snapshot: { kind?: string; name?: string } = {};
+          try { snapshot = JSON.parse(result.order.planSnapshot || '{}'); } catch { /* Ignore malformed legacy snapshots. */ }
+          const detail = snapshot.kind === 'wallet_topup'
+            ? `已充值 ${formatMoney(result.order.amountCents)} 到账户余额；充值不等于购买套餐，可进入账户查看。`
+            : `${snapshot.name || '套餐'}权益已发放到我的账户，可查看面板和节点可用次数。`;
+          showPurchaseSuccess(snapshot.kind === 'wallet_topup' ? '余额充值成功' : '套餐购买完成', accountRefreshed ? detail : `${detail} 账户数据暂未刷新，请稍后重试。`);
           window.history.replaceState({}, '', '/console/account/orders');
           return;
         }
@@ -392,7 +405,7 @@ export default function App() {
         )}
 
         {currentView === 'pricing' && <PricingView plans={plans} onOrderCreated={refreshAccount} onPurchaseSuccess={showPurchaseSuccess} showToast={showToast} />}
-        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={refreshAccount} onPurchaseSuccess={showPurchaseSuccess} onLoggedOut={() => { setUser(null); window.location.assign('/'); }} onLogout={() => void logout()} showToast={showToast} />}
+        {currentView === 'account' && <AccountView account={account} loading={accountLoading} onRefresh={refreshAccount} onPurchaseSuccess={showPurchaseSuccess} entitlementsNavigationKey={entitlementsNavigationKey} onLoggedOut={() => { setUser(null); window.location.assign('/'); }} onLogout={() => void logout()} showToast={showToast} />}
       </main>
 
       {/* Footer */}
@@ -442,11 +455,12 @@ export default function App() {
       <CustomerNoticeDialog
         open={Boolean(purchaseNotice)}
         tone="success"
-        title={purchaseNotice?.title || '套餐购买成功'}
-        description={purchaseNotice?.description || '套餐权益已经自动发放到账户，现在可以继续搭建。'}
-        confirmLabel="知道了"
+        title={purchaseNotice?.title || '套餐购买完成'}
+        description={purchaseNotice?.description || '套餐权益已发放到我的账户，可前往权益概览查看。'}
+        confirmLabel="查看权益"
+        cancelLabel="关闭"
         onClose={() => setPurchaseNotice(null)}
-        onConfirm={() => setPurchaseNotice(null)}
+        onConfirm={viewEntitlements}
       />
 
       {/* Modals & Overlays */}

@@ -67,7 +67,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
         method: 'POST',
         body: JSON.stringify({ planId: plan.id, paymentProvider }),
       });
-      await onOrderCreated();
+      try { await onOrderCreated(); } catch { showToast('账户数据暂未刷新', '订单已创建，可稍后在我的账户查看。', 'warning'); }
       if (data.payment?.checkoutType === 'redirect') {
         window.location.assign(data.payment.checkoutUrl);
         return;
@@ -82,7 +82,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
         setSelectedPlan(null);
         return;
       }
-      showToast('订单已创建', `订单号 ${data.order.orderNo}，请按页面提示完成付款`, 'success');
+      showToast('等待支付', `订单号 ${data.order.orderNo}，完成付款并确认到账后才会发放权益。`, 'info');
       setSelectedPlan(null);
     } catch (error) {
       showToast('创建订单失败', error instanceof Error ? error.message : '请稍后重试', 'error');
@@ -100,8 +100,8 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       });
       setBalanceCents(result.balanceCents);
       setSelectedPlan(null);
-      await onOrderCreated();
-      onPurchaseSuccess('套餐购买成功', `${plan.name} 已发放到账户，余额还剩 ${formatMoney(result.balanceCents)}。`);
+      try { await onOrderCreated(); } catch { showToast('账户数据暂未刷新', '购买已完成，可稍后在我的账户查看权益。', 'warning'); }
+      onPurchaseSuccess('套餐购买完成', `${plan.name} 权益已发放到账户，余额还剩 ${formatMoney(result.balanceCents)}。可前往权益概览查看可用次数。`);
     } catch (error) {
       showToast('余额购买失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
@@ -120,11 +120,11 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       setRedeemCode('');
       setSelectedPlan(null);
       setBalanceCents(result.balanceCents);
-      await onOrderCreated();
+      try { await onOrderCreated(); } catch { showToast('账户数据暂未刷新', '卡密兑换已完成，可稍后在我的账户查看。', 'warning'); }
       if (result.redemptionKind === 'purchase') {
-        onPurchaseSuccess('卡密购买成功', `${result.planName || plan.name} 权益已经发放到账户，余额还剩 ${formatMoney(result.balanceCents)}。`);
+        onPurchaseSuccess('卡密购买完成', `${result.planName || plan.name} 权益已发放到账户，余额还剩 ${formatMoney(result.balanceCents)}。可前往权益概览查看可用次数。`);
       } else {
-        onPurchaseSuccess('卡密已充值', `已到账 ${formatMoney(result.amountCents)}，当前余额 ${formatMoney(result.balanceCents)}${result.purchasePending && result.shortfallCents ? `，购买 ${result.requestedPlanName || plan.name} 还差 ${formatMoney(result.shortfallCents)}` : ''}。`);
+        onPurchaseSuccess('卡密充值成功', `已到账 ${formatMoney(result.amountCents)}，当前余额 ${formatMoney(result.balanceCents)}。${result.purchasePending && result.shortfallCents ? `购买 ${result.requestedPlanName || plan.name} 还差 ${formatMoney(result.shortfallCents)}，套餐尚未购买。` : '充值不等于购买套餐，套餐权益不会自动增加。'}`);
       }
     } catch (error) {
       showToast('卡密兑换失败', error instanceof Error ? error.message : '请检查卡密后重试', 'error');
@@ -201,9 +201,12 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       </div>}
       {checkout && <PaymentCheckoutDialog order={checkout.order} payment={checkout.payment} onClose={() => setCheckout(null)} onPaid={() => {
         setCheckout(null);
+        let purchasedPlanName = '套餐';
+        try { purchasedPlanName = JSON.parse(checkout.order.planSnapshot || '{}').name || '套餐'; } catch { /* Ignore malformed legacy snapshots. */ }
+        const description = `${purchasedPlanName} 权益已发放到账户，可前往权益概览查看面板和节点可用次数。`;
         void Promise.resolve(onOrderCreated()).then(
-          () => onPurchaseSuccess(),
-          () => onPurchaseSuccess(),
+          () => onPurchaseSuccess('套餐购买完成', description),
+          () => onPurchaseSuccess('套餐购买完成', `${description} 账户数据暂未刷新，请稍后重试。`),
         );
       }} />}
     </div>

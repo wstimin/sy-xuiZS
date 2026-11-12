@@ -23,9 +23,13 @@ export const PaymentCheckoutDialog: React.FC<PaymentCheckoutDialogProps> = ({ or
 
   useEffect(() => {
     let stopped = false;
+    let attempts = 0;
     const check = async () => {
       try {
-        const result = await api<{ order: Order }>(`/api/orders/${order.id}/status`);
+        const verify = attempts % 4 === 0;
+        attempts += 1;
+        const endpoint = `/api/orders/${encodeURIComponent(order.id)}/${verify ? 'verify-payment' : 'status'}`;
+        const result = await api<{ order: Order }>(endpoint, verify ? { method: 'POST' } : undefined);
         if (stopped) return;
         setStatus(result.order.status);
         if (result.order.status === 'paid') {
