@@ -165,14 +165,13 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
     try {
       const result = await api<{ order: Order; verificationError?: string }>(`/api/orders/${encodeURIComponent(order.id)}/verify-payment`, { method: 'POST' });
       if (result.order.status === 'paid') {
-        let accountRefreshed = true;
-        try { await onRefresh(); } catch { accountRefreshed = false; }
         let snapshot: { kind?: string; name?: string } = {};
         try { snapshot = JSON.parse(result.order.planSnapshot || '{}'); } catch { /* Ignore malformed legacy snapshots. */ }
         const detail = snapshot.kind === 'wallet_topup'
           ? `已充值 ${formatMoney(result.order.amountCents)} 到账户余额；充值不等于购买套餐，可进入账户查看。`
           : `${snapshot.name || '套餐'}权益已发放到账户，可查看面板和节点可用次数。`;
-        onPurchaseSuccess(snapshot.kind === 'wallet_topup' ? '余额充值成功' : '套餐购买完成', accountRefreshed ? detail : `${detail} 账户数据暂未刷新，请稍后重试。`);
+        onPurchaseSuccess(snapshot.kind === 'wallet_topup' ? '余额充值成功' : '套餐购买完成', detail);
+        void Promise.resolve().then(onRefresh).catch(() => showToast('账户数据暂未刷新', '支付已确认，可稍后重新查看余额和权益。', 'warning'));
       } else {
         showToast('尚未查到到账', result.verificationError || '请稍后再试，或联系管理员核对支付平台记录。', 'info');
       }
@@ -190,8 +189,8 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       const result = await api<{ balanceCents: number; amountCents: number }>('/api/redeem-codes/redeem', { method: 'POST', body: JSON.stringify({ code: walletCode }) });
       setWalletCode('');
       setWalletRechargeOpen(false);
-      try { await onRefresh(); } catch { showToast('账户数据暂未刷新', '充值已成功，可稍后在我的账户重新查看余额。', 'warning'); }
       onPurchaseSuccess('卡密充值成功', `已到账 ${formatMoney(result.amountCents)}，当前余额 ${formatMoney(result.balanceCents)}。充值不等于购买套餐，可进入账户查看权益。`);
+      void Promise.resolve().then(onRefresh).catch(() => showToast('账户数据暂未刷新', '充值已成功，可稍后在我的账户重新查看余额。', 'warning'));
     } catch (error) {
       showToast('余额充值失败', error instanceof Error ? error.message : '请检查卡密后重试', 'error');
     } finally {
@@ -329,10 +328,8 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       </div>}
       {checkout && <PaymentCheckoutDialog order={checkout.order} payment={checkout.payment} onClose={() => setCheckout(null)} onPaid={() => {
         setCheckout(null);
-        void Promise.resolve(onRefresh()).then(
-          () => onPurchaseSuccess('余额充值成功', `已充值 ${formatMoney(checkout.order.amountCents)} 到账户余额；充值不等于购买套餐，可进入账户查看。`),
-          () => onPurchaseSuccess('余额充值成功', `支付已确认，已充值 ${formatMoney(checkout.order.amountCents)}；账户数据暂未刷新，请稍后查看。`),
-        );
+        onPurchaseSuccess('余额充值成功', `已充值 ${formatMoney(checkout.order.amountCents)} 到账户余额；充值不等于购买套餐，可进入账户查看。`);
+        void Promise.resolve().then(onRefresh).catch(() => showToast('账户数据暂未刷新', '支付已完成，可稍后重新查看余额。', 'warning'));
       }} />}
     </div>
   );

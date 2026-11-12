@@ -200,26 +200,27 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get('payment') !== 'return') return;
+    if (query.get('payment') !== 'return' && query.get('payment') !== 'success') return;
     const orderId = query.get('order');
     if (!orderId) return;
+    setCurrentViewState('account');
     let stopped = false;
     let attempts = 0;
+    let nextCheck: number | undefined;
     const checkPayment = async () => {
       try {
         const result = await api<{ order: { status: string; amountCents: number; planSnapshot?: string }; verificationError?: string }>(`/api/orders/${encodeURIComponent(orderId)}/${attempts % 4 === 0 ? 'verify-payment' : 'status'}`, attempts % 4 === 0 ? { method: 'POST' } : undefined);
         if (stopped) return;
         if (result.order.status === 'paid') {
-          let accountRefreshed = true;
-          try { await refreshAccount(); } catch { accountRefreshed = false; }
           setCurrentViewState('account');
           let snapshot: { kind?: string; name?: string } = {};
           try { snapshot = JSON.parse(result.order.planSnapshot || '{}'); } catch { /* Ignore malformed legacy snapshots. */ }
           const detail = snapshot.kind === 'wallet_topup'
             ? `已充值 ${formatMoney(result.order.amountCents)} 到账户余额；充值不等于购买套餐，可进入账户查看。`
             : `${snapshot.name || '套餐'}权益已发放到我的账户，可查看面板和节点可用次数。`;
-          showPurchaseSuccess(snapshot.kind === 'wallet_topup' ? '余额充值成功' : '套餐购买完成', accountRefreshed ? detail : `${detail} 账户数据暂未刷新，请稍后重试。`);
+          showPurchaseSuccess(snapshot.kind === 'wallet_topup' ? '余额充值成功' : '套餐购买完成', detail);
           window.history.replaceState({}, '', '/console/account/orders');
+          void refreshAccount().catch(() => showToast('账户数据暂未刷新', '支付已完成，可稍后重新查看余额和权益。', 'warning'));
           return;
         }
         if (result.order.status !== 'pending') {
@@ -229,19 +230,24 @@ export default function App() {
           return;
         }
         attempts += 1;
-        if (attempts < 8) window.setTimeout(checkPayment, 2000);
+        if (attempts < 30) nextCheck = window.setTimeout(checkPayment, 2000);
         else {
           setCurrentViewState('account');
-          showToast('正在等待支付结果', result.verificationError ? `自动查单暂不可用：${result.verificationError}。可稍后在订单记录中刷新查看。` : '到账后系统会自动发放权益，可在订单记录中刷新查看', 'info');
-          window.history.replaceState({}, '', '/console/account/orders');
+          showToast('正在等待支付结果', result.verificationError ? `自动查单暂不可用：${result.verificationError}。请刷新页面后重试，或在订单记录中核查到账。` : '尚未确认到账；刷新页面会继续查询，不会重复付款。', 'info');
+          window.history.replaceState({}, '', `/console/account/orders?payment=return&order=${encodeURIComponent(orderId)}`);
         }
       } catch {
-        setCurrentViewState('account');
-        window.history.replaceState({}, '', '/console/account/orders');
+        if (stopped) return;
+        attempts += 1;
+        if (attempts < 30) nextCheck = window.setTimeout(checkPayment, 2000);
+        else {
+          showToast('暂时无法查询支付结果', '订单仍可在账户中查看，刷新页面会重新查询，不会重复付款。', 'warning');
+          window.history.replaceState({}, '', `/console/account/orders?payment=return&order=${encodeURIComponent(orderId)}`);
+        }
       }
     };
     void checkPayment();
-    return () => { stopped = true; };
+    return () => { stopped = true; if (nextCheck) window.clearTimeout(nextCheck); };
   }, [user?.id]);
 
   const saveHistoryInMemory = (newItem: HistoryItem) => {

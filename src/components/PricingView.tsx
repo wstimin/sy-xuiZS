@@ -100,8 +100,8 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       });
       setBalanceCents(result.balanceCents);
       setSelectedPlan(null);
-      try { await onOrderCreated(); } catch { showToast('账户数据暂未刷新', '购买已完成，可稍后在我的账户查看权益。', 'warning'); }
       onPurchaseSuccess('套餐购买完成', `${plan.name} 权益已发放到账户，余额还剩 ${formatMoney(result.balanceCents)}。可前往权益概览查看可用次数。`);
+      void Promise.resolve().then(onOrderCreated).catch(() => showToast('账户数据暂未刷新', '购买已完成，可稍后在我的账户查看权益。', 'warning'));
     } catch (error) {
       showToast('余额购买失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
@@ -120,12 +120,12 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
       setRedeemCode('');
       setSelectedPlan(null);
       setBalanceCents(result.balanceCents);
-      try { await onOrderCreated(); } catch { showToast('账户数据暂未刷新', '卡密兑换已完成，可稍后在我的账户查看。', 'warning'); }
       if (result.redemptionKind === 'purchase') {
         onPurchaseSuccess('卡密购买完成', `${result.planName || plan.name} 权益已发放到账户，余额还剩 ${formatMoney(result.balanceCents)}。可前往权益概览查看可用次数。`);
       } else {
         onPurchaseSuccess('卡密充值成功', `已到账 ${formatMoney(result.amountCents)}，当前余额 ${formatMoney(result.balanceCents)}。${result.purchasePending && result.shortfallCents ? `购买 ${result.requestedPlanName || plan.name} 还差 ${formatMoney(result.shortfallCents)}，套餐尚未购买。` : '充值不等于购买套餐，套餐权益不会自动增加。'}`);
       }
+      void Promise.resolve().then(onOrderCreated).catch(() => showToast('账户数据暂未刷新', '卡密兑换已完成，可稍后在我的账户查看。', 'warning'));
     } catch (error) {
       showToast('卡密兑换失败', error instanceof Error ? error.message : '请检查卡密后重试', 'error');
     } finally {
@@ -204,10 +204,8 @@ export const PricingView: React.FC<PricingViewProps> = ({ plans, onOrderCreated,
         let purchasedPlanName = '套餐';
         try { purchasedPlanName = JSON.parse(checkout.order.planSnapshot || '{}').name || '套餐'; } catch { /* Ignore malformed legacy snapshots. */ }
         const description = `${purchasedPlanName} 权益已发放到账户，可前往权益概览查看面板和节点可用次数。`;
-        void Promise.resolve(onOrderCreated()).then(
-          () => onPurchaseSuccess('套餐购买完成', description),
-          () => onPurchaseSuccess('套餐购买完成', `${description} 账户数据暂未刷新，请稍后重试。`),
-        );
+        onPurchaseSuccess('套餐购买完成', description);
+        void Promise.resolve().then(onOrderCreated).catch(() => showToast('账户数据暂未刷新', '支付已完成，可稍后在我的账户查看权益。', 'warning'));
       }} />}
     </div>
   );

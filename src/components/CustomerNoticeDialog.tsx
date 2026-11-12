@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, CheckCircle2, X } from 'lucide-react';
 
 interface CustomerNoticeDialogProps {
@@ -47,7 +48,7 @@ export const CustomerNoticeDialog: React.FC<CustomerNoticeDialogProps> = ({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="customer-notice-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <section className={`customer-notice-dialog ${tone}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <button type="button" className="customer-notice-close" onClick={onClose} title="关闭"><X /></button>
@@ -59,6 +60,7 @@ export const CustomerNoticeDialog: React.FC<CustomerNoticeDialogProps> = ({
           <button ref={confirmRef} type="button" className="primary" onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 };
