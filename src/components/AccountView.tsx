@@ -33,6 +33,11 @@ interface AccountViewProps {
 }
 
 type AccountTab = 'overview' | 'orders' | 'deployments' | 'security';
+const accountTabs: AccountTab[] = ['overview', 'orders', 'deployments', 'security'];
+const accountTabFromPath = (): AccountTab => {
+  const segment = window.location.pathname.split('/')[3];
+  return accountTabs.includes(segment as AccountTab) ? segment as AccountTab : 'overview';
+};
 const entitlementPageSize = 4;
 
 const orderLabels: Record<string, string> = { pending: '待付款确认', paid: '已付款', expired: '已过期', cancelled: '已取消', refunded: '已退款' };
@@ -68,7 +73,17 @@ function entitlementStatusLabel(status: ReturnType<typeof entitlementDisplayStat
 }
 
 export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRefresh, onPurchaseSuccess, onLoggedOut, onLogout, showToast }) => {
-  const [tab, setTab] = useState<AccountTab>('overview');
+  const [tab, setTabState] = useState<AccountTab>(accountTabFromPath);
+  const setTab = (next: AccountTab) => {
+    setTabState(next);
+    const path = `/console/account/${next}`;
+    if (window.location.pathname !== path) window.history.pushState({}, '', path);
+  };
+  useEffect(() => {
+    const onPopState = () => setTabState(accountTabFromPath());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
   const [checkout, setCheckout] = useState<{ order: Order; payment: PaymentCheckout } | null>(null);
   const [payingOrderId, setPayingOrderId] = useState('');
   const [walletCode, setWalletCode] = useState('');
@@ -91,7 +106,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
   const nodeQuota = activeEntitlements.some(item => item.nodeMode === 'unlimited') ? '不限次数' : `${activeEntitlements.reduce((total, item) => total + (item.nodeMode === 'limited' ? Math.max(0, item.nodeRemaining) : 0), 0)} 次`;
   const paymentMethod = (provider: string, optionId?: string) => account?.paymentMethods.find(method => method.id === (optionId || provider));
   const walletPaymentMethods = (account?.paymentMethods || []).filter(method => method.enabled);
-  const cardRechargeEnabled = Boolean(account?.redeemCodeEnabled || account?.redeemCodePurchaseUrl?.trim());
+  const cardRechargeEnabled = account?.redeemCodeEnabled !== false;
 
   useEffect(() => {
     setEntitlementPage(page => Math.min(page, entitlementPageCount - 1));
@@ -129,6 +144,19 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
       setCheckout({ order: result.order, payment: result.payment });
     } catch (error) {
       showToast('发起支付失败', error instanceof Error ? error.message : '请稍后重试', 'error');
+    } finally {
+      setPayingOrderId('');
+    }
+  };
+
+  const verifyPayment = async (order: Order) => {
+    setPayingOrderId(order.id);
+    try {
+      const result = await api<{ order: Order; verificationError?: string }>(`/api/orders/${encodeURIComponent(order.id)}/verify-payment`, { method: 'POST' });
+      await onRefresh();
+      showToast(result.order.status === 'paid' ? '支付已到账' : '尚未查到到账', result.order.status === 'paid' ? '余额或套餐权益已更新。' : result.verificationError || '请稍后再试，或联系管理员核对支付平台记录。', result.order.status === 'paid' ? 'success' : 'info');
+    } catch (error) {
+      showToast('核查支付失败', error instanceof Error ? error.message : '请稍后重试', 'error');
     } finally {
       setPayingOrderId('');
     }
@@ -241,7 +269,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ account, loading, onRe
         <header><div><span>订单中心</span><h2>订单记录</h2><p>查看套餐、金额、支付状态和付款方式。</p></div></header>
         <div className="account-table-wrap">
           <table className="account-table"><thead><tr><th>订单信息</th><th>金额</th><th>支付方式</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
-            <tbody>{orders.map(order => { const method = paymentMethod(order.paymentProvider, order.paymentOptionId); return <tr key={order.id}><td><strong>{planName(order.planSnapshot)}</strong><small>{order.orderNo}</small></td><td className="account-money">{formatMoney(order.amountCents)}</td><td><span>{orderPaymentName(order, method?.name)}</span>{order.status === 'pending' && method?.instructions && <small>{method.instructions}</small>}</td><td><span className={`account-status ${order.status}`}>{orderLabels[order.status] || order.status}</span></td><td>{formatDate(order.createdAt)}</td><td>{order.status === 'pending' ? <div className="account-order-actions"><button type="button" className="account-continue-payment" disabled={payingOrderId === order.id} onClick={() => void continuePayment(order)}><PlayCircle /> {payingOrderId === order.id ? '处理中' : '继续支付'}</button><button type="button" className="account-cancel-order" onClick={() => void cancelOrder(order.id)}>取消</button></div> : <span className="account-muted">-</span>}</td></tr>; })}</tbody>
+            <tbody>{orders.map(order => { const method = paymentMethod(order.paymentProvider, order.paymentOptionId); return <tr key={order.id}><td><strong>{planName(order.planSnapshot)}</strong><small>{order.orderNo}</small></td><td className="account-money">{formatMoney(order.amountCents)}</td><td><span>{orderPaymentName(order, method?.name)}</span>{order.status === 'pending' && method?.instructions && <small>{method.instructions}</small>}</td><td><span className={`account-status ${order.status}`}>{orderLabels[order.status] || order.status}</span></td><td>{formatDate(order.createdAt)}</td><td>{order.status === 'pending' ? <div className="account-order-actions"><button type="button" className="account-continue-payment" disabled={payingOrderId === order.id} onClick={() => void continuePayment(order)}><PlayCircle /> {payingOrderId === order.id ? '处理中' : '继续支付'}</button>{method?.provider === 'epay' && <button type="button" className="account-continue-payment" disabled={payingOrderId === order.id} onClick={() => void verifyPayment(order)}><RefreshCw /> 核查到账</button>}<button type="button" className="account-cancel-order" onClick={() => void cancelOrder(order.id)}>取消</button></div> : <span className="account-muted">-</span>}</td></tr>; })}</tbody>
           </table>
           {!orders.length && <AccountEmpty icon={ReceiptText} title="暂无订单" description="购买套餐后，订单会显示在这里。" />}
         </div>

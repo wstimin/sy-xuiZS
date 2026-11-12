@@ -55,7 +55,7 @@ export type Stats = {
   failed: number;
   uncertain: number;
 };
-export type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; email: EmailSettings; orderExpiryMinutes: number; adminPath: string; redeemCodePurchaseUrl: string; externalRedeem: ExternalRedeemSettings; contact: ContactSettings; recommendations: ResourceRecommendationSettings };
+export type SystemSettings = { registrationEnabled: boolean; panelDeployEnabled: boolean; nodeDeployEnabled: boolean; paymentInstructions: string; paymentMethods: PaymentMethod[]; redeemCodeEnabled: boolean; balancePaymentEnabled: boolean; email: EmailSettings; orderExpiryMinutes: number; adminPath: string; redeemCodePurchaseUrl: string; externalRedeem: ExternalRedeemSettings; contact: ContactSettings; recommendations: ResourceRecommendationSettings };
 export type CreatedRedeemCode = RedeemCode & { code: string };
 export type SystemVersionStatus = {
   currentVersion: string;

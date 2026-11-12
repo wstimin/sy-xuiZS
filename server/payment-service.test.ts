@@ -13,6 +13,7 @@ import {
   encryptWechatResourceForTest,
   genericMd5Sign,
   getPaymentDriver,
+  queryEpayOrder,
   verifyAlipayResponseSignature,
   verifyAlipaySignature,
   verifyWechatNotificationSignature,
@@ -118,6 +119,41 @@ test("EPay notifications require the configured PID and platform trade number", 
   const missingTradeNo: Record<string, string> = { ...valid, trade_no: "" };
   missingTradeNo.sign = epaySign(missingTradeNo, "secret");
   await assert.rejects(driver.verifyNotification(config, { params: missingTradeNo, body: {}, headers: {} }), /平台交易号/);
+
+  const missingStatus: Record<string, string> = { ...valid, trade_status: "" };
+  missingStatus.sign = epaySign(missingStatus, "secret");
+  await assert.rejects(driver.verifyNotification(config, { params: missingStatus, body: {}, headers: {} }), /尚未成功/);
+});
+
+test("EPay order query credits only the matching paid merchant, order, channel and amount", async () => {
+  let result: Record<string, unknown> = { code: 1, status: 1, pid: "1001", out_trade_no: "ORDER1", trade_no: "EPAY1", type: "alipay", money: "9.90" };
+  const server = createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://localhost");
+    assert.equal(url.pathname, "/api.php");
+    assert.equal(url.searchParams.get("act"), "order");
+    assert.equal(url.searchParams.get("pid"), "1001");
+    assert.equal(url.searchParams.get("key"), "secret");
+    assert.equal(url.searchParams.get("out_trade_no"), "ORDER1");
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(result));
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const config = { id: "epay", provider: "epay" as const, gatewayUrl: `http://127.0.0.1:${port}/submit.php`, merchantId: "1001", merchantSecret: "secret" };
+  try {
+    assert.equal((await queryEpayOrder(config, "ORDER1", 990, "alipay"))?.tradeNo, "EPAY1");
+    result = { ...result, status: 0 };
+    assert.equal(await queryEpayOrder(config, "ORDER1", 990, "alipay"), null);
+    result = { ...result, status: 1, money: "99.00" };
+    await assert.rejects(queryEpayOrder(config, "ORDER1", 990, "alipay"), /金额/);
+    result = { ...result, money: "9.90", pid: "1002" };
+    await assert.rejects(queryEpayOrder(config, "ORDER1", 990, "alipay"), /不匹配/);
+    result = { ...result, pid: "1001", type: "wxpay" };
+    await assert.rejects(queryEpayOrder(config, "ORDER1", 990, "alipay"), /不匹配/);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
 });
 
 test("PayPal Orders v2 creates, captures and verifies completed payments", async () => {

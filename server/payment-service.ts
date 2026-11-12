@@ -193,11 +193,27 @@ const epayDriver: PaymentDriver = {
   },
   async verifyNotification(config, input) {
     if (!config.merchantSecret || !verifyEpaySignature(input.params, config.merchantSecret)) throw new Error("支付平台通知签名无效");
-    if (input.params.trade_status && !["TRADE_SUCCESS", "TRADE_FINISHED"].includes(input.params.trade_status)) throw new Error("支付订单尚未成功");
+    if (!["TRADE_SUCCESS", "TRADE_FINISHED"].includes(input.params.trade_status)) throw new Error("支付订单尚未成功");
     if (config.merchantId && input.params.pid !== config.merchantId) throw new Error("支付平台通知商户 PID 不匹配");
     return verifiedPayment(input.params.out_trade_no, input.params.trade_no, input.params.money, input.params);
   },
 };
+
+export async function queryEpayOrder(config: PaymentChannelConfig, orderNo: string, amountCents: number, channel: string) {
+  if (!config.gatewayUrl || !config.merchantId || !config.merchantSecret) throw new Error("易支付查单配置不完整");
+  const apiUrl = new URL("api.php", normalizedHttpUrl(config.gatewayUrl, "易支付网关"));
+  apiUrl.search = new URLSearchParams({ act: "order", pid: config.merchantId, key: config.merchantSecret, out_trade_no: orderNo }).toString();
+  const response = await fetch(apiUrl, { redirect: "error", signal: AbortSignal.timeout(8_000) });
+  if (!response.ok) throw new Error(`易支付查单失败（HTTP ${response.status}）`);
+  const result = await response.json() as Record<string, unknown>;
+  if (Number(result.code) !== 1 || Number(result.status) !== 1) return null;
+  if (String(result.pid || "") !== config.merchantId || String(result.out_trade_no || "") !== orderNo || String(result.type || "") !== channel) {
+    throw new Error("易支付查单商户、订单或支付方式不匹配");
+  }
+  const verified = verifiedPayment(result.out_trade_no, result.trade_no, result.money, result);
+  if (verified.amountCents !== amountCents) throw new Error("易支付查单金额不匹配");
+  return verified;
+}
 
 const mgateDriver: PaymentDriver = {
   successResponse: "success",

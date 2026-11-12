@@ -4,7 +4,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { CommercialStore, DurationUnit, EntitlementGrantInput, isLocalRedeemCodeFormat, PlanInput, QuotaMode, SessionUser, UserRole } from "./commercial-store.js";
 import { sendSmtpMail } from "./email-service.js";
-import { getPaymentDriver, PaymentChannelConfig, PaymentProvider } from "./payment-service.js";
+import { getPaymentDriver, PaymentChannelConfig, PaymentProvider, queryEpayOrder } from "./payment-service.js";
 import { inspectExternalCard, redeemExternalCard } from "./external-redeem-service.js";
 
 const USER_COOKIE_NAME = "xui_user_session";
@@ -704,15 +704,6 @@ function route(handler: (req: Request, res: Response) => unknown) {
   };
 }
 
-function publicBaseUrl(req: Request, store: CommercialStore) {
-  const configured = store.getEmailSettings().publicBaseUrl.replace(/\/+$/, "");
-  if (configured) return configured;
-  const protocol = req.header("x-forwarded-proto") || req.protocol;
-  const host = req.header("x-forwarded-host") || req.header("host");
-  if (!host) throw new Error("无法确定公网回调地址，请在邮件设置中填写公网访问地址");
-  return `${protocol}://${host}`;
-}
-
 async function sendConfiguredMail(store: CommercialStore, recipient: string, purpose: string, subject: string, text: string) {
   const settings = store.getEmailSettings(true);
   if (!settings.emailEnabled) throw new Error("邮件服务尚未启用");
@@ -757,21 +748,36 @@ function channelConfig(method: ReturnType<CommercialStore["getPaymentMethods"]>[
   };
 }
 
-function paymentBaseUrl(req: Request, store: CommercialStore, callbackBaseUrl = "") {
-  return callbackBaseUrl.replace(/\/+$/, "") || publicBaseUrl(req, store);
+function paymentBaseUrl(store: CommercialStore, callbackBaseUrl = "") {
+  const configured = callbackBaseUrl.replace(/\/+$/, "") || store.getEmailSettings().publicBaseUrl.replace(/\/+$/, "");
+  if (!configured) throw new Error("请先在系统设置 → 支付渠道填写本站公网访问地址，再发起在线支付");
+  const url = new URL(configured);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("支付公网访问地址必须是站点根地址，例如 https://example.com");
+  }
+  return url.origin;
 }
 
-async function createCheckout(req: Request, store: CommercialStore, order: any) {
+function configuredPaymentCallbackUrl(store: CommercialStore, provider: string, channelId: string, callbackBaseUrl = "") {
+  try {
+    return `${paymentBaseUrl(store, callbackBaseUrl)}/api/payment/${provider}/${encodeURIComponent(channelId)}/notify`;
+  } catch {
+    return "";
+  }
+}
+
+async function createCheckout(store: CommercialStore, order: any) {
   const method = store.getPaymentMethods(true, true).find(item => item.id === order.paymentProvider);
   if (!method?.enabled) throw new Error("订单所选支付方式已停用，请取消订单后重新下单");
   if (!method.provider) throw new Error("支付方式未配置支付驱动");
   const provider = method.provider as PaymentProvider;
   const driver = getPaymentDriver(provider);
-  const baseUrl = paymentBaseUrl(req, store, method.callbackBaseUrl);
   const snapshot = JSON.parse(order.planSnapshot || "{}");
   const user = store.getUserById(order.userId);
   const requestContext = { provider, channelId: method.id, orderNo: order.orderNo };
   try {
+    const baseUrl = paymentBaseUrl(store, method.callbackBaseUrl);
+    const siteUrl = paymentBaseUrl(store);
     const config = channelConfig(method);
     if (provider === "epay" && order.paymentChannel) config.channel = order.paymentChannel;
     const paypalReturnUrl = `${baseUrl}/api/payment/paypal/${encodeURIComponent(method.id)}/return`;
@@ -781,8 +787,8 @@ async function createCheckout(req: Request, store: CommercialStore, order: any) 
       name: String(snapshot.name || "网络搭建服务"),
       userKey: user?.email || user?.username || order.userId,
       notifyUrl: `${baseUrl}/api/payment/${provider}/${encodeURIComponent(method.id)}/notify`,
-      returnUrl: provider === "paypal" ? paypalReturnUrl : `${baseUrl}/console?payment=return&order=${encodeURIComponent(order.id)}`,
-      cancelUrl: `${baseUrl}/console?payment=cancel&order=${encodeURIComponent(order.id)}`,
+      returnUrl: provider === "paypal" ? paypalReturnUrl : `${siteUrl}/console/account/orders?payment=return&order=${encodeURIComponent(order.id)}`,
+      cancelUrl: `${siteUrl}/console/account/orders?payment=cancel&order=${encodeURIComponent(order.id)}`,
       expiresAt: order.expiresAt,
     });
     store.closeOpenPaymentAttempts(order.id);
@@ -792,6 +798,26 @@ async function createCheckout(req: Request, store: CommercialStore, order: any) 
     store.createFailedPaymentAttempt(order.id, method.id, requestContext, error, order.expiresAt);
     throw error;
   }
+}
+
+async function verifyEpayOrder(store: CommercialStore, order: any) {
+  let verificationError = "";
+  if (["pending", "expired", "cancelled"].includes(order.status)) {
+    const method = store.getPaymentMethods(true, true, true).find(item => item.id === order.paymentProvider && item.provider === "epay");
+    if (method) {
+      try {
+        await assertPublicPaymentUrl(method.gatewayUrl, "易支付网关地址");
+        const verified = await queryEpayOrder(channelConfig(method), order.orderNo, order.amountCents, order.paymentChannel || method.channel);
+        if (verified) {
+          store.completePaymentAttempt(order.id, method.id, verified.tradeNo, verified.payload);
+          store.recordPaymentNotification(method.id, "epay", order.orderNo, "accepted", { source: "order_query", tradeNo: verified.tradeNo });
+        }
+      } catch (error) {
+        verificationError = message(error);
+      }
+    }
+  }
+  return { order: store.getOrder(order.id), attempts: store.listPaymentAttempts(order.id), verificationError };
 }
 
 export function createCommercialRouter(store: CommercialStore, options: { updateService?: UpdateServiceLike; appVersion?: string } = {}) {
@@ -953,13 +979,14 @@ export function createCommercialRouter(store: CommercialStore, options: { update
   router.get("/payment-methods", (_req, res) => res.json({
     paymentMethods: store.getPaymentMethods(),
     redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
-    redeemCodeEnabled: true,
+    redeemCodeEnabled: store.getSetting("redeem_code_enabled", "true") === "true",
+    balancePaymentEnabled: store.getSetting("balance_payment_enabled", "true") === "true",
   }));
 
   router.get("/payment/paypal/:channelId/return", async (req, res) => {
     const channel = store.getPaymentMethods(true, true, true).find(item => item.id === req.params.channelId && item.provider === "paypal");
     const token = String(req.query.token || "").trim();
-    const baseUrl = publicBaseUrl(req, store);
+    const baseUrl = paymentBaseUrl(store);
     if (!channel || !token) return res.redirect(`${baseUrl}/console?payment=error`);
     try {
       const attempt = store.getPaymentAttemptByProviderOrder(channel.id, token);
@@ -1017,7 +1044,8 @@ export function createCommercialRouter(store: CommercialStore, options: { update
       paymentInstructions: store.getSetting("payment_instructions", "请选择在线支付方式完成付款。"),
       paymentMethods: store.getPaymentMethods(),
       redeemCodePurchaseUrl: store.getSetting("redeem_code_purchase_url", ""),
-      redeemCodeEnabled: true,
+      redeemCodeEnabled: store.getSetting("redeem_code_enabled", "true") === "true",
+      balancePaymentEnabled: store.getSetting("balance_payment_enabled", "true") === "true",
     });
   });
 
@@ -1029,6 +1057,7 @@ export function createCommercialRouter(store: CommercialStore, options: { update
   }));
 
   router.post("/redeem-codes/redeem", requireCommercialUser, route(async (req, res) => {
+    if (store.getSetting("redeem_code_enabled", "true") !== "true") throw new Error("卡密兑换当前未开放");
     const user = commercialUser(res);
     const code = String(req.body?.code || "");
     const planId = String(req.body?.planId || "");
@@ -1058,7 +1087,7 @@ export function createCommercialRouter(store: CommercialStore, options: { update
     const paymentProvider = String(req.body?.paymentProvider || "");
     const order = store.createWalletTopupOrder(userId, amountCents, paymentProvider);
     try {
-      const payment = await createCheckout(req, store, order);
+      const payment = await createCheckout(store, order);
       res.status(201).json({ success: true, order, payment });
     } catch (error) {
       res.status(201).json({ success: true, order, payment: null, paymentError: message(error) });
@@ -1070,12 +1099,13 @@ export function createCommercialRouter(store: CommercialStore, options: { update
     const planId = String(req.body?.planId || "");
     const paymentProvider = String(req.body?.paymentProvider || "");
     if (paymentProvider === "balance") {
+      if (store.getSetting("balance_payment_enabled", "true") !== "true") throw new Error("余额购买当前未开放");
       const result = store.purchasePlanWithBalance(userId, planId);
       return res.status(201).json({ success: true, order: result.order, payment: null, balanceCents: result.balanceCents });
     }
     const order = store.createOrder(userId, planId, paymentProvider);
     try {
-      const payment = await createCheckout(req, store, order);
+      const payment = await createCheckout(store, order);
       res.status(201).json({ success: true, order, payment });
     } catch (error) {
       res.status(201).json({ success: true, order, payment: null, paymentError: message(error) });
@@ -1087,7 +1117,7 @@ export function createCommercialRouter(store: CommercialStore, options: { update
     const order = store.getOrder(req.params.id);
     if (!order || order.userId !== commercialUser(res).id) return res.status(404).json({ success: false, error: "订单不存在" });
     if (order.status !== "pending") throw new Error("只有待付款订单可以继续支付");
-    const payment = await createCheckout(req, store, order);
+    const payment = await createCheckout(store, order);
     res.json({ success: true, order, payment });
   }));
 
@@ -1096,6 +1126,13 @@ export function createCommercialRouter(store: CommercialStore, options: { update
     const order = store.getOrder(req.params.id);
     if (!order || order.userId !== commercialUser(res).id) return res.status(404).json({ success: false, error: "订单不存在" });
     res.json({ order, attempts: store.listPaymentAttempts(order.id) });
+  }));
+
+  router.post("/orders/:id/verify-payment", requireCommercialUser, route(async (req, res) => {
+    store.expirePendingOrders();
+    const order = store.getOrder(req.params.id);
+    if (!order || order.userId !== commercialUser(res).id) return res.status(404).json({ success: false, error: "订单不存在" });
+    res.json(await verifyEpayOrder(store, order));
   }));
 
   router.post("/orders/:id/cancel", requireCommercialUser, route((req, res) => {
@@ -1196,9 +1233,11 @@ export function createCommercialRouter(store: CommercialStore, options: { update
       paymentMethods: store.getPaymentMethods(true).map(method => ({
         ...method,
         callbackUrl: method.provider
-          ? `${paymentBaseUrl(_req, store, method.callbackBaseUrl)}/api/payment/${method.provider}/${encodeURIComponent(method.id)}/notify`
+          ? configuredPaymentCallbackUrl(store, method.provider, method.id, method.callbackBaseUrl)
           : "",
       })),
+      redeemCodeEnabled: store.getSetting("redeem_code_enabled", "true") === "true",
+      balancePaymentEnabled: store.getSetting("balance_payment_enabled", "true") === "true",
       email: store.getEmailSettings(),
       orderExpiryMinutes: Number(store.getSetting("order_expiry_minutes", "30")) || 30,
       adminPath: store.getAdminPath(),
@@ -1346,6 +1385,8 @@ export function createCommercialRouter(store: CommercialStore, options: { update
       if (typeof req.body?.panelDeployEnabled === "boolean") store.setSetting("panel_deploy_enabled", String(req.body.panelDeployEnabled));
       if (typeof req.body?.nodeDeployEnabled === "boolean") store.setSetting("node_deploy_enabled", String(req.body.nodeDeployEnabled));
       if (typeof req.body?.paymentInstructions === "string") store.setSetting("payment_instructions", req.body.paymentInstructions.slice(0, 2000));
+      if (typeof req.body?.redeemCodeEnabled === "boolean") store.setSetting("redeem_code_enabled", String(req.body.redeemCodeEnabled));
+      if (typeof req.body?.balancePaymentEnabled === "boolean") store.setSetting("balance_payment_enabled", String(req.body.balancePaymentEnabled));
       if (req.body?.paymentMethods !== undefined) store.setPaymentMethods(req.body.paymentMethods);
       if (req.body?.email !== undefined) store.setEmailSettings(req.body.email);
       if (req.body?.orderExpiryMinutes !== undefined) {

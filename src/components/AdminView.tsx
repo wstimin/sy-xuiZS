@@ -173,7 +173,16 @@ interface AdminViewProps {
 }
 
 export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, onLogout, onSessionEnded, onCurrentUserChanged }) => {
-  const [tab, setTab] = useState<AdminTab>('dashboard');
+  const adminRoot = `/${window.location.pathname.split('/')[1] || 'admin'}`;
+  const tabFromPath = (): AdminTab => {
+    const segment = window.location.pathname.split('/')[2];
+    return navigation.some(item => item.id === segment) ? segment as AdminTab : 'dashboard';
+  };
+  const sectionFromPath = (): SettingsSection => {
+    const segment = window.location.pathname.split('/')[3];
+    return ['general', 'recommendations', 'email', 'payments'].includes(segment) ? segment as SettingsSection : 'general';
+  };
+  const [tab, setTabState] = useState<AdminTab>(tabFromPath);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -190,7 +199,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [paymentNotifications, setPaymentNotifications] = useState<PaymentNotification[]>([]);
   const [paymentRuntimeOpen, setPaymentRuntimeOpen] = useState(false);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCode[]>([]);
-  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', externalRedeem: emptyExternalRedeemSettings, contact: emptyContactSettings, recommendations: emptyRecommendationSettings });
+  const [settingsData, setSettingsData] = useState<SystemSettings>({ registrationEnabled: true, panelDeployEnabled: true, nodeDeployEnabled: true, paymentInstructions: '', paymentMethods: [], redeemCodeEnabled: true, balancePaymentEnabled: true, email: emptyEmailSettings, orderExpiryMinutes: 30, adminPath: 'admin', redeemCodePurchaseUrl: '', externalRedeem: emptyExternalRedeemSettings, contact: emptyContactSettings, recommendations: emptyRecommendationSettings });
   const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState('');
   const [settingsSaveBusy, setSettingsSaveBusy] = useState(false);
   const [savedPaymentMethodIds, setSavedPaymentMethodIds] = useState<string[]>([]);
@@ -206,7 +215,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const [savedContactMethodIds, setSavedContactMethodIds] = useState<string[]>([]);
   const [accountUsername, setAccountUsername] = useState(currentUser.username);
   const [adminPathDraft, setAdminPathDraft] = useState('admin');
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
+  const [settingsSection, setSettingsSectionState] = useState<SettingsSection>(sectionFromPath);
+  const setTab = (next: AdminTab) => {
+    setTabState(next);
+    const path = `${adminRoot}/${next}${next === 'settings' ? `/${settingsSection}` : ''}`;
+    if (window.location.pathname !== path) window.history.pushState({}, '', path);
+  };
+  const setSettingsSection = (next: SettingsSection) => {
+    setSettingsSectionState(next);
+    if (tab === 'settings') window.history.pushState({}, '', `${adminRoot}/settings/${next}`);
+  };
+  useEffect(() => {
+    const onPopState = () => { setTabState(tabFromPath()); setSettingsSectionState(sectionFromPath()); };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
   const [settingsDialog, setSettingsDialog] = useState<SettingsDialog>(null);
   const [externalRedeemTestCode, setExternalRedeemTestCode] = useState('');
   const [externalRedeemTestBusy, setExternalRedeemTestBusy] = useState(false);
@@ -480,6 +503,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
         method: 'PUT',
         body: JSON.stringify({
           redeemCodePurchaseUrl: settingsData.redeemCodePurchaseUrl,
+          redeemCodeEnabled: settingsData.redeemCodeEnabled,
           externalRedeem,
         }),
       },
@@ -1105,7 +1129,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
   const filteredCommands = adminCommands.filter(item => `${item.label} ${item.description}`.toLowerCase().includes(commandQuery.trim().toLowerCase()));
   const runCommand = (item: typeof adminCommands[number]) => {
     setTab(item.tab);
-    if (item.section) setSettingsSection(item.section);
+    if (item.section) {
+      setSettingsSectionState(item.section);
+      window.history.replaceState({}, '', `${adminRoot}/settings/${item.section}`);
+    }
     setCommandOpen(false);
     setCommandQuery('');
   };
@@ -1313,7 +1340,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                   </>}
 
                   {settingsSection === 'payments' && <>
-                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><CreditCard /></span><div><h2>支付渠道</h2><p>{settingsData.paymentMethods.some(method => method.enabled) ? '已启用的渠道会显示在用户下单流程中。' : '当前为仅卡密模式，用户端不会显示在线支付渠道。'}</p></div></div><div className="admin-settings-head-actions"><button type="button" className="admin-button secondary" disabled={!settingsData.paymentMethods.some(method => method.enabled)} onClick={disableAllPaymentMethods}><PowerOff /> 仅使用卡密</button><button type="button" className="admin-button secondary" onClick={openNewPaymentMethod}><PackagePlus /> 新增支付方式</button>{settingsSaveAction}</div></header>
+                    <header className="admin-settings-content-head"><div><span className="admin-settings-icon"><CreditCard /></span><div><h2>支付渠道</h2><p>在这里分别控制卡密、余额和在线支付方式，并核对平台实际使用的回调地址。</p></div></div><div className="admin-settings-head-actions"><button type="button" className="admin-button secondary" disabled={!settingsData.paymentMethods.some(method => method.enabled)} onClick={disableAllPaymentMethods}><PowerOff /> 停用全部在线支付</button><button type="button" className="admin-button secondary" onClick={openNewPaymentMethod}><PackagePlus /> 新增支付方式</button>{settingsSaveAction}</div></header>
+                    <section className="admin-settings-section">
+                      <div className="admin-form-grid">
+                        <label className="admin-field span-2"><span>本站公网访问地址（支付与邮件共用）</span><input type="url" value={settingsData.email.publicBaseUrl} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, publicBaseUrl: event.target.value } })} placeholder="https://your-domain.com" /><small>在线支付通知和返回页面使用这个站点根地址；保存后请核对下方实际回调地址。留空时不会推断浏览器域名发起支付。</small></label>
+                        <div className="admin-field span-2"><SettingSwitch label="显示余额购买" description="关闭后用户端不显示余额购买入口，也不能提交新的余额购买订单。" checked={settingsData.balancePaymentEnabled} onChange={balancePaymentEnabled => setSettingsData({ ...settingsData, balancePaymentEnabled })} /></div>
+                        <div className="admin-field span-2"><SettingSwitch label="显示卡密兑换" description="关闭后用户端不显示卡密兑换入口，也不能提交新的卡密兑换。" checked={settingsData.redeemCodeEnabled} onChange={redeemCodeEnabled => setSettingsData({ ...settingsData, redeemCodeEnabled })} /></div>
+                      </div>
+                    </section>
                     <section className="admin-settings-section flush">
                       <div className="admin-payment-table-wrap">
                         <table className="admin-payment-table">
@@ -1322,7 +1356,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
                             <td><div className="admin-payment-name"><span><CreditCard /></span><div><strong>{method.name || '未命名支付方式'}</strong><small>{method.id || '未设置标识'}</small></div></div></td>
                             <td>{paymentProviderText(method)}</td>
                             <td>{paymentChannelText(method)}</td>
-                            <td>{method.callbackUrl ? <button type="button" className="admin-callback-copy" title={method.callbackUrl} onClick={() => void copyToClipboard(method.callbackUrl || '').then(success => showToast(success ? '回调地址已复制' : '复制失败', success ? method.callbackUrl : '请手动复制回调地址', success ? 'success' : 'error'))}><ClipboardCopy /><span>复制回调</span></button> : <span className="admin-muted">无需回调</span>}</td>
+                            <td>{method.callbackUrl ? <button type="button" className="admin-callback-copy" title={method.callbackUrl} onClick={() => void copyToClipboard(method.callbackUrl || '').then(success => showToast(success ? '回调地址已复制' : '复制失败', success ? method.callbackUrl : '请手动复制回调地址', success ? 'success' : 'error'))}><ClipboardCopy /><span>{new URL(method.callbackUrl).host}</span></button> : <span className="admin-muted">请先填写公网地址</span>}</td>
                             <td><div className="admin-payment-check"><button type="button" className="admin-button secondary compact" disabled={paymentCheckBusy === method.id || !savedPaymentMethodIds.includes(method.id)} title={savedPaymentMethodIds.includes(method.id) ? '检测已保存的支付配置' : '请先保存更改'} onClick={() => void checkPaymentMethod(method)}><RefreshCw className={paymentCheckBusy === method.id ? 'spinning' : ''} /> 检测</button>{paymentChecks[method.id] && <div className={`admin-payment-check-result ${paymentChecks[method.id].status}`}><strong>{paymentCheckLabel(paymentChecks[method.id].status)}</strong><span>{paymentChecks[method.id].message}</span></div>}{!savedPaymentMethodIds.includes(method.id) && <small>保存后可检测</small>}</div></td>
                             <td>{method.sortOrder}</td>
                             <td><div className="admin-payment-state"><StatusBadge status={method.enabled ? 'active' : 'disabled'} /><button type="button" role="switch" aria-label={`${method.enabled ? '停用' : '启用'} ${method.name}`} aria-checked={method.enabled} className={`admin-switch ${method.enabled ? 'on' : ''}`} onClick={() => updatePaymentMethod(index, { enabled: !method.enabled })}><span /></button></div></td>
@@ -1485,7 +1519,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser, showToast, on
           <label className="admin-field"><span>发件邮箱</span><input type="email" value={settingsData.email.smtpFromEmail} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpFromEmail: event.target.value } })} /></label>
           <label className="admin-field"><span>回复邮箱</span><input type="email" value={settingsData.email.smtpReplyTo} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, smtpReplyTo: event.target.value } })} /></label>
           <label className="admin-field"><span>站点名称</span><input value={settingsData.email.siteName} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, siteName: event.target.value } })} /></label>
-          <label className="admin-field span-2"><span>公网访问地址</span><input type="url" value={settingsData.email.publicBaseUrl} onChange={event => setSettingsData({ ...settingsData, email: { ...settingsData.email, publicBaseUrl: event.target.value } })} placeholder="https://your-domain.com，用于邮件链接和支付异步回调" /></label>
         </div>
       </AdminDialog>
       <AdminDialog open={settingsDialog === 'verification'} title="配置验证码规则" description="设置邮箱验证码的有效时间与重复发送间隔。" confirmLabel="完成编辑" cancelLabel="关闭" onClose={() => setSettingsDialog(null)} onConfirm={() => setSettingsDialog(null)}>

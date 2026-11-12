@@ -777,6 +777,26 @@ test("redeem code APIs issue plan benefits once and expose a validated purchase 
     const accountWithLink = await fetch(`${base}/account`, { headers: { cookie: userCookie } }).then(response => response.json()) as any;
     assert.equal(accountWithLink.redeemCodePurchaseUrl, purchaseUrl);
 
+    const visibilityResponse = await fetch(`${base}/admin/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ redeemCodeEnabled: false, balancePaymentEnabled: false }),
+    });
+    assert.equal(visibilityResponse.status, 200);
+    const visibleMethods = await fetch(`${base}/payment-methods`).then(response => response.json()) as any;
+    assert.equal(visibleMethods.redeemCodeEnabled, false);
+    assert.equal(visibleMethods.balancePaymentEnabled, false);
+    const disabledRedeem = await fetch(`${base}/redeem-codes/redeem`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: userCookie },
+      body: JSON.stringify({ code: "XUI-TEST" }),
+    });
+    assert.equal(disabledRedeem.status, 400);
+    const disabledBalance = await fetch(`${base}/orders`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: userCookie },
+      body: JSON.stringify({ planId: store.listPlans()[0].id, paymentProvider: "balance" }),
+    });
+    assert.equal(disabledBalance.status, 400);
+
     const unsafeLink = await fetch(`${base}/admin/settings`, {
       method: "PUT",
       headers: { "content-type": "application/json", cookie: adminCookie },
@@ -804,6 +824,7 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
 
   try {
     store.bootstrapAdmin("payment-admin", "strong-password");
+    store.setEmailSettings({ publicBaseUrl: "https://site.example.test" });
     store.setPaymentMethods([{
       id: "epay-live", name: "在线支付", type: "epay", provider: "epay", enabled: true,
       instructions: "在线付款", paymentUrl: "", gatewayUrl: "https://pay.example.test", merchantId: "1001",
@@ -825,6 +846,9 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
     assert.equal(order.paymentProvider, "epay-live");
     assert.equal(order.paymentChannel, "wxpay");
     assert.match(createdOrder.payment.checkoutUrl, /[?&]type=wxpay(?:&|$)/);
+    const checkoutUrl = new URL(createdOrder.payment.checkoutUrl);
+    assert.equal(checkoutUrl.searchParams.get("notify_url"), "https://site.example.test/api/payment/epay/epay-live/notify");
+    assert.equal(checkoutUrl.searchParams.get("return_url"), `https://site.example.test/console/account/orders?payment=return&order=${encodeURIComponent(order.id)}`);
 
     const directVisit = await fetch(`${base}/payment/epay/epay-live/notify`);
     assert.equal(directVisit.status, 200);
@@ -860,6 +884,23 @@ test("online payment callbacks reject wrong amounts and grant benefits only once
     assert.equal(store.listEntitlements(user.id).length, 1);
     assert.equal(store.listPaymentNotifications().filter((item: any) => item.status === "accepted").length, 2);
     assert.equal(store.listPaymentNotifications().filter((item: any) => item.status === "rejected").length, 2);
+
+    const topupResponse = await fetch(`${base}/wallet/topups`, {
+      method: "POST", headers: { "content-type": "application/json", cookie: userCookie },
+      body: JSON.stringify({ amountCents: 500, paymentProvider: "epay-live--alipay" }),
+    });
+    assert.equal(topupResponse.status, 201);
+    const topup = (await topupResponse.json() as any).order;
+    const topupParams: Record<string, string> = {
+      pid: "1001", out_trade_no: topup.orderNo, trade_no: "EPAY-TOPUP-1",
+      trade_status: "TRADE_SUCCESS", money: "5.00", sign_type: "MD5",
+    };
+    topupParams.sign = epaySign(topupParams, "callback-secret");
+    const topupCallback = `${base}/payment/epay/epay-live/notify?${new URLSearchParams(topupParams)}`;
+    assert.equal((await fetch(topupCallback)).status, 200);
+    assert.equal(store.getUserById(user.id)?.balanceCents, 500);
+    assert.equal((await fetch(topupCallback)).status, 200);
+    assert.equal(store.getUserById(user.id)?.balanceCents, 500);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     store.close();
@@ -898,7 +939,7 @@ test("gateway checkout failures keep the created order available for retry", asy
     assert.equal(result.success, true);
     assert.equal(result.order.status, "pending");
     assert.equal(result.payment, null);
-    assert.ok(result.paymentError);
+    assert.match(result.paymentError, /公网访问地址/);
     assert.equal((store.listPaymentAttempts(result.order.id)[0] as any).status, "failed");
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

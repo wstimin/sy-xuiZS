@@ -320,6 +320,7 @@ export interface AccountData {
   paymentMethods: PaymentMethod[];
   redeemCodePurchaseUrl: string;
   redeemCodeEnabled?: boolean;
+  balancePaymentEnabled?: boolean;
 }
 
 export interface RedeemCode {

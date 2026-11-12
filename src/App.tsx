@@ -17,6 +17,11 @@ import { ResourceRecommendationsView } from './components/ResourceRecommendation
 import { CustomerNoticeDialog } from './components/CustomerNoticeDialog';
 
 const LOCAL_HISTORY_PREFIX = '3xui_deploy_history:v2:';
+const consoleViews: ViewMode[] = ['home', 'resources', 'panel', 'node', 'pricing', 'account'];
+const viewFromPath = (): ViewMode => {
+  const segment = window.location.pathname.split('/')[2];
+  return consoleViews.includes(segment as ViewMode) ? segment as ViewMode : 'home';
+};
 
 const localHistoryKey = (userId: string) => `${LOCAL_HISTORY_PREFIX}${userId}`;
 
@@ -60,7 +65,12 @@ const mergeHistory = (serverItems: HistoryItem[], localItems: HistoryItem[]): Hi
 };
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<ViewMode>('home');
+  const [currentView, setCurrentViewState] = useState<ViewMode>(viewFromPath);
+  const setCurrentView = (view: ViewMode) => {
+    setCurrentViewState(view);
+    const path = `/console/${view}`;
+    if (window.location.pathname !== path) window.history.pushState({}, '', path);
+  };
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [guideOpen, setGuideOpen] = useState<boolean>(false);
@@ -91,6 +101,12 @@ export default function App() {
 
   // The legacy key was shared by every account in the browser. Remove it instead
   // of migrating secrets across users; v2 records are namespaced by user id.
+  useEffect(() => {
+    const onPopState = () => setCurrentViewState(viewFromPath());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   useEffect(() => {
     try {
       localStorage.removeItem('3xui_deploy_history');
@@ -173,10 +189,6 @@ export default function App() {
   ));
 
   useEffect(() => {
-    if (currentView === 'resources' && !showResources) setCurrentView('home');
-  }, [currentView, showResources]);
-
-  useEffect(() => {
     if (!user) return;
     const query = new URLSearchParams(window.location.search);
     if (query.get('payment') !== 'return') return;
@@ -186,33 +198,33 @@ export default function App() {
     let attempts = 0;
     const checkPayment = async () => {
       try {
-        const result = await api<{ order: { status: string; planSnapshot?: string } }>(`/api/orders/${encodeURIComponent(orderId)}/status`);
+        const result = await api<{ order: { status: string; planSnapshot?: string }; verificationError?: string }>(`/api/orders/${encodeURIComponent(orderId)}/${attempts % 4 === 0 ? 'verify-payment' : 'status'}`, attempts % 4 === 0 ? { method: 'POST' } : undefined);
         if (stopped) return;
         if (result.order.status === 'paid') {
           await refreshAccount();
-          setCurrentView('account');
+          setCurrentViewState('account');
           let walletTopup = false;
           try { walletTopup = JSON.parse(result.order.planSnapshot || '{}').kind === 'wallet_topup'; } catch { /* Ignore malformed legacy snapshots. */ }
           showPurchaseSuccess(walletTopup ? '余额充值成功' : undefined, walletTopup ? '充值金额已到账，可以继续购买永久次数套餐。' : undefined);
-          window.history.replaceState({}, '', '/console');
+          window.history.replaceState({}, '', '/console/account/orders');
           return;
         }
         if (result.order.status !== 'pending') {
-          setCurrentView('account');
+          setCurrentViewState('account');
           showToast('订单未完成', '请在账户订单中查看当前状态', 'warning');
-          window.history.replaceState({}, '', '/console');
+          window.history.replaceState({}, '', '/console/account/orders');
           return;
         }
         attempts += 1;
         if (attempts < 8) window.setTimeout(checkPayment, 2000);
         else {
-          setCurrentView('account');
-          showToast('正在等待支付结果', '到账后系统会自动发放权益，可在订单记录中刷新查看', 'info');
-          window.history.replaceState({}, '', '/console');
+          setCurrentViewState('account');
+          showToast('正在等待支付结果', result.verificationError ? `自动查单暂不可用：${result.verificationError}。可稍后在订单记录中刷新查看。` : '到账后系统会自动发放权益，可在订单记录中刷新查看', 'info');
+          window.history.replaceState({}, '', '/console/account/orders');
         }
       } catch {
-        setCurrentView('account');
-        window.history.replaceState({}, '', '/console');
+        setCurrentViewState('account');
+        window.history.replaceState({}, '', '/console/account/orders');
       }
     };
     void checkPayment();

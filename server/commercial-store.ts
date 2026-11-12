@@ -1234,7 +1234,7 @@ export class CommercialStore {
         const encryptedApiV3Key = suppliedApiV3Key ? this.vault.encrypt(suppliedApiV3Key) : retained?.api_v3_key_encrypted || "";
         if (callbackBaseUrl) {
           const callback = new URL(callbackBaseUrl);
-          if (!['http:', 'https:'].includes(callback.protocol)) throw new Error(`支付通道 ${method.name} 的回调域名必须是 HTTP 或 HTTPS 地址`);
+          if (!['http:', 'https:'].includes(callback.protocol) || callback.username || callback.password || callback.pathname !== '/' || callback.search || callback.hash) throw new Error(`支付通道 ${method.name} 的回调域名必须是 HTTP 或 HTTPS 站点根地址`);
         }
         if (method.enabled && !gatewayUrl && !["alipay_official", "wechat_official", "paypal"].includes(provider)) {
           throw new Error(`支付通道 ${method.name} 启用前必须填写网关或 API 地址`);
@@ -1318,6 +1318,14 @@ export class CommercialStore {
     if (next.smtpPort < 1 || next.smtpPort > 65535) throw new Error("SMTP 端口无效");
     if (next.verificationCodeTtlMinutes < 3 || next.verificationCodeTtlMinutes > 60) throw new Error("验证码有效期必须为 3 到 60 分钟");
     if (next.verificationResendSeconds < 30 || next.verificationResendSeconds > 600) throw new Error("重发间隔必须为 30 到 600 秒");
+    if (next.publicBaseUrl.trim()) {
+      let publicUrl: URL;
+      try { publicUrl = new URL(next.publicBaseUrl.trim()); }
+      catch { throw new Error("本站公网访问地址格式不正确"); }
+      if (!["http:", "https:"].includes(publicUrl.protocol) || publicUrl.username || publicUrl.password || publicUrl.pathname !== "/" || publicUrl.search || publicUrl.hash) {
+        throw new Error("本站公网访问地址必须是 HTTP 或 HTTPS 站点根地址");
+      }
+    }
     const values: Record<string, string> = {
       email_enabled: String(next.emailEnabled), email_verification_required: String(next.emailVerificationRequired),
       smtp_host: next.smtpHost.trim(), smtp_port: String(next.smtpPort), smtp_encryption: next.smtpEncryption,
